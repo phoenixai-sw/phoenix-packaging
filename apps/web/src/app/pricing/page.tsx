@@ -42,14 +42,14 @@ export default function Pricing() {
         <div className="pricing-intro">
           <div className="eyebrow">ROOM FOR YOUR NEXT IDEA</div>
           <h1>브랜드의 속도에 맞는 선택.</h1>
-          <p>월 구독으로 시작하고, 필요한 만큼 크레딧을 더하세요.</p>
+          <p>무료 체험으로 시작하세요. 유료 요금제와 충전은 준비 중입니다.</p>
         </div>
         <div className="alert alert-info pricing-notice">
           <Info size={18} />
           <span>
-            아래는 초기 운영 정책 기준의 요금입니다. 결제 가능 여부와 시험
-            모드는 계정의 구독 화면에서 확인하세요. AI 작업은 실행 전에 크레딧
-            견적을 확인합니다.
+            아래는 유료 서비스 개시를 위한 요금안입니다. 현재 구독 결제와 추가
+            충전은 열리지 않았습니다. 가입 시 체험 크레딧을 지급하며, AI 작업은
+            실행 전에 사용량과 잔액을 확인합니다.
           </span>
         </div>
         <div className="pricing-grid">
@@ -83,30 +83,33 @@ export default function Pricing() {
                 className={`button full-width ${plan.name === "Pro" ? "button-dark" : "button-light"}`}
                 href="/auth"
               >
-                계정에서 요금제 확인 <ArrowUpRight size={17} />
+                체험 계정 시작하기 <ArrowUpRight size={17} />
               </Link>
             </article>
           ))}
         </div>
         <section className="pricing-details">
           <div>
-            <h2>크레딧, 이렇게 사용할 예정이에요.</h2>
+            <h2>작업 전에 확인하는 크레딧.</h2>
             <p>
               표준 시안 생성 1장 {pricing.actions["image.generate.standard"]}
               크레딧, 수정 1장 {pricing.actions["image.edit.standard"]}크레딧,
               최초 제작 파일 준비 {pricing.actions["export.production.first"]}
               크레딧을 기준으로 합니다. 검토용 PDF는{" "}
-              {pricing.actions["export.review"]}크레딧, 같은 항목 재출력은{" "}
-              {pricing.actions["export.production.repeat"]}크레딧입니다.
+              {pricing.actions["export.review"]}크레딧, 동일 조건의 제작 파일
+              재출력은 {pricing.actions["export.production.repeat"]}
+              크레딧입니다.
             </p>
             <p>
               예: 표준 시안 3장 + 수정 1장 + 최초 제작 파일 1건 ={" "}
-              {formatNumber(sampleCredits)}크레딧. 실제 생성·제작용 출력은 외부
-              연동과 제조사 승인 후 제공됩니다.
+              {formatNumber(sampleCredits)}크레딧입니다. 실제 AI 생성·수정은
+              이메일 인증을 마친 허용 계정에서 사용할 수 있습니다. 제작용 출력은
+              제조사 도면·인쇄 프로필 승인과 검수를 통과해야 하며, 현재는 검토용
+              PDF를 제공합니다.
             </p>
           </div>
           <div>
-            <h2>필요할 때 더하고, 투명하게 확인.</h2>
+            <h2>체험은 지금, 추가 충전은 준비 중.</h2>
             <p>
               추가 충전{" "}
               {pricing.topups
@@ -115,14 +118,19 @@ export default function Pricing() {
                     `${formatNumber(topup.credits)}크레딧 ${formatNumber(topup.inc_vat)}원 (${topup.expires_months}개월)`,
                 )
                 .join(" · ")}
-              . 모두 부가세 포함이며 유효기간은 구매일을 기준으로 합니다.
+              . 모두 부가세 포함인 충전 요금안이며, 결제 개시 후 구매일을
+              기준으로 유효기간을 적용합니다.
             </p>
             <p>
-              월 지급 크레딧은 다음 결제 주기에 만료되며 이월되지 않습니다. 출시
-              예정 체험은 {pricing.trial.credits}크레딧·
-              {pricing.trial.expires_days}일입니다.
+              가입하면 체험 크레딧 {pricing.trial.credits}개를 지급하며,
+              유효기간은 {pricing.trial.expires_days}일입니다. 체험 크레딧은
+              표준 이미지 생성·수정에 사용할 수 있습니다.
               {!pricing.trial.auto_conversion &&
                 " 자동 결제로 전환되지 않습니다."}
+            </p>
+            <p>
+              유료 구독 개시 후 월 지급 크레딧은 다음 결제 주기에 만료되며
+              이월되지 않습니다.
             </p>
           </div>
         </section>

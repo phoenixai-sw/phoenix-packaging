@@ -84,7 +84,7 @@ export default function Home() {
               <PencilLine size={19} /> 우리 말 그대로, 한글 편집
             </span>
             <span>
-              <Layers3 size={19} /> 앞면과 뒷면 한곳에서
+              <Layers3 size={19} /> 모든 인쇄면을 한곳에서
             </span>
             <span>
               <Ruler size={19} /> 실제 mm 규격으로
@@ -208,7 +208,7 @@ export default function Home() {
               {
                 n: "03",
                 title: "마지막까지 꼼꼼하게",
-                text: "앞뒷면을 확인한 뒤 검토용 PDF로 함께 살펴보세요.",
+                text: "각 인쇄면을 확인한 뒤 검토용 PDF로 함께 살펴보세요.",
                 icon: <Download size={23} />,
               },
             ].map((step) => (

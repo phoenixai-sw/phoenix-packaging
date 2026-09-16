@@ -151,6 +151,28 @@ def ai():
         passed(action+' real image/private asset/one charge/replay')
     report['ai_balance_after']=request('GET','/credits')['available']
     assert report['ai_balance_before']-report['ai_balance_after']==20
+    original=report['image-generate-standard']
+    assert sha256(client.get('/assets/'+original['asset_id']+'/content').content).hexdigest()==original['sha256']
+    if 'ai_applied_asset' not in state:
+        current=request('GET','/projects/'+item['id']);scene=current['scene'];face=scene['faces'][0]
+        text_before=[obj['text'] for obj in face['objects'] if obj['type']=='text']
+        face['objects']=[obj for obj in face['objects'] if obj['id']!='cloud-ai-background']
+        face['objects'].insert(0,{'id':'cloud-ai-background','type':'image','face_id':face['id'],'asset_id':previous_asset,'x_mm':0,'y_mm':0,'width_mm':face['width_mm'],'height_mm':face['height_mm'],'rotation_deg':0,'z_index':-100,'visible':True,'print_enabled':True,'locked':True})
+        saved=request('PATCH','/projects/'+item['id']+'/draft',json={'base_revision':current['base_revision'],'scene':scene})
+        reopened=request('GET','/projects/'+item['id'])
+        assert [obj['text'] for obj in reopened['scene']['faces'][0]['objects'] if obj['type']=='text']==text_before
+        state['ai_applied_asset']=previous_asset;persist()
+    if 'ai_review_job' not in state:
+        current=request('GET','/projects/'+item['id'])
+        created=request('POST','/exports',headers={'Idempotency-Key':state['run']+'-ai-review'},json={'project_id':item['id'],'base_revision':current['base_revision'],'kind':'review'})
+        state['ai_review_job']=created['id'];persist()
+    wait_job(state['ai_review_job'])
+    final_pdf=client.get('/exports/'+state['ai_review_job']+'/download');assert final_pdf.status_code==200
+    reader=PdfReader(BytesIO(final_pdf.content));assert len(reader.pages)==2 and len(reader.pages[0].images)>=1
+    assert '높은 단백질 함량' in reader.pages[0].extract_text()
+    (LOCAL/'cloud-real-ai-review.pdf').write_bytes(final_pdf.content)
+    report['ai_review']={'job_id':state['ai_review_job'],'pdf_bytes':len(final_pdf.content),'image_embedded':True,'editable_korean_preserved':True}
+    passed('real AI result applied/reopened/exported with editable Korean preserved')
     passed('real generate+edit debit exactly20, originals preserved')
 
 
