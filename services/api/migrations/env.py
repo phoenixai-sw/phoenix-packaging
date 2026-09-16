@@ -5,6 +5,8 @@ from alembic import context
 from services.api.config import Settings
 from services.api.database import Base, build_database
 from services.api import models  # noqa: F401 — registers metadata
+from services.api import feature_models  # noqa: F401
+from services.api.billing import models as billing_models  # noqa: F401
 
 config = context.config
 if config.config_file_name:

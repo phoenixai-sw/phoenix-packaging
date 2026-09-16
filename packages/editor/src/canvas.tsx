@@ -9,20 +9,128 @@ import {
   Transformer,
   Line,
   Shape as KShape,
+  Group,
+  Circle,
 } from "react-konva";
 import type Konva from "konva";
 import type { Face, SceneObject } from "./model";
 import { roundMM } from "./model";
+import { ean13Geometry } from "@preview3d/barcode";
+type Region = {
+  x_mm: number;
+  y_mm: number;
+  width_mm: number;
+  height_mm: number;
+};
+type GeometryFace = {
+  regions?: {
+    safe?: Region;
+    cut?: Region;
+    no_print?: Region[];
+    fold?: Array<{
+      x1_mm: number;
+      y1_mm: number;
+      x2_mm: number;
+      y2_mm: number;
+    }>;
+    hole_allowed?: Region | null;
+  };
+};
+function BarcodeObject({
+  object,
+  scale,
+  selected,
+  onSelect,
+  onChange,
+  readOnly,
+}: {
+  object: SceneObject;
+  scale: number;
+  selected: boolean;
+  onSelect: () => void;
+  onChange: (patch: Partial<SceneObject>) => void;
+  readOnly: boolean;
+}) {
+  let barcode;
+  try {
+    barcode = ean13Geometry(
+      object.barcode_value || "",
+      object.module_mm ?? 0.33,
+      object.bar_height_mm ?? 22.85,
+    );
+  } catch {
+    return (
+      <Rect
+        x={object.x_mm * scale}
+        y={object.y_mm * scale}
+        width={object.width_mm * scale}
+        height={object.height_mm * scale}
+        fill="#ffe7dc"
+        stroke="#ca593a"
+        onClick={onSelect}
+      />
+    );
+  }
+  return (
+    <Group
+      id={object.id}
+      x={object.x_mm * scale}
+      y={object.y_mm * scale}
+      rotation={object.rotation_deg}
+      draggable={!readOnly && !object.locked}
+      onClick={onSelect}
+      onTap={onSelect}
+      onDragEnd={(e) =>
+        onChange({
+          x_mm: roundMM(e.target.x() / scale),
+          y_mm: roundMM(e.target.y() / scale),
+        })
+      }
+    >
+      <Rect
+        width={barcode.width_mm * scale}
+        height={barcode.height_mm * scale}
+        fill="#ffffff"
+        stroke={selected ? "#e36d40" : undefined}
+        strokeWidth={1}
+      />
+      {barcode.bars.map((bar, index) => (
+        <Rect
+          key={index}
+          x={bar.x_mm * scale}
+          y={0}
+          width={bar.width_mm * scale}
+          height={barcode.bar_height_mm * scale}
+          fill="#000000"
+          listening={false}
+        />
+      ))}
+      <Text
+        text={barcode.value}
+        x={0}
+        y={(barcode.bar_height_mm + 1) * scale}
+        width={barcode.width_mm * scale}
+        fontFamily="NotoSansKR"
+        fontSize={3.175 * (barcode.module_mm / 0.33) * scale}
+        align="center"
+        fill="#000000"
+        listening={false}
+      />
+    </Group>
+  );
+}
 function AssetImage({
   object,
   scale,
   onSelect,
   onChange,
+  readOnly,
 }: {
   object: SceneObject;
   scale: number;
   onSelect: () => void;
   onChange: (patch: Partial<SceneObject>) => void;
+  readOnly: boolean;
 }) {
   const [image, setImage] = useState<HTMLImageElement>();
   useEffect(() => {
@@ -49,7 +157,7 @@ function AssetImage({
       rotation={object.rotation_deg}
       onClick={onSelect}
       onTap={onSelect}
-      draggable={!object.locked}
+      draggable={!readOnly && !object.locked}
       onDragEnd={(e) =>
         onChange({
           x_mm: roundMM(e.target.x() / scale),
@@ -78,6 +186,9 @@ export default function Canvas({
   zoom,
   guides,
   onEditState,
+  holes = [],
+  geometryFace,
+  readOnly = false,
 }: {
   face: Face;
   selected: string | null;
@@ -86,6 +197,15 @@ export default function Canvas({
   zoom: number;
   guides: boolean;
   onEditState: (editing: boolean) => void;
+  holes?: Array<{
+    id: string;
+    face_id: string;
+    center_x_mm: number;
+    center_y_mm: number;
+    diameter_mm: number;
+  }>;
+  geometryFace?: GeometryFace;
+  readOnly?: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const stage = useRef<Konva.Stage>(null);
@@ -109,10 +229,13 @@ export default function Canvas({
     return () => observer.disconnect();
   }, []);
   const scale =
-    Math.min(
-      (available.width - 110) / face.width_mm,
-      (available.height - 100) / face.height_mm,
-      2.5,
+    Math.max(
+      0.01,
+      Math.min(
+        (available.width - (available.width < 600 ? 76 : 110)) / face.width_mm,
+        (available.height - 100) / face.height_mm,
+        2.5,
+      ),
     ) * zoom;
   const width = face.width_mm * scale;
   const height = face.height_mm * scale;
@@ -120,7 +243,13 @@ export default function Canvas({
   useEffect(() => {
     const node = selected ? stage.current?.findOne(`#${selected}`) : null;
     transformer.current?.nodes(
-      node && !editing && node.draggable() ? [node] : [],
+      node &&
+        !editing &&
+        node.draggable() &&
+        !readOnly &&
+        face.objects.find((o) => o.id === selected)?.type !== "barcode"
+        ? [node]
+        : [],
     );
     transformer.current?.getLayer()?.batchDraw();
   }, [selected, editing, face.objects, fontReady]);
@@ -129,7 +258,7 @@ export default function Canvas({
     onEditState(false);
   }, [face.id, onEditState]);
   function startEdit(object: SceneObject) {
-    if (object.locked) return;
+    if (object.locked || readOnly) return;
     setEditing(object.id);
     setTextValue(object.text || "");
     onEditState(true);
@@ -182,13 +311,24 @@ export default function Canvas({
                   .sort((a, b) => a.z_index - b.z_index)
                   .filter((o) => o.visible !== false)
                   .map((object) =>
-                    object.type === "image" ? (
+                    object.type === "barcode" ? (
+                      <BarcodeObject
+                        key={object.id}
+                        object={object}
+                        scale={scale}
+                        selected={selected === object.id}
+                        onSelect={() => onSelect(object.id)}
+                        onChange={patch(object)}
+                        readOnly={readOnly}
+                      />
+                    ) : object.type === "image" ? (
                       <AssetImage
                         key={object.id}
                         object={object}
                         scale={scale}
                         onSelect={() => onSelect(object.id)}
                         onChange={patch(object)}
+                        readOnly={readOnly}
                       />
                     ) : object.type === "shape" ? (
                       <KShape
@@ -222,7 +362,7 @@ export default function Canvas({
                           context.closePath();
                           context.fillStrokeShape(node);
                         }}
-                        draggable={!object.locked}
+                        draggable={!readOnly && !object.locked}
                         onClick={() => onSelect(object.id)}
                         onTap={() => onSelect(object.id)}
                         onDragEnd={(e) =>
@@ -248,8 +388,8 @@ export default function Canvas({
                         }}
                       />
                     ) : (
-                  <Text
-                    key={`${object.id}-${fontReady ? "font-ready" : "font-loading"}`}
+                      <Text
+                        key={`${object.id}-${fontReady ? "font-ready" : "font-loading"}`}
                         id={object.id}
                         text={object.text || ""}
                         x={object.x_mm * scale}
@@ -270,7 +410,7 @@ export default function Canvas({
                         opacity={object.opacity ?? 1}
                         wrap="char"
                         visible={editing !== object.id}
-                        draggable={!object.locked}
+                        draggable={!readOnly && !object.locked}
                         onClick={() => onSelect(object.id)}
                         onTap={() => onSelect(object.id)}
                         onDblClick={() => startEdit(object)}
@@ -299,7 +439,7 @@ export default function Canvas({
                       />
                     ),
                   )}
-                {guides && (
+                {guides && !geometryFace && (
                   <>
                     <Rect
                       x={10 * scale}
@@ -328,6 +468,73 @@ export default function Canvas({
                     />
                   </>
                 )}
+                {guides && geometryFace?.regions && (
+                  <>
+                    {geometryFace.regions.no_print?.map((r, i) => (
+                      <Rect
+                        key={`forbidden-${i}`}
+                        x={r.x_mm * scale}
+                        y={r.y_mm * scale}
+                        width={r.width_mm * scale}
+                        height={r.height_mm * scale}
+                        fill="#ce76721b"
+                        stroke="#ce767233"
+                        strokeWidth={0.5}
+                        listening={false}
+                      />
+                    ))}
+                    {geometryFace.regions.safe && (
+                      <Rect
+                        x={geometryFace.regions.safe.x_mm * scale}
+                        y={geometryFace.regions.safe.y_mm * scale}
+                        width={geometryFace.regions.safe.width_mm * scale}
+                        height={geometryFace.regions.safe.height_mm * scale}
+                        stroke="#3a816a"
+                        dash={[3, 5]}
+                        strokeWidth={0.8}
+                        listening={false}
+                      />
+                    )}
+                    {geometryFace.regions.fold?.map((line, i) => (
+                      <Line
+                        key={`fold-${i}`}
+                        points={[
+                          line.x1_mm * scale,
+                          line.y1_mm * scale,
+                          line.x2_mm * scale,
+                          line.y2_mm * scale,
+                        ]}
+                        stroke="#7b72aa"
+                        dash={[5, 4]}
+                        strokeWidth={0.8}
+                        listening={false}
+                      />
+                    ))}
+                  </>
+                )}
+                {holes
+                  .filter(
+                    (h) =>
+                      h.face_id === face.id ||
+                      (h.face_id === "front" && face.id === "back") ||
+                      (h.face_id === "back" && face.id === "front"),
+                  )
+                  .map((h) => (
+                    <Circle
+                      key={h.id}
+                      x={
+                        (h.face_id === face.id
+                          ? h.center_x_mm
+                          : face.width_mm - h.center_x_mm) * scale
+                      }
+                      y={h.center_y_mm * scale}
+                      radius={(h.diameter_mm / 2) * scale}
+                      fill="#ffffff"
+                      stroke="#d8643d"
+                      strokeWidth={1}
+                      listening={false}
+                    />
+                  ))}
                 <Transformer
                   ref={transformer}
                   rotateEnabled

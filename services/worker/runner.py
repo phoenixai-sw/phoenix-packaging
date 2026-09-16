@@ -2,7 +2,7 @@
 import time
 from services.api.config import Settings
 from services.api.database import build_database
-from services.api.jobs import process_pending_jobs
+from services.api.worker_service import process_all_jobs
 from services.api.storage import build_storage
 
 def main():
@@ -10,10 +10,10 @@ def main():
     settings.validate()
     engine, sessions = build_database(settings)
     storage = build_storage(settings)
-    print('Phoenix review worker started.', flush=True)
+    print('Phoenix platform worker started.', flush=True)
     try:
         while True:
-            process_pending_jobs(sessions, storage, limit=2)
+            process_all_jobs(sessions, storage, settings)
             time.sleep(2)
     except KeyboardInterrupt:
         pass

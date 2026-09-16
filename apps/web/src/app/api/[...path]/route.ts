@@ -2,7 +2,7 @@ import { after, NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 800;
 
 const apiOrigin = () => (process.env.API_ORIGIN || 'http://127.0.0.1:8000').replace(/\/$/, '');
 
@@ -35,7 +35,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
       if (value) responseHeaders.set(name, value);
     }
     for (const cookie of upstream.headers.getSetCookie()) responseHeaders.append('set-cookie', cookie);
-    const startsExport = path.join('/') === 'v1/exports' || (path[1] === 'jobs' && path[3] === 'retry');
+    const startsExport = ['v1/exports', 'v1/jobs'].includes(path.join('/')) || (path[1] === 'jobs' && path[3] === 'retry');
     if (request.method === 'POST' && startsExport && upstream.ok && process.env.WORKER_SECRET) {
       after(async () => {
         try {
@@ -43,9 +43,9 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
             method: 'POST',
             headers: { authorization: `Bearer ${process.env.WORKER_SECRET}`, 'content-type': 'application/json' },
             body: JSON.stringify({ limit: 1 }),
-            signal: AbortSignal.timeout(50000),
+            signal: AbortSignal.timeout(750000),
           });
-        } catch { console.error('Review export worker could not be reached; durable job remains queued.'); }
+        } catch { console.error('Platform worker could not be reached; durable job remains queued.'); }
       });
     }
     return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });

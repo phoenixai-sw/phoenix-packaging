@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, File, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -22,11 +22,14 @@ from .auth import COOKIE_NAME, DUMMY_HASH, PASSWORDS, auth_payload, check_origin
 from .config import Settings
 from .database import Base, build_database, utcnow
 from .errors import APIError
-from .geometry import GeometryValidationError, validate_dimensions
+from .geometry import GeometryValidationError, validate_dimensions, build_geometry, geometry_for_scene, new_scene
 from .mail import issue_email_token, mail_available
 from .models import Asset, AuthToken, Job, LoginSession, Project, Revision, Tenant, User
 from .schemas import AuthTokenInput, CreateProjectInput, DemoBackgroundInput, EmailInput, ExportInput, LoginInput, RegisterInput, ResetPasswordInput, RevisionInput, SaveDraftInput
 from .storage import SupabaseStorage, build_storage
+from . import feature_models
+from .billing import models as billing_models
+from .business import enforce_item_access, workspace_access, validate_project_links
 
 logger = logging.getLogger("phoenix.api")
 
@@ -36,8 +39,9 @@ def envelope(request, data):
 
 
 def project_payload(project):
-    geometry = validate_dimensions(project.width_mm, project.height_mm, "mm")
-    return {"id": project.id, "name": project.name, "product_name": project.product_name, "brand_name": project.brand_name, "description": project.description, "width_mm": project.width_mm, "height_mm": project.height_mm, "template_id": project.template_id, "base_revision": project.base_revision, "scene": project.scene, "geometry": geometry, "created_at": project.created_at.isoformat(), "updated_at": project.updated_at.isoformat(), "approval_status": "demo_unapproved", "review_only": True}
+    geometry = geometry_for_scene(project.scene)
+    keys=("id","name","product_name","brand_name","description","width_mm","height_mm","bottom_mm","depth_mm","template_id","template_version_id","print_profile_version_id","brand_id","product_variant_id","workspace_id","material","base_revision")
+    return {**{key:getattr(project,key) for key in keys}, "scene":project.scene,"geometry":geometry,"created_at":project.created_at.isoformat(),"updated_at":project.updated_at.isoformat(),"approval_status":"requires_preflight" if project.template_version_id else "demo_unapproved","review_only":not bool(project.template_version_id and project.print_profile_version_id)}
 
 
 def asset_payload(asset):
@@ -46,13 +50,14 @@ def asset_payload(asset):
 
 def job_payload(job):
     result = {key: value for key, value in job.result.items() if key != "storage_key"} if job.result else None
-    return {"id": job.id, "project_id": job.project_id, "kind": job.kind, "status": job.status, "created_at": job.created_at.isoformat(), "updated_at": job.updated_at.isoformat(), "result": result, "error": job.error, "download_url": f"/v1/exports/{job.id}/download" if job.status == "succeeded" else None}
+    return {"id": job.id, "project_id": job.project_id, "kind": job.kind, "status": job.status, "created_at": job.created_at.isoformat(), "updated_at": job.updated_at.isoformat(), "result": result, "error": job.error, "download_url": f"/v1/exports/{job.id}/download" if job.status == "succeeded" and job.kind.endswith("_export") else None, **{key:(result or {}).get(key,0) for key in ("credit_reserved","credit_charged","credit_returned")},"cancelable":job.kind=="ai_generation" and any(u.get("status")=="queued" for u in (result or {}).get("units",[]))}
 
 
 def owned(db, model, item_id, tenant_id):
     item = db.scalar(select(model).where(model.id == str(item_id), model.tenant_id == tenant_id))
     if item is None:
         raise APIError(404, "NOT_FOUND", "요청한 항목을 찾을 수 없습니다.")
+    enforce_item_access(db,item)
     return item
 
 
@@ -78,8 +83,12 @@ def initial_scene(project):
     front = [label("brand", "front", project.brand_name or "브랜드 이름", h * 0.18, 13), label("product", "front", project.product_name, h * 0.34, 27), label("front-note", "front", "문구를 클릭해 직접 수정하세요", h * 0.69, 10)]
     back = [label("back-title", "back", project.product_name, h * 0.16, 16), label("back-info", "back", "상품 정보\n\n원재료 · 확인 필요\n중량 · 확인 필요\n보관 방법 · 확인 필요\n제조사 · 확인 필요", h * 0.31, 10)]
     back[-1]["height_mm"] = h * 0.5
-    geometry = validate_dimensions(w, h, "mm")
-    return {"schema_version": "1.0", "template_version_id": "three-side-seal-demo-v1", "geometry_hash": geometry["geometry_hash"], "active_face_id": "front", "faces": [{"id": "front", "name": "앞면", "width_mm": w, "height_mm": h, "background": "#F2EFE5", "objects": front}, {"id": "back", "name": "뒷면", "width_mm": w, "height_mm": h, "background": "#F2EFE5", "objects": back}]}
+    front[0]["binding_key"]="brand_name";front[1]["binding_key"]="product_name";back[0]["binding_key"]="product_name"
+    scene=new_scene(project.template_id,w,h,bottom_mm=project.bottom_mm,depth_mm=project.depth_mm)
+    for face in scene["faces"]:
+        face["objects"]=front if face["id"]=="front" else back if face["id"]=="back" else []
+    for key in ("brand_id","product_variant_id","workspace_id"): scene[key]=getattr(project,key)
+    return scene
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -152,7 +161,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/v1/config")
     def config(request: Request):
-        return envelope(request, {"demo_mode": settings.demo_mode, "ai_provider": "fixture" if settings.demo_mode else "unconfigured", "billing_provider": "disabled", "production_export_enabled": False, "review_export_credits": 0, "upload_max_bytes": settings.upload_limit, "supported_upload_types": ["image/png", "image/jpeg", "image/webp"], "email_verification_available": mail_available(settings), "mail_mode": "smtp" if settings.smtp_host else "local_outbox" if mail_available(settings) else "unconfigured"})
+        from .image_provider import get_capabilities
+        return envelope(request, {"demo_mode": settings.demo_mode, "ai_provider": settings.ai_provider,"ai_capabilities":get_capabilities(settings), "billing_provider":app.state.billing_settings.provider, "production_export_enabled":settings.enable_production_export, "review_export_credits": 0,"direct_upload":isinstance(storage,SupabaseStorage), "upload_max_bytes":20*1024*1024 if isinstance(storage,SupabaseStorage) else settings.upload_limit, "supported_upload_types": ["image/png", "image/jpeg", "image/webp"], "email_verification_available": mail_available(settings), "mail_mode": "smtp" if settings.smtp_host else "local_outbox" if mail_available(settings) else "unconfigured"})
 
     @app.post("/v1/auth/register", status_code=201)
     def register(body: RegisterInput, request: Request, response: Response, db=Depends(db_session)):
@@ -170,6 +180,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             db.rollback()
             raise APIError(409, "EMAIL_UNAVAILABLE", "이 이메일로 가입할 수 없습니다. 로그인해 주세요.")
         session = create_session(db, user, response, settings)
+        from .billing.service import ensure_trial
+        ensure_trial(db,user.tenant_id)
         db.commit()
         delivery = "unconfigured"
         if mail_available(settings):
@@ -187,7 +199,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         throttle_auth(db, email)
         user = db.scalar(select(User).where(User.email == email))
         valid = verify_password(body.password, user.password_hash if user else DUMMY_HASH)
-        if user is None or not valid:
+        if user is None or not valid or not user.is_active:
             raise APIError(401, "INVALID_CREDENTIALS", "이메일 또는 비밀번호를 확인해 주세요.")
         if PASSWORDS.check_needs_rehash(user.password_hash):
             user.password_hash = PASSWORDS.hash(body.password)
@@ -197,7 +209,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/auth/logout")
     def logout(request: Request, response: Response, db=Depends(db_session)):
-        _, session = require_auth(request, db, mutate=True, authorize_write=False)
+        _, session = require_auth(request, db, mutate=True, authorize_write=False,enforce_membership=False)
         db.delete(session)
         db.commit()
         response.delete_cookie(COOKIE_NAME, path="/", httponly=True, secure=settings.cookie_secure, samesite="lax")
@@ -262,26 +274,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         user, session = require_auth(request, db)
         return envelope(request, auth_payload(db, user, session))
 
-    @app.get("/v1/credits")
-    def credits(request: Request, db=Depends(db_session)):
-        require_auth(request, db)
-        return envelope(request, {"balance": 0, "reserved": 0, "mode": "demo" if settings.demo_mode else "unconfigured", "review_export_cost": 0, "payments_enabled": False, "message": "개발 데모에서는 과금과 크레딧 차감이 발생하지 않습니다."})
-
     @app.get("/v1/templates")
-    def templates(request: Request):
-        return envelope(request, {"items": [{"id": "three-side-seal", "name": "3면 실링 봉투", "version": "demo-1", "status": "demo", "approval_status": "demo_unapproved", "review_only": True, "description": "앞면과 뒷면을 편집하는 데모 구조 · 제조사 미승인", "faces": ["front", "back"], "default_width_mm": 160, "default_height_mm": 230, "min_width_mm": 60, "max_width_mm": 600, "min_height_mm": 80, "max_height_mm": 800, "seal_mm": 10, "safe_mm": 5, "bleed_mm": 3}]})
+    def templates(request: Request, db=Depends(db_session)):
+        from .registry import registry_payload
+        rows=[{"id":identity,"name":name,"version":"demo-1","status":"demo","approval_status":"demo_unapproved","review_only":True,"description":"제조사 미승인 데모 구조","faces":faces,"default_width_mm":160,"default_height_mm":230,"min_width_mm":60,"max_width_mm":600,"min_height_mm":80,"max_height_mm":800,"seal_mm":10,"safe_mm":5,"bleed_mm":3} for identity,name,faces in [("three-side-seal","3면 실링 봉투",["front","back"]),("stand-up-pouch","스탠드 파우치",["front","back","bottom"]),("folding-box","접이식 박스",["front","back","left","right","top","bottom"])]]
+        rows += [registry_payload(row) for row in db.scalars(select(feature_models.RegistryVersion).where(feature_models.RegistryVersion.kind=="template",feature_models.RegistryVersion.status=="approved",feature_models.RegistryVersion.is_demo.is_(False)))]
+        return envelope(request,{"items":rows})
+
+    @app.post("/v1/geometry/validate")
+    def validate_geometry(body:dict, request:Request):
+        if set(body)-{"template_id","width_mm","height_mm","bottom_mm","depth_mm","unit","holes"}: raise APIError(422,"GEOMETRY_FIELDS_INVALID","규격 입력 항목을 확인해 주세요.")
+        return envelope(request,build_geometry(body.get("template_id","three-side-seal"),body.get("width_mm"),body.get("height_mm"),body.get("unit","mm"),bottom_mm=body.get("bottom_mm"),depth_mm=body.get("depth_mm"),holes=body.get("holes",[])))
+
+    @app.post("/v1/geometry/barcode")
+    def barcode(body:dict, request:Request):
+        from .geometry import barcode_geometry
+        if set(body)-{"value","module_mm","bar_height_mm"}: raise APIError(422,"BARCODE_FIELDS_INVALID","바코드 입력 항목을 확인해 주세요.")
+        return envelope(request,barcode_geometry(body.get("value"),module_mm=body.get("module_mm",0.33),bar_height_mm=body.get("bar_height_mm",22.85)))
 
     @app.get("/v1/projects")
     def projects(request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db)
         rows = db.scalars(select(Project).where(Project.tenant_id == user.tenant_id).order_by(Project.updated_at.desc()).limit(100)).all()
-        return envelope(request, {"items": [project_payload(row) for row in rows]})
+        return envelope(request, {"items": [project_payload(row) for row in rows if workspace_access(db,user,row.workspace_id)]})
 
     @app.post("/v1/projects", status_code=201)
     def create_project(body: CreateProjectInput, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
-        validate_dimensions(body.width_mm, body.height_mm, "mm")
-        project = Project(tenant_id=user.tenant_id, created_by=user.id, **body.model_dump())
+        validate_project_links(db,user,body.model_dump())
+        project = Project(tenant_id=user.tenant_id, created_by=user.id, **body.model_dump(mode="json"))
         project.scene = initial_scene(project)
         db.add(project)
         db.flush()
@@ -300,11 +321,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         project = owned(db, Project, project_id, user.tenant_id)
         ensure_revision(project, body.base_revision)
         scene = body.scene.model_dump(mode="json", exclude_none=True)
-        geometry = validate_dimensions(project.width_mm, project.height_mm, "mm")
-        scene["template_version_id"] = "three-side-seal-demo-v1"
+        scene["template_version_id"] = project.template_version_id or project.template_id+"-demo-v1"
+        scene["template_kind"] = project.template_id
+        scene["bottom_mm"]=project.bottom_mm;scene["depth_mm"]=project.depth_mm
+        for key in ("brand_id","product_variant_id","workspace_id"): scene[key]=getattr(project,key)
+        geometry = geometry_for_scene(scene)
         scene["geometry_hash"] = geometry["geometry_hash"]
+        expected=build_geometry(project.template_id,project.width_mm,project.height_mm,bottom_mm=project.bottom_mm,depth_mm=project.depth_mm)
+        expected_faces={f["id"]:f for f in expected["faces"]}
+        if set(f["id"] for f in scene["faces"])!=set(expected_faces): raise APIError(422,"FACE_SET_MISMATCH","모든 편집 면을 포함해 주세요.")
         for face in scene["faces"]:
-            if face["width_mm"] != project.width_mm or face["height_mm"] != project.height_mm:
+            if face["width_mm"] != expected_faces[face["id"]]["width_mm"] or face["height_mm"] != expected_faces[face["id"]]["height_mm"]:
                 raise APIError(422, "FACE_DIMENSIONS_MISMATCH", "포장 규격과 편집 면의 크기가 다릅니다.")
             for obj in face["objects"]:
                 if obj.get("asset_id"):
@@ -345,8 +372,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return envelope(request, {"items": [{"id": row.id, "number": row.number, "reason": row.reason, "scene": row.scene, "created_at": row.created_at.isoformat()} for row in rows]})
 
     @app.post("/v1/assets", status_code=201)
-    def upload_asset(request: Request, file: UploadFile = File(...), db=Depends(db_session)):
+    def upload_asset(request: Request, file: UploadFile = File(...), project_id: str | None=Form(default=None), db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
+        project=owned(db,Project,project_id,user.tenant_id) if project_id else None
         body = file.file.read(settings.upload_limit + 1)
         if len(body) > settings.upload_limit:
             raise APIError(413, "ASSET_TOO_LARGE", f"파일은 {settings.upload_limit // (1024 * 1024)}MiB 이하로 올려 주세요.")
@@ -367,7 +395,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         asset_id = str(uuid4())
         key = f"{user.tenant_id}/assets/{asset_id}"
         storage.put(key, body, file.content_type)
-        asset = Asset(id=asset_id, tenant_id=user.tenant_id, storage_key=key, original_name=Path(file.filename or "image").name[:160], content_type=file.content_type, byte_size=len(body), width_px=width, height_px=height)
+        asset = Asset(id=asset_id, tenant_id=user.tenant_id,workspace_id=project.workspace_id if project else None, storage_key=key, original_name=Path(file.filename or "image").name[:160], content_type=file.content_type, byte_size=len(body), width_px=width, height_px=height)
         db.add(asset)
         db.commit()
         return envelope(request, asset_payload(asset))
@@ -376,6 +404,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def asset_content(asset_id: UUID, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db)
         asset = owned(db, Asset, asset_id, user.tenant_id)
+        from .asset_reconciliation import ensure_asset_available
+        ensure_asset_available(asset)
         if isinstance(storage, SupabaseStorage):
             return RedirectResponse(storage.signed_url(asset.storage_key, ttl=60), status_code=307)
         return Response(content=storage.get(asset.storage_key), media_type=asset.content_type, headers={"Content-Disposition": "inline"})
@@ -383,7 +413,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/v1/projects/{project_id}/demo-background", status_code=201)
     def demo_background(project_id: UUID, body: DemoBackgroundInput, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
-        owned(db, Project, project_id, user.tenant_id)
+        project=owned(db, Project, project_id, user.tenant_id)
         if not settings.demo_mode:
             raise APIError(422, "DEMO_DISABLED", "운영 환경에서는 데모 이미지를 생성할 수 없습니다.")
         palettes = {"forest": ("#E8EDDB", "#4B6849", "#C8D5A4"), "citrus": ("#FCEDD1", "#E8994F", "#F2C768"), "berry": ("#F2E5EA", "#86596E", "#D0A9C0")}
@@ -399,7 +429,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         asset_id = str(uuid4())
         key = f"{user.tenant_id}/assets/{asset_id}"
         storage.put(key, raw, "image/png")
-        asset = Asset(id=asset_id, tenant_id=user.tenant_id, storage_key=key, original_name=f"데모 배경-{body.palette}.png", content_type="image/png", byte_size=len(raw), width_px=768, height_px=1024, source="fixture")
+        asset = Asset(id=asset_id, tenant_id=user.tenant_id, workspace_id=project.workspace_id,storage_key=key, original_name=f"데모 배경-{body.palette}.png", content_type="image/png", byte_size=len(raw), width_px=768, height_px=1024, source="fixture")
         db.add(asset)
         db.commit()
         return envelope(request, {**asset_payload(asset), "demo": True, "label": "자체 제작 데모 이미지 · AI 생성 아님", "credits_charged": 0})
@@ -407,6 +437,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/v1/exports", status_code=202)
     def create_export(body: ExportInput, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
+        if body.kind=="production":
+            from .production_routes import create_production_export
+            return envelope(request,job_payload(create_production_export(db,user,body,request,project_payload,snapshot_revision)))
         project = owned(db, Project, body.project_id, user.tenant_id)
         ensure_revision(project, body.base_revision)
         operation_key = request.headers.get("idempotency-key", f"review:{project.id}:{body.base_revision}")
@@ -418,7 +451,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if existing.request_hash != request_hash:
                 raise APIError(409, "IDEMPOTENCY_CONFLICT", "같은 요청 식별자로 다른 작업을 보낼 수 없습니다.")
             return envelope(request, job_payload(existing))
-        count = db.scalar(select(func.count()).select_from(Job).where(Job.tenant_id == user.tenant_id, Job.created_at > utcnow() - timedelta(hours=1)))
+        count = db.scalar(select(func.count()).select_from(Job).where(Job.tenant_id == user.tenant_id,Job.kind=="review_export", Job.created_at > utcnow() - timedelta(hours=1)))
         if count >= 30:
             raise APIError(429, "EXPORT_RATE_LIMIT", "검토 파일 요청이 많습니다. 잠시 후 다시 시도해 주세요.", retryable=True)
         try:
@@ -444,7 +477,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def retry_job(job_id: UUID, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
         job = owned(db, Job, job_id, user.tenant_id)
-        if job.status != "failed":
+        if job.status != "failed" or job.kind!="review_export":
             raise APIError(409, "JOB_NOT_RETRYABLE", "실패한 작업만 다시 시도할 수 있습니다.")
         changed = db.execute(update(Job).where(Job.id == job.id, Job.status == "failed").values(status="queued", lease_id=None, error=None, updated_at=utcnow()).execution_options(synchronize_session=False))
         if changed.rowcount != 1:
@@ -457,7 +490,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def exports(project_id: UUID, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db)
         owned(db, Project, project_id, user.tenant_id)
-        rows = db.scalars(select(Job).where(Job.tenant_id == user.tenant_id, Job.project_id == str(project_id)).order_by(Job.created_at.desc()).limit(100)).all()
+        rows = db.scalars(select(Job).where(Job.tenant_id == user.tenant_id, Job.project_id == str(project_id),Job.kind.in_(["review_export","production_export"])).order_by(Job.created_at.desc()).limit(100)).all()
         return envelope(request, {"items": [job_payload(row) for row in rows]})
 
     @app.get("/v1/exports/{job_id}/download")
@@ -466,10 +499,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         job = owned(db, Job, job_id, user.tenant_id)
         if job.status != "succeeded" or not job.result or not job.result.get("storage_key"):
             raise APIError(409, "EXPORT_NOT_READY", "검토 파일을 준비하고 있습니다.", retryable=True)
+        extension="zip" if job.kind=="production_export" else "pdf"
+        name=f"phoenix-{job.kind}-{job.id}.{extension}"
         if isinstance(storage, SupabaseStorage):
-            return RedirectResponse(storage.signed_url(job.result["storage_key"], ttl=60, download_name=f"phoenix-review-{job.id}.pdf"), status_code=307)
+            return RedirectResponse(storage.signed_url(job.result["storage_key"], ttl=60, download_name=name), status_code=307)
         content = storage.get(job.result["storage_key"])
-        return Response(content=content, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="phoenix-review-{job.id}.pdf"'})
+        return Response(content=content, media_type="application/zip" if extension=="zip" else "application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     @app.get("/v1/internal/jobs/process")
     @app.post("/v1/internal/jobs/process")
@@ -477,8 +512,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         supplied = request.headers.get("authorization", "")
         if not settings.worker_secret or not hmac.compare_digest(supplied, f"Bearer {settings.worker_secret}"):
             raise APIError(404, "NOT_FOUND", "요청한 항목을 찾을 수 없습니다.")
-        from .jobs import process_pending_jobs
-        return envelope(request, {"processed": process_pending_jobs(session_factory, storage, limit=2)})
+        from .worker_service import process_all_jobs
+        breakdown=process_all_jobs(session_factory,storage,settings)
+        if any(value=="retry_pending" for value in breakdown.values()):
+            raise APIError(503,"WORKER_RETRY_PENDING","일부 백그라운드 작업을 다음 실행에서 다시 확인합니다.",{"breakdown":breakdown},retryable=True)
+        return envelope(request, {"processed":sum(v for v in breakdown.values() if isinstance(v,int)),"breakdown":breakdown})
+
+    from .billing.routes import install_billing_routes
+    from .business import install_business_routes
+    from .registry import install_registry_routes
+    from .ai_routes import install_ai_routes, prepare_ai_quote
+    from .production_routes import install_production_routes, prepare_production_quote
+    def prepare_quote(db,user,body):
+        if body["action"].startswith("image."): return prepare_ai_quote(db,user,body,settings)
+        if body["action"].startswith("export.production"):
+            return prepare_production_quote(db,user,body,settings,project_payload,snapshot_revision,storage=storage)
+        raise APIError(422,"QUOTE_ACTION_INVALID","이 작업에는 견적이 필요하지 않습니다.")
+    app.state.prepare_quote=prepare_quote
+    install_billing_routes(app,db_session)
+    install_business_routes(app,db_session,project_payload,snapshot_revision)
+    install_registry_routes(app,db_session,project_payload,snapshot_revision)
+    install_ai_routes(app,db_session,job_payload,snapshot_revision)
+    install_production_routes(app,db_session,owned,project_payload,snapshot_revision)
+    from .uploads import install_upload_routes
+    install_upload_routes(app,db_session,asset_payload)
 
     return app
 

@@ -124,25 +124,26 @@ def validate_scene(scene: dict, *, check_safe_area: bool = True) -> dict:
     """Return a deep copy; never silently resize or mutate customer input."""
     if not isinstance(scene, dict) or scene.get("schema_version") != "1.0":
         raise GeometryValidationError("INVALID_SCHEMA", "지원하는 장면 형식은 1.0입니다.", "schema_version")
-    if scene.get("template_version_id", DEMO_TEMPLATE_ID) != DEMO_TEMPLATE_ID:
-        raise GeometryValidationError("UNSUPPORTED_TEMPLATE", "지원하지 않는 템플릿 버전입니다.", "template_version_id")
+    from .structures import geometry_for_scene
+    from .barcodes import validate_barcode_object
+    from .collisions import collision_report
     normalized = deepcopy(scene)
     faces = normalized.get("faces")
-    if not isinstance(faces, list) or len(faces) != 2 or any(not isinstance(f, dict) for f in faces):
-        raise GeometryValidationError("INVALID_FACES", "앞면과 뒷면을 모두 포함해 주세요.", "faces")
-    if {face.get("id") for face in faces} != {"front", "back"}:
-        raise GeometryValidationError("INVALID_FACES", "앞면과 뒷면은 각각 한 번씩 필요합니다.", "faces")
-    if normalized.get("active_face_id") not in ("front", "back"):
+    if not isinstance(faces,list) or not faces or any(not isinstance(f,dict) for f in faces):
+        raise GeometryValidationError("INVALID_FACES", "구조의 모든 면을 포함해 주세요.", "faces")
+    geometry = geometry_for_scene(normalized)
+    expected = {f["id"]: f for f in geometry["faces"]}
+    if len(faces)!=len(expected) or {f.get("id") for f in faces}!=set(expected):
+        raise GeometryValidationError("INVALID_FACES", "구조의 모든 면은 각각 한 번씩 필요합니다.", "faces")
+    if normalized.get("active_face_id") not in expected:
         raise GeometryValidationError("INVALID_FACE", "선택한 면을 확인해 주세요.", "active_face_id")
-    dims = None
     seen_ids: set[str] = set()
     for face in faces:
         prefix = f"faces.{face['id']}"
-        geometry = validate_dimensions(face.get("width_mm"), face.get("height_mm"), "mm")
-        current_dims = (geometry["width_mm"], geometry["height_mm"])
-        if dims is not None and dims != current_dims:
-            raise GeometryValidationError("FACE_SIZE_MISMATCH", "앞면과 뒷면의 완성 치수는 같아야 합니다.", prefix)
-        dims = current_dims
+        expected_face = expected[face["id"]]
+        current_dims = (normalize_mm(face.get("width_mm"),"mm"), normalize_mm(face.get("height_mm"),"mm"))
+        if current_dims != (expected_face["width_mm"],expected_face["height_mm"]):
+            raise GeometryValidationError("FACE_SIZE_MISMATCH", "구조와 편집 면의 치수가 일치하지 않습니다.", prefix)
         face["width_mm"], face["height_mm"] = current_dims
         if not isinstance(face.get("name", ""), str) or len(face.get("name", "")) > 100:
             raise GeometryValidationError("INVALID_FACE_NAME", "면 이름은 100자 이하의 문자열이어야 합니다.", prefix)
@@ -160,7 +161,7 @@ def validate_scene(scene: dict, *, check_safe_area: bool = True) -> dict:
                 raise GeometryValidationError("INVALID_OBJECT_ID", "객체 ID는 중복되지 않는 식별자여야 합니다.", f"{field}.id")
             seen_ids.add(oid)
             kind = obj.get("type")
-            if kind not in ("text", "image", "shape") or obj.get("face_id") != face["id"]:
+            if kind not in ("text", "image", "shape", "barcode") or obj.get("face_id") != face["id"]:
                 raise GeometryValidationError("INVALID_OBJECT_TYPE", "객체 유형과 면을 확인해 주세요.", field)
             if any(key in obj for key in ("url", "src", "asset_url", "image_url")):
                 raise GeometryValidationError("EXTERNAL_ASSET_FORBIDDEN", "외부 이미지 주소 대신 업로드된 자산을 사용해 주세요.", field)
@@ -203,13 +204,20 @@ def validate_scene(scene: dict, *, check_safe_area: bool = True) -> dict:
                 asset_id = obj.get("asset_id")
                 if not isinstance(asset_id, str) or not IDENTIFIER_RE.fullmatch(asset_id):
                     raise GeometryValidationError("EXTERNAL_ASSET_FORBIDDEN", "업로드된 자산 ID만 사용할 수 있습니다.", f"{field}.asset_id")
+            if kind == "barcode":
+                validate_barcode_object(obj)
             if not obj["visible"] or not obj["print_enabled"]:
                 continue
-            region = geometry["faces"][0]["regions"]["safe" if kind == "text" and check_safe_area else "bleed"]
+            region = expected_face["regions"]["safe" if kind in ("text","barcode") and check_safe_area else "bleed"]
             left, top = region["x_mm"], region["y_mm"]
             right, bottom = left + region["width_mm"], top + region["height_mm"]
             if any(x < left - EPSILON_MM or x > right + EPSILON_MM or y < top - EPSILON_MM or y > bottom + EPSILON_MM for x, y in _corners(obj)):
-                raise GeometryValidationError("TEXT_OUTSIDE_SAFE_AREA" if kind == "text" and check_safe_area else "OBJECT_OUTSIDE_BLEED", "객체가 안전 영역 또는 허용 블리드를 벗어났습니다.", field)
+                raise GeometryValidationError("TEXT_OUTSIDE_SAFE_AREA" if kind in ("text","barcode") and check_safe_area else "OBJECT_OUTSIDE_BLEED", "객체가 안전 영역 또는 허용 블리드를 벗어났습니다.", field)
+    if check_safe_area:
+        issues = collision_report(normalized,geometry)
+        if issues:
+            problem=issues[0]
+            raise GeometryValidationError(problem["code"],problem["message"],f"faces.{problem.get("face_id")}.objects.{problem.get("object_id") or problem.get("hole_id")}")
     return normalized
 
 

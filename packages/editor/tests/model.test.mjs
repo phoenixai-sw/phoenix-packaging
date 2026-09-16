@@ -34,6 +34,50 @@ test("text safe area is 15mm, not the 10mm sealing boundary; rotated corners are
   assert.equal(safeWarnings(face([object({ x_mm: 12 })])).length, 1);
   assert.equal(safeWarnings(face([object({ rotation_deg: 90 })])).length, 1);
 });
+test("structural safe regions apply to both text and barcodes on narrow folded faces", () => {
+  const safe = { x_mm: 5, y_mm: 5, width_mm: 50, height_mm: 80 };
+  const narrow = { ...face([]), width_mm: 60, height_mm: 90 };
+  assert.equal(
+    safeWarnings({ ...narrow, objects: [object({ x_mm: 5, y_mm: 5 })] }, safe)
+      .length,
+    0,
+  );
+  assert.equal(
+    safeWarnings(
+      { ...narrow, objects: [object({ type: "barcode", x_mm: 4, y_mm: 5 })] },
+      safe,
+    ).length,
+    1,
+  );
+  assert.equal(
+    safeWarnings(
+      {
+        ...narrow,
+        objects: [object({ type: "barcode", x_mm: 5, y_mm: 5, width_mm: 51 })],
+      },
+      safe,
+    ).length,
+    1,
+  );
+  assert.equal(
+    safeWarnings(
+      {
+        ...narrow,
+        objects: [
+          object({
+            type: "image",
+            x_mm: 0,
+            y_mm: 0,
+            width_mm: 60,
+            height_mm: 90,
+          }),
+        ],
+      },
+      safe,
+    ).length,
+    0,
+  );
+});
 test("full bleed imagery allowed through 3mm but important text never bypasses safe area", () => {
   assert.equal(
     safeWarnings(

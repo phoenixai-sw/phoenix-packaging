@@ -47,8 +47,9 @@ export default function Pricing() {
         <div className="alert alert-info pricing-notice">
           <Info size={18} />
           <span>
-            아래는 출시 예정 요금의 초기 제안입니다. 현재 결제·구독은 제공하지
-            않으며, 개발 시험 기능을 무료로 이용할 수 있습니다.
+            아래는 초기 운영 정책 기준의 요금입니다. 결제 가능 여부와 시험
+            모드는 계정의 구독 화면에서 확인하세요. AI 작업은 실행 전에 크레딧
+            견적을 확인합니다.
           </span>
         </div>
         <div className="pricing-grid">
@@ -82,7 +83,7 @@ export default function Pricing() {
                 className={`button full-width ${plan.name === "Pro" ? "button-dark" : "button-light"}`}
                 href="/auth"
               >
-                개발 시험 시작하기 <ArrowUpRight size={17} />
+                계정에서 요금제 확인 <ArrowUpRight size={17} />
               </Link>
             </article>
           ))}

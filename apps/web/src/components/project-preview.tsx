@@ -1,4 +1,46 @@
 import type { Project } from "@editor/model";
+import { ean13Geometry } from "@preview3d/barcode";
+function BarcodePreview({
+  value,
+  moduleMm,
+  barHeight,
+}: {
+  value: string;
+  moduleMm?: number;
+  barHeight?: number;
+}) {
+  try {
+    const geometry = ean13Geometry(value, moduleMm, barHeight);
+    return (
+      <g>
+        <rect
+          width={geometry.width_mm}
+          height={geometry.height_mm}
+          fill="white"
+        />
+        {geometry.bars.map((bar, i) => (
+          <rect
+            key={i}
+            x={bar.x_mm}
+            width={bar.width_mm}
+            height={geometry.bar_height_mm}
+            fill="black"
+          />
+        ))}
+        <text
+          x={geometry.width_mm / 2}
+          y={geometry.height_mm - 1}
+          textAnchor="middle"
+          fontSize={3}
+        >
+          {value}
+        </text>
+      </g>
+    );
+  } catch {
+    return null;
+  }
+}
 export function ProjectPreview({ project }: { project: Project }) {
   const face =
     project.scene?.faces?.find((f) => f.id === "front") ||
@@ -45,6 +87,12 @@ export function ProjectPreview({ project }: { project: Project }) {
                   {o.text}
                 </div>
               </foreignObject>
+            ) : o.type === "barcode" ? (
+              <BarcodePreview
+                value={o.barcode_value || ""}
+                moduleMm={o.module_mm}
+                barHeight={o.bar_height_mm}
+              />
             ) : o.type === "image" ? (
               <image
                 href={`/api/v1/assets/${o.asset_id}/content`}
@@ -72,6 +120,19 @@ export function ProjectPreview({ project }: { project: Project }) {
               />
             )}
           </g>
+        ))}
+      {project.scene.holes
+        ?.filter((h) => h.face_id === face.id)
+        .map((h) => (
+          <circle
+            key={h.id}
+            cx={h.center_x_mm}
+            cy={h.center_y_mm}
+            r={h.diameter_mm / 2}
+            fill="white"
+            stroke="#cb8769"
+            strokeWidth={0.3}
+          />
         ))}
     </svg>
   );

@@ -2,7 +2,7 @@
 // Runtime geometry and output preflight are additional to these structural types.
 
 export type Face = {
-  id: "front" | "back";
+  id: "front" | "back" | "bottom" | "left" | "right" | "top";
   name: string;
   width_mm: number;
   height_mm: number;
@@ -10,10 +10,18 @@ export type Face = {
   objects?: Array<SceneObject>;
 };
 
+export type Hole = {
+  id: string;
+  face_id: "front" | "back" | "bottom" | "left" | "right" | "top";
+  center_x_mm: number;
+  center_y_mm: number;
+  diameter_mm: number;
+};
+
 export type SceneObject = {
   id: string;
-  type: "text" | "image" | "shape";
-  face_id: "front" | "back";
+  type: "text" | "image" | "shape" | "barcode";
+  face_id: "front" | "back" | "bottom" | "left" | "right" | "top";
   x_mm: number;
   y_mm: number;
   width_mm: number;
@@ -37,12 +45,25 @@ export type SceneObject = {
   stroke?: string | null;
   stroke_width_mm?: number | null;
   shape?: "rect" | "ellipse" | "circle" | null;
+  barcode_value?: string | null;
+  module_mm?: number | null;
+  bar_height_mm?: number | null;
+  barcode_owned?: boolean;
 };
 
 export type Scene = {
   schema_version?: "1.0";
-  template_version_id?: "three-side-seal-demo-v1" | null;
+  template_version_id?: string | null;
+  template_kind?: "three-side-seal" | "stand-up-pouch" | "folding-box" | null;
+  bottom_mm?: number | null;
+  depth_mm?: number | null;
+  holes?: Array<Hole>;
+  confirmed_fields?: Array<string>;
+  reviewed_face_ids?: Array<"front" | "back" | "bottom" | "left" | "right" | "top">;
+  brand_id?: string | null;
+  product_variant_id?: string | null;
+  workspace_id?: string | null;
   geometry_hash?: string | null;
-  active_face_id?: "front" | "back";
+  active_face_id?: "front" | "back" | "bottom" | "left" | "right" | "top";
   faces: Array<Face>;
 };

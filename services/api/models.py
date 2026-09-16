@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base, new_id, utcnow
@@ -22,6 +22,8 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(Text)
     role: Mapped[str] = mapped_column(String(20), default="owner")
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -32,6 +34,7 @@ class LoginSession(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     csrf_token: Mapped[str] = mapped_column(String(128))
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    active_tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -66,6 +69,14 @@ class Project(Base):
     template_id: Mapped[str] = mapped_column(String(80))
     width_mm: Mapped[float] = mapped_column(Float)
     height_mm: Mapped[float] = mapped_column(Float)
+    bottom_mm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    depth_mm: Mapped[float | None] = mapped_column(Float, nullable=True)
+    brand_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    product_variant_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    template_version_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    print_profile_version_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    material: Mapped[str] = mapped_column(String(120), default="", server_default="")
     base_revision: Mapped[int] = mapped_column(Integer, default=1)
     scene: Mapped[dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -95,12 +106,14 @@ class Asset(Base):
     width_px: Mapped[int] = mapped_column(Integer)
     height_px: Mapped[int] = mapped_column(Integer)
     source: Mapped[str] = mapped_column(String(40), default="upload")
+    workspace_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class Job(Base):
     __tablename__ = "jobs"
-    __table_args__ = (UniqueConstraint("tenant_id", "operation_key", name="uq_job_operation_key"), Index("uq_running_export_tenant", "tenant_id", unique=True, postgresql_where=text("status = 'running'"), sqlite_where=text("status = 'running'")))
+    __table_args__ = (UniqueConstraint("tenant_id", "operation_key", name="uq_job_operation_key"), Index("uq_running_export_tenant", "tenant_id", unique=True, postgresql_where=text("status = 'running' AND kind IN ('review_export', 'production_export')"), sqlite_where=text("status = 'running' AND kind IN ('review_export', 'production_export')")))
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)

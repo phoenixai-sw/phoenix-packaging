@@ -22,9 +22,9 @@ def process_pending_jobs(session_factory, storage, limit=1) -> int:
         with session_factory() as db:
             # Crash recovery: a result is immutable and may safely be recreated at
             # the same private key. Normal requests never reset running work.
-            db.execute(update(Job).where(Job.status == "running", Job.updated_at < utcnow() - timedelta(minutes=15)).values(status="queued", lease_id=None, updated_at=utcnow()))
-            active_tenants = select(Job.tenant_id).where(Job.status == "running")
-            candidate = db.scalar(select(Job).where(Job.status == "queued", Job.tenant_id.not_in(active_tenants)).order_by(Job.created_at).limit(1).with_for_update(skip_locked=True))
+            db.execute(update(Job).where(Job.kind == "review_export", Job.status == "running", Job.updated_at < utcnow() - timedelta(minutes=15)).values(status="queued", lease_id=None, updated_at=utcnow()))
+            active_tenants = select(Job.tenant_id).where(Job.status == "running", Job.kind.in_(["review_export", "production_export"]))
+            candidate = db.scalar(select(Job).where(Job.kind == "review_export", Job.status == "queued", Job.tenant_id.not_in(active_tenants)).order_by(Job.created_at).limit(1).with_for_update(skip_locked=True))
             if candidate is None:
                 db.commit()
                 break

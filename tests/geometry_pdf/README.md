@@ -23,8 +23,20 @@ the bundled Python runtime and visually verified after Poppler rendering.
 The sample has two face pages and embedded Korean text. This is development
 evidence, not a manufacturer-approved print sample.
 
-2026-09-16: 32 tests passed on bundled ReportLab 4.4.9/Python 3.12; the app's
-locked environment is verified separately by the main acceptance run.
+2026-09-16 extension: 66 tests pass in the API environment. Added AC07–12/P5
+checks cover actual PDF EAN-13 decoding with ZXing-C++, leading zero preservation,
+TypeScript encoder parity, protected quiet zones/folds/holes, exact stand-up and
+box face/net dimensions, six outward face normals and non-mirrored orientation,
+net flap/glue non-overlap, exact approved manufacturer dimensions and materials,
+RGB six-file bundle hashes and atomic first/repeat credit capture. Failure tests
+include revision changes, revoked approval after upload, disabled operations,
+lost actor access and storage failure without credit capture or entitlement.
+
+`generate_structural_samples.py` creates demo stand-up (4 pages) and folding box
+(7 pages) samples, including flat nets. Poppler rendered these artifacts and the
+face markers, gusset fold, holes, barcode and glue/flaps were visually inspected.
+All are intentionally labeled manufacturer-unapproved. They do not establish
+real manufacturer approval, physical barcode scanning or PDF/X conformance.
 
 Regenerate the sample using `python tests/geometry_pdf/generate_sample.py`.
 The artifact includes Korean, Latin, numbers, punctuation, vector shapes,

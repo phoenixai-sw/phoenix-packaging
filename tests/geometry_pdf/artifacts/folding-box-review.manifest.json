@@ -1,0 +1,153 @@
+{
+  "schema_version": "1.0",
+  "kind": "review",
+  "review_only": true,
+  "production_enabled": false,
+  "approval_status": "demo_unapproved",
+  "template_version_id": "folding-box-demo-v1",
+  "project_id": "structural-qa",
+  "revision": 1,
+  "revision_id": null,
+  "geometry_hash": "0b355bc1f669c6babdf0ed48e19810beccb860378e1bf0f0bc84161c41602c8e",
+  "generated_at": "2026-09-16T12:53:33.380823+00:00",
+  "sha256": "51605ad35f64e11dc1c1cddf0aca3b51a3470485bced72800487469e6877f69d",
+  "font": {
+    "id": "NotoSansKR",
+    "sha256": "8e4000a13809588d46c1b791e874cd4567b6283eeb9d2e6835a3136a871a6bd0",
+    "embedded": true,
+    "license": "OFL-1.1"
+  },
+  "pages": [
+    {
+      "face_id": "front",
+      "width_mm": 160.0,
+      "height_mm": 230.0
+    },
+    {
+      "face_id": "right",
+      "width_mm": 60.0,
+      "height_mm": 230.0
+    },
+    {
+      "face_id": "back",
+      "width_mm": 160.0,
+      "height_mm": 230.0
+    },
+    {
+      "face_id": "left",
+      "width_mm": 60.0,
+      "height_mm": 230.0
+    },
+    {
+      "face_id": "top",
+      "width_mm": 160.0,
+      "height_mm": 60.0
+    },
+    {
+      "face_id": "bottom",
+      "width_mm": 160.0,
+      "height_mm": 60.0
+    },
+    {
+      "face_id": "net",
+      "width_mm": 455.0,
+      "height_mm": 350.0
+    }
+  ],
+  "warnings": [
+    {
+      "code": "DEMO_UNAPPROVED",
+      "message": "데모 구조 · 제조사 미승인"
+    },
+    {
+      "code": "REVIEW_ONLY",
+      "message": "검토용 · 제작 사용 불가"
+    },
+    {
+      "code": "RGB_REVIEW",
+      "message": "RGB 검토 PDF입니다. PDF/X·CMYK·별색·화이트 잉크 출력이 아닙니다."
+    },
+    {
+      "code": "FINISHED_SIZE",
+      "message": "페이지는 완성 치수와 같습니다. 바깥 블리드는 검토 페이지에서 잘립니다."
+    }
+  ],
+  "original_texts": [
+    {
+      "object_id": "front-label",
+      "face_id": "front",
+      "text": "앞면 ↑\nFRONT / 좌 → 우",
+      "rendered_lines": [
+        "앞면 ↑",
+        "FRONT / 좌 → 우"
+      ],
+      "visible": true,
+      "print_enabled": true
+    },
+    {
+      "object_id": "right-label",
+      "face_id": "right",
+      "text": "오른쪽 ↑\nRIGHT / 좌 → 우",
+      "rendered_lines": [
+        "오른쪽 ↑",
+        "RIGHT / 좌 → ",
+        "우"
+      ],
+      "visible": true,
+      "print_enabled": true
+    },
+    {
+      "object_id": "back-label",
+      "face_id": "back",
+      "text": "뒷면 ↑\nBACK / 좌 → 우",
+      "rendered_lines": [
+        "뒷면 ↑",
+        "BACK / 좌 → 우"
+      ],
+      "visible": true,
+      "print_enabled": true
+    },
+    {
+      "object_id": "left-label",
+      "face_id": "left",
+      "text": "왼쪽 ↑\nLEFT / 좌 → 우",
+      "rendered_lines": [
+        "왼쪽 ↑",
+        "LEFT / 좌 → 우"
+      ],
+      "visible": true,
+      "print_enabled": true
+    },
+    {
+      "object_id": "top-label",
+      "face_id": "top",
+      "text": "윗면 ↑\nTOP / 좌 → 우",
+      "rendered_lines": [
+        "윗면 ↑",
+        "TOP / 좌 → 우"
+      ],
+      "visible": true,
+      "print_enabled": true
+    },
+    {
+      "object_id": "bottom-label",
+      "face_id": "bottom",
+      "text": "바닥 ↑\nBOTTOM / 좌 → 우",
+      "rendered_lines": [
+        "바닥 ↑",
+        "BOTTOM / 좌 → 우"
+      ],
+      "visible": true,
+      "print_enabled": true
+    }
+  ],
+  "capabilities": {
+    "vector_text": true,
+    "embedded_fonts": true,
+    "original_raster_assets": true,
+    "pdf_x": false,
+    "cmyk": false,
+    "spot_colors": false,
+    "production": false
+  }
+}

@@ -6,7 +6,11 @@
         "id": {
           "enum": [
             "front",
-            "back"
+            "back",
+            "bottom",
+            "left",
+            "right",
+            "top"
           ],
           "title": "Id",
           "type": "string"
@@ -18,14 +22,14 @@
           "type": "string"
         },
         "width_mm": {
-          "maximum": 600,
-          "minimum": 60,
+          "maximum": 800,
+          "minimum": 20,
           "title": "Width Mm",
           "type": "number"
         },
         "height_mm": {
           "maximum": 800,
-          "minimum": 80,
+          "minimum": 20,
           "title": "Height Mm",
           "type": "number"
         },
@@ -53,6 +57,55 @@
       "title": "Face",
       "type": "object"
     },
+    "Hole": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9_-]{1,100}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "face_id": {
+          "enum": [
+            "front",
+            "back",
+            "bottom",
+            "left",
+            "right",
+            "top"
+          ],
+          "title": "Face Id",
+          "type": "string"
+        },
+        "center_x_mm": {
+          "maximum": 2000,
+          "minimum": -2000,
+          "title": "Center X Mm",
+          "type": "number"
+        },
+        "center_y_mm": {
+          "maximum": 2000,
+          "minimum": -2000,
+          "title": "Center Y Mm",
+          "type": "number"
+        },
+        "diameter_mm": {
+          "maximum": 10,
+          "minimum": 4,
+          "title": "Diameter Mm",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "face_id",
+        "center_x_mm",
+        "center_y_mm",
+        "diameter_mm"
+      ],
+      "title": "Hole",
+      "type": "object"
+    },
     "SceneObject": {
       "additionalProperties": false,
       "properties": {
@@ -65,7 +118,8 @@
           "enum": [
             "text",
             "image",
-            "shape"
+            "shape",
+            "barcode"
           ],
           "title": "Type",
           "type": "string"
@@ -73,7 +127,11 @@
         "face_id": {
           "enum": [
             "front",
-            "back"
+            "back",
+            "bottom",
+            "left",
+            "right",
+            "top"
           ],
           "title": "Face Id",
           "type": "string"
@@ -318,6 +376,52 @@
           ],
           "default": null,
           "title": "Shape"
+        },
+        "barcode_value": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9]{13}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Barcode Value"
+        },
+        "module_mm": {
+          "anyOf": [
+            {
+              "maximum": 0.66,
+              "minimum": 0.264,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Module Mm"
+        },
+        "bar_height_mm": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 18.28,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bar Height Mm"
+        },
+        "barcode_owned": {
+          "default": false,
+          "title": "Barcode Owned",
+          "type": "boolean"
         }
       },
       "required": [
@@ -344,7 +448,7 @@
     "template_version_id": {
       "anyOf": [
         {
-          "const": "three-side-seal-demo-v1",
+          "maxLength": 100,
           "type": "string"
         },
         {
@@ -353,6 +457,122 @@
       ],
       "default": null,
       "title": "Template Version Id"
+    },
+    "template_kind": {
+      "anyOf": [
+        {
+          "enum": [
+            "three-side-seal",
+            "stand-up-pouch",
+            "folding-box"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Template Kind"
+    },
+    "bottom_mm": {
+      "anyOf": [
+        {
+          "maximum": 180,
+          "minimum": 30,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Bottom Mm"
+    },
+    "depth_mm": {
+      "anyOf": [
+        {
+          "maximum": 300,
+          "minimum": 30,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Depth Mm"
+    },
+    "holes": {
+      "items": {
+        "$ref": "#/$defs/Hole"
+      },
+      "maxItems": 8,
+      "title": "Holes",
+      "type": "array"
+    },
+    "confirmed_fields": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 30,
+      "title": "Confirmed Fields",
+      "type": "array"
+    },
+    "reviewed_face_ids": {
+      "items": {
+        "enum": [
+          "front",
+          "back",
+          "bottom",
+          "left",
+          "right",
+          "top"
+        ],
+        "type": "string"
+      },
+      "maxItems": 6,
+      "title": "Reviewed Face Ids",
+      "type": "array"
+    },
+    "brand_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Brand Id"
+    },
+    "product_variant_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Product Variant Id"
+    },
+    "workspace_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Workspace Id"
     },
     "geometry_hash": {
       "anyOf": [
@@ -371,7 +591,11 @@
       "default": "front",
       "enum": [
         "front",
-        "back"
+        "back",
+        "bottom",
+        "left",
+        "right",
+        "top"
       ],
       "title": "Active Face Id",
       "type": "string"
@@ -380,7 +604,7 @@
       "items": {
         "$ref": "#/$defs/Face"
       },
-      "maxItems": 2,
+      "maxItems": 6,
       "minItems": 2,
       "title": "Faces",
       "type": "array"

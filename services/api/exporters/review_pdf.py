@@ -23,7 +23,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
 
-from ..geometry import DEMO_TEMPLATE_ID, GeometryValidationError, validate_dimensions, validate_scene
+from ..geometry import DEMO_TEMPLATE_ID, GeometryValidationError, validate_scene, geometry_for_scene, holes_for_face, barcode_geometry
 
 ROOT = Path(__file__).resolve().parents[3]
 FONT_PATH = ROOT / "fixtures" / "fonts" / "NotoSansKR-Regular.ttf"
@@ -170,6 +170,16 @@ def _draw_object(canvas: Canvas, obj: dict, face_height: float, resolver: AssetR
         if effective_ppi < 300:
             warnings.append({"code": "LOW_PPI", "object_id": obj["id"], "effective_ppi": round(effective_ppi, 1),
                              "message": "원본 해상도가 300ppi 미만입니다. 제조사 기준 확인이 필요합니다."})
+    elif kind == "barcode":
+        barcode = barcode_geometry(obj["barcode_value"], obj["module_mm"], obj["bar_height_mm"])
+        canvas.setFillColor(HexColor("#ffffff"))
+        canvas.setFillAlpha(1)
+        canvas.rect(0, -height, width, height, fill=1, stroke=0)
+        canvas.setFillColor(HexColor("#000000"))
+        for bar in barcode["bars"]:
+            canvas.rect(bar["x_mm"] * mm, -barcode["bar_height_mm"] * mm, bar["width_mm"] * mm, barcode["bar_height_mm"] * mm, fill=1, stroke=0)
+        canvas.setFont(FONT_ID, 9 * obj["module_mm"] / 0.33)
+        canvas.drawCentredString(width/2, -height + 1.2 * mm, barcode["value"])
     else:
         canvas.setFillColor(HexColor(obj.get("fill") or obj["color"]))
         canvas.setStrokeColor(HexColor(obj.get("stroke") or obj["color"]))
@@ -184,19 +194,19 @@ def _draw_object(canvas: Canvas, obj: dict, face_height: float, resolver: AssetR
     canvas.restoreState()
 
 
-def _draw_guides(canvas: Canvas, face: dict, page: int) -> None:
+def _draw_guides(canvas: Canvas, face: dict, page: int, total: int, structural_face: dict) -> None:
     width, height = face["width_mm"], face["height_mm"]
-    regions = validate_dimensions(width, height, "mm")["faces"][0]["regions"]
+    regions = structural_face["regions"]
     canvas.saveState()
     for region in regions["no_print"]:
         canvas.setFillColor(Color(0.96, 0.68, 0.18, alpha=0.12))
         canvas.rect(region["x_mm"] * mm, (height - region["y_mm"] - region["height_mm"]) * mm, region["width_mm"] * mm, region["height_mm"] * mm, fill=1, stroke=0)
     canvas.setStrokeColor(HexColor("#db9138"))
     canvas.setLineWidth(0.2 * mm)
-    for x in (10, width - 10):
-        canvas.line(x * mm, 0, x * mm, height * mm)
-    for y in (10, height - 10):
-        canvas.line(0, y * mm, width * mm, y * mm)
+    for region in regions["no_print"]:
+        canvas.rect(region["x_mm"]*mm,(height-region["y_mm"]-region["height_mm"])*mm,region["width_mm"]*mm,region["height_mm"]*mm,fill=0,stroke=1)
+    for fold in regions.get("fold",[]):
+        canvas.line(fold["x1_mm"]*mm,(height-fold["y1_mm"])*mm,fold["x2_mm"]*mm,(height-fold["y2_mm"])*mm)
     safe = regions["safe"]
     canvas.setStrokeColor(HexColor("#288f82"))
     canvas.setDash(2 * mm, 1.5 * mm)
@@ -217,7 +227,7 @@ def _draw_guides(canvas: Canvas, face: dict, page: int) -> None:
     canvas.setFont(FONT_ID, size * 0.76)
     canvas.drawCentredString(width * mm / 2, (height - 7.4) * mm, second)
     canvas.setFillColor(HexColor("#453b38"))
-    footer = f"{face['name']}  |  {width:g} × {height:g} mm  |  1:1  |  {page}/2"
+    footer = f"{face['name']}  |  {width:g} × {height:g} mm  |  1:1  |  {page}/{total}"
     size = min(8, (width - 24) * mm / pdfmetrics.stringWidth(footer, FONT_ID, 1))
     canvas.setFont(FONT_ID, size)
     canvas.drawCentredString(width * mm / 2, 5.4 * mm, footer)
@@ -228,15 +238,67 @@ def _draw_guides(canvas: Canvas, face: dict, page: int) -> None:
     canvas.restoreState()
 
 
+def _draw_holes(canvas: Canvas, scene: dict, face: dict, *, guides: bool) -> None:
+    for hole in holes_for_face(scene,face["id"]):
+        x,y=hole["center_x_mm"]*mm,(face["height_mm"]-hole["center_y_mm"])*mm
+        canvas.saveState()
+        canvas.setFillColor(HexColor("#ffffff"))
+        canvas.circle(x,y,hole["diameter_mm"]*mm/2,fill=1,stroke=0)
+        if guides:
+            canvas.setStrokeColor(HexColor("#dc4364"))
+            canvas.setLineWidth(.2*mm)
+            canvas.circle(x,y,hole["diameter_mm"]*mm/2,fill=0,stroke=1)
+            canvas.setDash(mm,mm)
+            canvas.circle(x,y,(hole["diameter_mm"]/2+2)*mm,fill=0,stroke=1)
+        canvas.restoreState()
+
+
+def _draw_net(canvas: Canvas, scene: dict, geometry: dict, resolver, warnings) -> dict:
+    """Review-only assembly sheet includes every actual panel, flap and glue tab."""
+    w,h=geometry["net_width_mm"],geometry["net_height_mm"]
+    canvas.setPageSize((w*mm,h*mm))
+    canvas.setTrimBox((0,0,w*mm,h*mm)); canvas.setBleedBox((0,0,w*mm,h*mm))
+    lookup={face["id"]:face for face in scene["faces"]}
+    for structural in geometry["faces"]:
+        face=lookup[structural["id"]]; net=structural["net"]
+        canvas.saveState(); canvas.translate(net["x_mm"]*mm,(h-net["y_mm"]-face["height_mm"])*mm)
+        if net.get("rotation_deg")==180:
+            canvas.translate(face["width_mm"]*mm,face["height_mm"]*mm);canvas.rotate(180)
+        canvas.setFillColor(HexColor(face["background"]))
+        canvas.rect(0,0,face["width_mm"]*mm,face["height_mm"]*mm,fill=1,stroke=0)
+        for obj in sorted(face["objects"],key=lambda o:o["z_index"]):
+            _draw_object(canvas,obj,face["height_mm"],resolver,warnings)
+        _draw_holes(canvas,scene,face,guides=True)
+        canvas.setStrokeColor(HexColor("#674a8f"));canvas.setLineWidth(.2*mm)
+        canvas.rect(0,0,face["width_mm"]*mm,face["height_mm"]*mm,fill=0,stroke=1)
+        canvas.setFont(FONT_ID,7);canvas.setFillColor(HexColor("#674a8f"))
+        canvas.drawString(2*mm,(face["height_mm"]-4)*mm,face["name"]+" ↑")
+        canvas.restoreState()
+    for part in geometry["structural_parts"]:
+        canvas.setFillColor(HexColor("#e9dfc8"));canvas.setStrokeColor(HexColor("#674a8f"))
+        canvas.rect(part["x_mm"]*mm,(h-part["y_mm"]-part["height_mm"])*mm,part["width_mm"]*mm,part["height_mm"]*mm,fill=1,stroke=1)
+    canvas.setStrokeColor(HexColor("#db9138"));canvas.setDash(2*mm,mm)
+    for line in geometry["fold_lines"]:
+        canvas.line(line["x1_mm"]*mm,(h-line["y1_mm"])*mm,line["x2_mm"]*mm,(h-line["y2_mm"])*mm)
+    canvas.setDash();canvas.setFont(FONT_ID,10);canvas.setFillColor(HexColor("#88452f"))
+    canvas.drawString(3*mm,3*mm,"검토용 전개도 · 데모 구조 · 제조사 미승인 · 제작 사용 불가")
+    canvas.showPage()
+    return {"face_id":"net","width_mm":w,"height_mm":h}
+
+
 def _render(project: dict, resolver: AssetResolver | None, production: bool) -> tuple[bytes, dict]:
     validation = validate_export(project, production=production)
     scene, warnings = validation["scene"], validation["warnings"]
+    geometry=geometry_for_scene(scene)
+    lookup={f["id"]:f for f in scene["faces"]}
+    ordered_faces=[lookup[f["id"]] for f in geometry["faces"]]
+    pages=[]
     output = BytesIO()
     canvas = Canvas(output, pageCompression=1, invariant=1)
     canvas.setTitle("Phoenix Packaging - 검토용 · 제작 사용 불가")
     canvas.setAuthor("Phoenix Packaging")
     canvas.setSubject("데모 구조 · 제조사 미승인 / Finished-size vector review PDF")
-    for page, face in enumerate(sorted(scene["faces"], key=lambda face: face["id"] != "front"), start=1):
+    for page, face in enumerate(ordered_faces, start=1):
         width, height = face["width_mm"] * mm, face["height_mm"] * mm
         canvas.setPageSize((width, height))
         canvas.setTrimBox((0, 0, width, height))
@@ -245,20 +307,23 @@ def _render(project: dict, resolver: AssetResolver | None, production: bool) -> 
         canvas.rect(0, 0, width, height, fill=1, stroke=0)
         for obj in sorted(face["objects"], key=lambda obj: obj["z_index"]):
             _draw_object(canvas, obj, face["height_mm"], resolver, warnings)
-        _draw_guides(canvas, face, page)
+        _draw_holes(canvas,scene,face,guides=True)
+        _draw_guides(canvas, face, page, len(ordered_faces), geometry["faces"][page-1])
         canvas.showPage()
+        pages.append({"face_id":face["id"],"width_mm":face["width_mm"],"height_mm":face["height_mm"]})
+    if geometry["template_id"] != "three-side-seal":
+        pages.append(_draw_net(canvas,scene,geometry,resolver,warnings))
     canvas.save()
     data = output.getvalue()
     manifest = {"schema_version": "1.0", "kind": "review", "review_only": True, "production_enabled": False,
-                "approval_status": "demo_unapproved", "template_version_id": DEMO_TEMPLATE_ID,
+                "approval_status": "demo_unapproved", "template_version_id": scene.get("template_version_id") or DEMO_TEMPLATE_ID,
                 "project_id": str(project.get("id", project.get("project_id", ""))),
                 "revision": project.get("revision", project.get("revision_number", project.get("base_revision"))),
                 "revision_id": project.get("revision_id"),
-                "geometry_hash": validate_dimensions(scene["faces"][0]["width_mm"], scene["faces"][0]["height_mm"], "mm")["geometry_hash"],
+                "geometry_hash": geometry["geometry_hash"],
                 "generated_at": datetime.now(timezone.utc).isoformat(), "sha256": hashlib.sha256(data).hexdigest(),
                 "font": {"id": "NotoSansKR", "sha256": hashlib.sha256(FONT_PATH.read_bytes()).hexdigest(), "embedded": True, "license": "OFL-1.1"},
-                "pages": [{"face_id": face["id"], "width_mm": face["width_mm"], "height_mm": face["height_mm"]}
-                          for face in sorted(scene["faces"], key=lambda face: face["id"] != "front")],
+                "pages": pages,
                 "warnings": warnings, "original_texts": validation["original_texts"],
                 "capabilities": {"vector_text": True, "embedded_fonts": True, "original_raster_assets": True,
                                  "pdf_x": False, "cmyk": False, "spot_colors": False, "production": False}}

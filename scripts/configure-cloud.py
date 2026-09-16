@@ -12,6 +12,11 @@ import psycopg
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCAL = ROOT / '.local'
+
+# Bootstrap only: never overwrite existing AI, payment or SMTP settings.
+if (LOCAL / 'cloud-env.json').exists():
+    raise SystemExit('Cloud environment already exists. Use scripts/update-cloud-env.py to preserve settings.')
+
 def read(name):
     return json.loads((LOCAL / name).read_text(encoding='utf-8-sig'))
 

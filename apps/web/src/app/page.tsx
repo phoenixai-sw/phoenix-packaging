@@ -229,14 +229,14 @@ export default function Home() {
               <p>차 · 분말 · 스낵 · 가볍게 담는 제품</p>
             </div>
             <div>
-              <span>다음 업데이트</span>
-              <strong>스탠드형 봉투</strong>
+              <span>함께 지원하는 포장</span>
+              <strong>스탠드형 · 접이식 상자</strong>
               <p>커피 · 그래놀라 · 세워 두는 제품</p>
             </div>
             <p className="format-status-note">
               현재는 제조사 미승인 데모 구조를 제공합니다.
               <br />
-              출력한 파일은 디자인 검토용으로 사용하세요.
+              제작용 출력은 제조사 승인과 검수 통과가 필요합니다.
             </p>
           </div>
         </section>

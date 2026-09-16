@@ -9,6 +9,8 @@
 | react-dom | 19.3.0 | MIT |
 | konva | 10.5.0 | MIT |
 | react-konva | 19.3.0 | MIT |
+| three | 0.186.0 | MIT |
+| @types/three | 0.186.0 | MIT |
 | lucide-react | 1.46.0 | ISC |
 | fastapi | 0.141.1 | MIT |
 | uvicorn | 0.53.0 | BSD-3-Clause |
@@ -21,6 +23,9 @@
 | httpx | 0.28.1 | BSD-3-Clause |
 | Pillow | 12.3.0 | MIT-CMU |
 | email-validator | 2.3.0 | Unlicense |
+| cryptography | 50.0.1 | Apache-2.0 OR BSD-3-Clause |
+| pypdfium2 | 5.13.0 | BSD-3-Clause, Apache-2.0 및 포함 의존성 라이선스 |
+| zxing-cpp | 3.1.1 | Apache-2.0 |
 | reportlab | 4.5.1 | BSD license (see license.txt for details), Copyright (c) 2000-2025, ReportLab Inc. |
 | Noto Sans KR | Google Fonts source; SHA256 recorded | SIL Open Font License 1.1 |
 

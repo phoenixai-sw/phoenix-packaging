@@ -11,6 +11,8 @@ import {
   Search,
 } from "lucide-react";
 import { useSession } from "@/components/workspace";
+import { AccountVerification } from "@/components/account-verification";
+import { canEdit } from "@/lib/business";
 import { packagingMedia } from "@/lib/media";
 import { ProjectPreview } from "@/components/project-preview";
 import { api, errorMessage } from "@/lib/api";
@@ -52,6 +54,7 @@ export default function Dashboard() {
         <h1>{session?.user.name}님의 작업 공간</h1>
         <p>작은 아이디어가 좋은 패키지가 되는 곳.</p>
       </div>
+      <AccountVerification />
       <section className="dashboard-banner dashboard-banner-photographic">
         <div>
           <span className="pill">새로운 시작</span>
@@ -61,9 +64,11 @@ export default function Dashboard() {
             여기서 만들어 보세요.
           </h2>
           <p>포장 규격을 고르고 우리 브랜드의 이야기를 담아보세요.</p>
-          <Link href="/app/projects/new" className="button button-dark">
-            새 패키지 만들기 <ArrowUpRight size={17} />
-          </Link>
+          {canEdit(session) && (
+            <Link href="/app/projects/new" className="button button-dark">
+              새 패키지 만들기 <ArrowUpRight size={17} />
+            </Link>
+          )}
         </div>
         <div className="dashboard-banner-image">
           <img
@@ -133,7 +138,7 @@ export default function Dashboard() {
                 </div>
               </Link>
             ))}
-            {!query && (
+            {!query && canEdit(session) && (
               <Link className="new-project-card" href="/app/projects/new">
                 <span>
                   <Plus size={26} />

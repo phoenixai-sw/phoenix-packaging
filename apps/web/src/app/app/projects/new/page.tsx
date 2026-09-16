@@ -10,63 +10,175 @@ import {
   LoaderCircle,
   Package,
   Ruler,
+  Box,
 } from "lucide-react";
 import { Pouch } from "@/components/pouch";
 import { api, errorMessage } from "@/lib/api";
+import {
+  useApiData,
+  canEdit,
+  type BrandData,
+  type ProductData,
+  type WorkspaceData,
+} from "@/lib/business";
+import { useSession } from "@/components/workspace";
 import type { Project } from "@editor/model";
+type Template = {
+  id: string;
+  geometry_template_id?: string;
+  approved_dimensions?: {
+    width_mm: number;
+    height_mm: number;
+    bottom_mm?: number;
+    depth_mm?: number;
+  };
+  name: string;
+  description?: string;
+  approval_status?: string;
+  status: string;
+  faces?: string[];
+  default_width_mm?: number;
+  default_height_mm?: number;
+  min_width_mm?: number;
+  max_width_mm?: number;
+  min_height_mm?: number;
+  max_height_mm?: number;
+};
+function faceCount(template?: Template) {
+  const kind = template?.geometry_template_id || template?.id;
+  return (
+    template?.faces?.length ||
+    (kind === "folding-box" ? 6 : kind === "stand-up-pouch" ? 3 : 2)
+  );
+}
 export default function NewProject() {
   const router = useRouter();
+  const session = useSession();
+  const templates = useApiData<{ items: Template[] }>("/templates");
+  const brands = useApiData<{ items: BrandData[] }>("/brands");
+  const products = useApiData<{ items: ProductData[] }>("/products");
+  const workspaces = useApiData<{ items: WorkspaceData[] }>("/workspaces");
   const [step, setStep] = useState(1);
+  const [templateId, setTemplateId] = useState("three-side-seal");
   const [width, setWidth] = useState("230");
   const [height, setHeight] = useState("310");
+  const [extra, setExtra] = useState("80");
   const [unit, setUnit] = useState("mm");
   const [brand, setBrand] = useState("");
+  const [brandId, setBrandId] = useState("");
   const [product, setProduct] = useState("");
+  const [variantId, setVariantId] = useState("");
+  const [workspaceId, setWorkspaceId] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const widthMM = Number(width) * (unit === "cm" ? 10 : 1);
-  const heightMM = Number(height) * (unit === "cm" ? 10 : 1);
-  function next(event: React.FormEvent) {
-    event.preventDefault();
+  const [createdProject, setCreatedProject] = useState<string>();
+  const template = templates.data?.items.find((t) => t.id === templateId);
+  const factor = unit === "cm" ? 10 : 1;
+  const widthMM = Number(width) * factor,
+    heightMM = Number(height) * factor,
+    extraMM = Number(extra) * factor;
+  const canonicalTemplate = template?.geometry_template_id || templateId;
+  const geometryInput = {
+    template_id: canonicalTemplate,
+    width_mm: widthMM,
+    height_mm: heightMM,
+    ...(canonicalTemplate === "stand-up-pouch"
+      ? { bottom_mm: extraMM }
+      : canonicalTemplate === "folding-box"
+        ? { depth_mm: extraMM }
+        : {}),
+  };
+  async function next(e: React.FormEvent) {
+    e.preventDefault();
     setError("");
-    if (
-      !Number.isFinite(widthMM) ||
-      widthMM < 60 ||
-      widthMM > 600 ||
-      !Number.isFinite(heightMM) ||
-      heightMM < 80 ||
-      heightMM > 800
-    ) {
-      setError("폭은 60–600 mm, 높이는 80–800 mm 범위로 입력해 주세요.");
-      return;
+    setBusy(true);
+    try {
+      await api("/geometry/validate", {
+        method: "POST",
+        body: JSON.stringify(geometryInput),
+      });
+      setStep(2);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
     }
-    setStep(2);
   }
-  async function create(event: React.FormEvent) {
-    event.preventDefault();
+  async function create(e: React.FormEvent) {
+    e.preventDefault();
     setBusy(true);
     setError("");
     try {
-      const project = await api<Project>("/projects", {
+      const result = await api<Project>("/projects", {
         method: "POST",
         body: JSON.stringify({
+          ...geometryInput,
           name: name.trim() || `${product.trim()} 패키지`,
           product_name: product.trim(),
           brand_name: brand.trim(),
-          width_mm: widthMM,
-          height_mm: heightMM,
-          template_id: "three-side-seal",
-          description: description.trim(),
+          description,
+          brand_id: brandId || null,
+          product_variant_id: variantId || null,
+          workspace_id: workspaceId || null,
         }),
       });
-      router.push(`/app/projects/${project.id}/editor`);
+      setCreatedProject(result.id);
+      if (template?.status === "approved")
+        await api(`/projects/${result.id}/settings`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            base_revision: result.base_revision,
+            template_version_id: template.id,
+          }),
+        });
+      router.push(`/app/projects/${result.id}/editor`);
     } catch (e) {
       setError(errorMessage(e));
       setBusy(false);
     }
   }
+  function chooseVariant(id: string) {
+    setVariantId(id);
+    for (const p of products.data?.items || []) {
+      const v = p.variants.find((v) => v.id === id);
+      if (v) {
+        setProduct(p.name);
+        setDescription(p.description || "");
+        setBrandId(p.brand_id || "");
+        setBrand(
+          brands.data?.items.find((b) => b.id === p.brand_id)?.name || "",
+        );
+        break;
+      }
+    }
+  }
+  function chooseTemplate(t: Template) {
+    setTemplateId(t.id);
+    if (t.status === "approved" && t.approved_dimensions) {
+      setUnit("mm");
+      setWidth(String(t.approved_dimensions.width_mm));
+      setHeight(String(t.approved_dimensions.height_mm));
+      setExtra(
+        String(
+          t.approved_dimensions.bottom_mm ||
+            t.approved_dimensions.depth_mm ||
+            80,
+        ),
+      );
+    }
+  }
+  if (!canEdit(session))
+    return (
+      <div className="empty-state">
+        <h2>열람 권한으로 이용 중입니다.</h2>
+        <p>프로젝트를 만들려면 소유자에게 편집 권한을 요청해 주세요.</p>
+        <Link href="/app" className="button button-light">
+          프로젝트로 돌아가기
+        </Link>
+      </div>
+    );
   return (
     <main className="new-project-content">
       <Link href="/app" className="text-link muted">
@@ -75,7 +187,7 @@ export default function NewProject() {
       <div className="page-heading">
         <div className="eyebrow">LET’S MAKE SOMETHING GOOD</div>
         <h1>어떤 제품을 담을까요?</h1>
-        <p>우리 제품에 꼭 맞는 패키지를 함께 만들어 봐요.</p>
+        <p>형태와 규격을 정하고 우리 브랜드의 이야기를 더하세요.</p>
       </div>
       <div className="creation-progress">
         <span className={step === 1 ? "active" : "complete"}>
@@ -97,25 +209,38 @@ export default function NewProject() {
               <h2>
                 <Package size={21} /> 포장 형태 선택
               </h2>
-              <div className="template-option selected">
-                <div className="mini-pouch" />
-                <div>
-                  <strong>3면 실링 봉투</strong>
-                  <p>차, 분말, 스낵 등 가볍게 담는 제품에</p>
-                  <span className="pill">데모 구조 · 제조사 미승인</span>
+              {templates.loading ? (
+                <div className="loading-state">
+                  포장 종류를 확인하고 있어요.
                 </div>
-                <span className="selected-check">
-                  <Check size={15} />
-                </span>
-              </div>
-              <div className="template-option disabled">
-                <div className="mini-pouch stand" />
-                <div>
-                  <strong>스탠드형 봉투</strong>
-                  <p>바닥이 있어 세워 두는 제품에</p>
-                </div>
-                <span className="pill">준비 중</span>
-              </div>
+              ) : (
+                templates.data?.items.map((t) => (
+                  <button
+                    type="button"
+                    key={t.id}
+                    onClick={() => chooseTemplate(t)}
+                    className={`template-option template-option-button ${templateId === t.id ? "selected" : ""}`}
+                  >
+                    <div
+                      className={`mini-pouch ${t.id === "folding-box" ? "mini-box" : t.id === "stand-up-pouch" ? "stand" : ""}`}
+                    />
+                    <div>
+                      <strong>{t.name}</strong>
+                      <p>{t.description || `${faceCount(t)}개의 인쇄면`}</p>
+                      <span className="pill">
+                        {t.status === "approved"
+                          ? "제조사 승인"
+                          : "데모 구조 · 제조사 미승인"}
+                      </span>
+                    </div>
+                    {templateId === t.id && (
+                      <span className="selected-check">
+                        <Check size={15} />
+                      </span>
+                    )}
+                  </button>
+                ))
+              )}
               <h2 className="dimensions-title">
                 <Ruler size={21} /> 완성 규격
               </h2>
@@ -124,10 +249,9 @@ export default function NewProject() {
                   폭
                   <input
                     type="number"
-                    step="0.1"
-                    min={unit === "cm" ? 6 : 60}
-                    max={unit === "cm" ? 60 : 600}
                     required
+                    min={1}
+                    step="0.1"
                     value={width}
                     onChange={(e) => setWidth(e.target.value)}
                   />
@@ -137,10 +261,9 @@ export default function NewProject() {
                   높이
                   <input
                     type="number"
-                    step="0.1"
-                    min={unit === "cm" ? 8 : 80}
-                    max={unit === "cm" ? 80 : 800}
                     required
+                    min={1}
+                    step="0.1"
                     value={height}
                     onChange={(e) => setHeight(e.target.value)}
                   />
@@ -150,14 +273,12 @@ export default function NewProject() {
                   <select
                     value={unit}
                     onChange={(e) => {
-                      const newUnit = e.target.value;
-                      setWidth(
-                        String(Number(width) * (newUnit === "cm" ? 0.1 : 10)),
-                      );
-                      setHeight(
-                        String(Number(height) * (newUnit === "cm" ? 0.1 : 10)),
-                      );
-                      setUnit(newUnit);
+                      const n = e.target.value;
+                      const scale = n === "cm" ? 0.1 : 10;
+                      setWidth(String(Number(width) * scale));
+                      setHeight(String(Number(height) * scale));
+                      setExtra(String(Number(extra) * scale));
+                      setUnit(n);
                     }}
                   >
                     <option value="mm">mm</option>
@@ -165,50 +286,124 @@ export default function NewProject() {
                   </select>
                 </label>
               </div>
+              {canonicalTemplate !== "three-side-seal" && (
+                <label className="field extra-dimension">
+                  {canonicalTemplate === "folding-box"
+                    ? "상자 깊이"
+                    : "펼친 바닥 거싯 폭"}{" "}
+                  ({unit})
+                  <input
+                    type="number"
+                    required
+                    min={1}
+                    step="0.1"
+                    value={extra}
+                    onChange={(e) => setExtra(e.target.value)}
+                  />
+                </label>
+              )}
               <p className="field-hint">
-                시험 규격: 폭 60–600 mm · 높이 80–800 mm
+                {template?.min_width_mm
+                  ? `폭 ${template.min_width_mm}–${template.max_width_mm} mm · 높이 ${template.min_height_mm}–${template.max_height_mm} mm`
+                  : "입력한 규격과 가공 영역을 서버에서 확인합니다."}
               </p>
               <div className="alert alert-info">
                 <Info size={17} />
                 <span>
-                  실링 10 mm, 안전 여백 5 mm는 데모 설정입니다. 실제 제조사
-                  규격이 아니며 검토용으로만 사용하세요.
+                  데모 구조의 가공 치수는 시험용입니다. 제조사 승인 상태와 출력
+                  검수를 통과한 조건에서만 제작용 파일이 열립니다.
                 </span>
               </div>
-              {error && (
+              {(error || templates.error) && (
                 <div className="alert alert-error" role="alert">
-                  {error}
+                  {error || templates.error}
                 </div>
               )}
-              <button className="button button-dark full-width">
-                상품 정보 입력하기 <ArrowRight size={18} />
+              <button
+                className="button button-dark full-width"
+                disabled={busy || !template}
+              >
+                {busy ? (
+                  <LoaderCircle className="spin" size={17} />
+                ) : (
+                  <>
+                    상품 정보 입력하기 <ArrowRight size={18} />
+                  </>
+                )}
               </button>
             </form>
           ) : (
             <form onSubmit={create}>
               <h2>제품의 이야기를 들려주세요.</h2>
-              <p className="form-description">
-                입력한 상품명과 브랜드명은 편집기에서 자유롭게 바꿀 수 있어요.
-              </p>
               <label className="field">
-                브랜드명
-                <input
-                  value={brand}
-                  onChange={(e) => setBrand(e.target.value)}
-                  placeholder="예: 작은 일상"
-                  required
-                  maxLength={120}
-                />
+                등록한 상품 변형
+                <select
+                  value={variantId}
+                  onChange={(e) => chooseVariant(e.target.value)}
+                >
+                  <option value="">직접 입력</option>
+                  {products.data?.items.flatMap((p) =>
+                    p.variants.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {p.name} · {v.name}
+                      </option>
+                    )),
+                  )}
+                </select>
               </label>
               <label className="field">
-                상품명
-                <input
-                  value={product}
-                  onChange={(e) => setProduct(e.target.value)}
-                  placeholder="예: 제주 말차"
-                  required
-                  maxLength={160}
-                />
+                등록한 브랜드
+                <select
+                  value={brandId}
+                  onChange={(e) => {
+                    setBrandId(e.target.value);
+                    setBrand(
+                      brands.data?.items.find((b) => b.id === e.target.value)
+                        ?.name || "",
+                    );
+                  }}
+                >
+                  <option value="">직접 입력</option>
+                  {brands.data?.items.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="form-two-columns">
+                <label className="field">
+                  브랜드명
+                  <input
+                    required
+                    value={brand}
+                    onChange={(e) => setBrand(e.target.value)}
+                    maxLength={120}
+                  />
+                </label>
+                <label className="field">
+                  상품명
+                  <input
+                    required
+                    value={product}
+                    onChange={(e) => setProduct(e.target.value)}
+                    maxLength={160}
+                  />
+                </label>
+              </div>
+              <label className="field">
+                작업 공간
+                <select
+                  value={workspaceId}
+                  onChange={(e) => setWorkspaceId(e.target.value)}
+                >
+                  <option value="">기본 작업 공간</option>
+                  {workspaces.data?.items.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.name}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label className="field">
                 프로젝트 이름 <span className="optional">선택</span>
@@ -224,20 +419,27 @@ export default function NewProject() {
               <label className="field">
                 상품 메모 <span className="optional">선택</span>
                 <textarea
-                  rows={3}
+                  rows={2}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="제품의 특징이나 담고 싶은 이야기를 적어두세요."
                   maxLength={2000}
                 />
               </label>
-              <p className="field-hint">
-                기본 시안을 제공합니다. 현재 실제 AI 이미지 생성은 연결되지
-                않았습니다.
-              </p>
               {error && (
                 <div className="alert alert-error" role="alert">
                   {error}
+                </div>
+              )}
+              {createdProject && (
+                <div className="alert alert-info">
+                  프로젝트는 생성되었습니다. 제조 조건 저장에 문제가 있었다면
+                  편집기에서 다시 선택할 수 있습니다.{" "}
+                  <Link
+                    className="text-link"
+                    href={`/app/projects/${createdProject}/editor`}
+                  >
+                    생성된 프로젝트 열기
+                  </Link>
                 </div>
               )}
               <div className="form-actions">
@@ -249,7 +451,10 @@ export default function NewProject() {
                 >
                   이전
                 </button>
-                <button className="button button-dark" disabled={busy}>
+                <button
+                  className="button button-dark"
+                  disabled={busy || !!createdProject}
+                >
                   {busy ? (
                     <LoaderCircle className="spin" size={18} />
                   ) : (
@@ -265,15 +470,27 @@ export default function NewProject() {
         <aside className="creation-preview">
           <span className="eyebrow">YOUR PACKAGE STARTS HERE</span>
           <div className="creation-pouch">
-            <Pouch title={product || undefined} />
+            {canonicalTemplate === "folding-box" ? (
+              <Box size={165} strokeWidth={0.6} />
+            ) : (
+              <Pouch title={product || undefined} />
+            )}
           </div>
           <div className="preview-dimensions">
             <span>
-              {widthMM} × {heightMM} mm
+              {widthMM} × {heightMM}
+              {canonicalTemplate !== "three-side-seal"
+                ? ` × ${extraMM}`
+                : ""}{" "}
+              mm
             </span>
-            <small>3면 실링 봉투 · 앞면 / 뒷면</small>
+            <small>
+              {template?.name} · {faceCount(template)}개 면
+            </small>
           </div>
-          <p>형태를 설명하기 위한 예시 이미지입니다.</p>
+          <p>
+            형태를 설명하기 위한 예시입니다. 실제 도면은 편집기에서 확인하세요.
+          </p>
         </aside>
       </div>
     </main>

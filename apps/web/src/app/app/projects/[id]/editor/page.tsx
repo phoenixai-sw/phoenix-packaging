@@ -28,9 +28,21 @@ import {
   X,
   ZoomIn,
   Square,
+  Sparkles,
+  Box,
+  Barcode,
+  Link2,
 } from "lucide-react";
 import { api, ApiError, errorMessage } from "@/lib/api";
 import { useSession } from "@/components/workspace";
+import { canEdit, useApiData } from "@/lib/business";
+import { uploadAsset } from "@/lib/assets";
+import { Dialog } from "@/components/management";
+import { AIStudio } from "@/components/ai-studio";
+import { StructureTools } from "@/components/structure-tools";
+import { BindingTools } from "@/components/binding-tools";
+import { ExportTools } from "@/components/export-tools";
+import type { PackagingPreviewProps } from "@preview3d/PackagingPreview";
 import { readRecovery, writeRecovery, type Recovery } from "@/lib/recovery";
 import {
   addText,
@@ -51,6 +63,9 @@ const Canvas = dynamic(() => import("@editor/canvas"), {
     </div>
   ),
 });
+const PackagingPreview = dynamic(() => import("@preview3d/PackagingPreview"), {
+  ssr: false,
+});
 type SaveStatus = "saved" | "dirty" | "saving" | "error" | "conflict";
 export default function EditorPage({
   params,
@@ -59,10 +74,18 @@ export default function EditorPage({
 }) {
   const { id } = use(params);
   const session = useSession();
+  const readOnly = !canEdit(session);
+  const uploadConfig = useApiData<{ upload_max_bytes: number }>("/config");
+  const [panel, setPanel] = useState<
+    "ai" | "structure" | "bindings" | "exports" | "3d" | null
+  >(null);
   const [project, setProject] = useState<Project | null>(null);
   const [scene, setScene] = useState<Scene | null>(null);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [mobilePane, setMobilePane] = useState<
+    "canvas" | "tools" | "properties"
+  >("canvas");
   const [faceId, setFaceId] = useState("front");
   const [status, setStatus] = useState<SaveStatus>("saved");
   const [saveError, setSaveError] = useState("");
@@ -125,12 +148,15 @@ export default function EditorPage({
       active = false;
     };
   }, [id, retry, recoveryKey]);
-  function commit(next: Scene) {
+  function commit(next: Scene, confirmationOnly = false) {
+    if (readOnly) return;
     if (
       !current.current ||
       JSON.stringify(next) === JSON.stringify(current.current)
     )
       return;
+    if (!confirmationOnly)
+      next = { ...next, reviewed_face_ids: [], confirmed_fields: [] };
     past.current = [...past.current.slice(-79), current.current];
     future.current = [];
     current.current = next;
@@ -144,6 +170,7 @@ export default function EditorPage({
     });
   }
   function undo() {
+    if (readOnly) return;
     const previous = past.current.pop();
     if (!previous || !current.current) return;
     future.current.push(current.current);
@@ -161,6 +188,7 @@ export default function EditorPage({
     });
   }
   function redo() {
+    if (readOnly) return;
     const next = future.current.pop();
     if (!next || !current.current) return;
     past.current.push(current.current);
@@ -226,6 +254,75 @@ export default function EditorPage({
     saving.current = task;
     return task;
   }, [id, recoveryKey]);
+  async function saveCurrent(): Promise<number> {
+    if (editing) throw new Error("텍스트 편집을 마친 뒤 다시 시도해 주세요.");
+    await saveNow();
+    if (
+      conflict.current ||
+      JSON.stringify(current.current) !== savedJSON.current
+    )
+      throw new Error(
+        "현재 변경 내용을 먼저 저장해 주세요. 저장 오류나 충돌을 확인하세요.",
+      );
+    return revision.current;
+  }
+  function onServerProject(p: Project) {
+    current.current = p.scene;
+    revision.current = p.base_revision;
+    savedJSON.current = JSON.stringify(p.scene);
+    setProject(p);
+    setScene(p.scene);
+    setStatus("saved");
+    setSaveError("");
+    setSelected(null);
+    past.current = [];
+    future.current = [];
+    setHistoryCount({ past: 0, future: 0 });
+    void writeRecovery(recoveryKey, null);
+  }
+  function useGeneratedAsset(asset: { id: string }) {
+    if (!current.current) return;
+    const target = current.current.faces.find((f) => f.id === faceId)!;
+    const layer: SceneObject = {
+      id: crypto.randomUUID(),
+      type: "image",
+      face_id: faceId,
+      asset_id: asset.id,
+      x_mm: 0,
+      y_mm: 0,
+      width_mm: target.width_mm,
+      height_mm: target.height_mm,
+      rotation_deg: 0,
+      z_index: Math.min(0, ...target.objects.map((o) => o.z_index)) - 1,
+      visible: true,
+      print_enabled: true,
+      locked: true,
+    };
+    commit({
+      ...current.current,
+      faces: current.current.faces.map((f) =>
+        f.id === faceId
+          ? {
+              ...f,
+              objects: [
+                ...f.objects.filter(
+                  (o) =>
+                    !(
+                      o.type === "image" &&
+                      o.locked &&
+                      o.x_mm === 0 &&
+                      o.y_mm === 0 &&
+                      o.width_mm === f.width_mm &&
+                      o.height_mm === f.height_mm
+                    ),
+                ),
+                layer,
+              ],
+            }
+          : f,
+      ),
+    });
+  }
   useEffect(() => {
     if (
       !scene ||
@@ -295,6 +392,8 @@ export default function EditorPage({
     [],
   );
   function change(id: string, patch: Partial<SceneObject>) {
+    if ("text" in patch || "barcode_value" in patch)
+      patch = { ...patch, binding_key: undefined };
     if (current.current) commit(updateObject(current.current, id, patch));
   }
   function addTextLayer() {
@@ -302,6 +401,7 @@ export default function EditorPage({
     const result = addText(current.current, faceId);
     commit(result.scene);
     setSelected(result.id);
+    setMobilePane("properties");
   }
   function addShape() {
     if (!current.current) return;
@@ -329,7 +429,7 @@ export default function EditorPage({
     setSelected(object.id);
   }
   async function demoBackground(palette: "forest" | "citrus" | "berry") {
-    if (!current.current) return;
+    if (!current.current || readOnly) return;
     const targetFaceId = faceId;
     setUploading(true);
     setSaveError("");
@@ -376,21 +476,11 @@ export default function EditorPage({
     }
   }
   async function upload(file: File) {
-    if (!current.current) return;
-    if (file.size > 4 * 1024 * 1024) {
-      setSaveError("이미지는 4 MiB 이하로 올려 주세요.");
-      return;
-    }
+    if (!current.current || readOnly) return;
     setUploading(true);
     setSaveError("");
     try {
-      const body = new FormData();
-      body.set("file", file);
-      const asset = await api<{
-        id: string;
-        width_px?: number;
-        height_px?: number;
-      }>("/assets", { method: "POST", body });
+      const asset = await uploadAsset(file, id);
       const face = current.current.faces.find((f) => f.id === faceId)!;
       const width = Math.min(90, face.width_mm - 40);
       const object: SceneObject = {
@@ -546,8 +636,38 @@ export default function EditorPage({
       </div>
     );
   const face = scene.faces.find((f) => f.id === faceId) || scene.faces[0];
+  const geometry = project.geometry as unknown as
+    | PackagingPreviewProps["geometry"]
+    | undefined;
+  const geometryFace = (
+    project.geometry?.faces as
+      | Array<{
+          id: string;
+          regions?: {
+            safe?: {
+              x_mm: number;
+              y_mm: number;
+              width_mm: number;
+              height_mm: number;
+            };
+            no_print?: Array<{
+              x_mm: number;
+              y_mm: number;
+              width_mm: number;
+              height_mm: number;
+            }>;
+            fold?: Array<{
+              x1_mm: number;
+              y1_mm: number;
+              x2_mm: number;
+              y2_mm: number;
+            }>;
+          };
+        }>
+      | undefined
+  )?.find((f) => f.id === face.id);
   const object = face.objects.find((o) => o.id === selected);
-  const warnings = safeWarnings(face);
+  const warnings = safeWarnings(face, geometryFace?.regions?.safe);
   const saveLabel = {
     saved: "모든 변경 저장됨",
     dirty: "저장 대기 중",
@@ -577,7 +697,12 @@ export default function EditorPage({
         <div className="editor-project-title">
           <h1>{project.name}</h1>
           <span>
-            3면 실링 봉투 <i>·</i> {project.width_mm} × {project.height_mm} mm
+            {{
+              "three-side-seal": "3면 실링 봉투",
+              "stand-up-pouch": "스탠드 파우치",
+              "folding-box": "접이식 상자",
+            }[project.template_id] || "패키지"}{" "}
+            <i>·</i> {project.width_mm} × {project.height_mm} mm
           </span>
         </div>
         <div className={`save-status save-${status}`} role="status">
@@ -605,30 +730,41 @@ export default function EditorPage({
             title="지금 저장 (Ctrl+S)"
             aria-label="지금 저장"
             onClick={() => void saveNow()}
-            disabled={status === "saving" || status === "conflict" || editing}
+            disabled={
+              readOnly ||
+              status === "saving" ||
+              status === "conflict" ||
+              editing
+            }
           >
             <Save size={18} />
           </button>
           <button
             className="button button-dark button-sm"
-            disabled={exporting || editing || status === "conflict"}
-            onClick={exportPDF}
+            disabled={editing || status === "conflict"}
+            onClick={() => setPanel("exports")}
           >
             {exporting ? (
               <LoaderCircle className="spin" size={16} />
             ) : (
               <Download size={16} />
             )}{" "}
-            검토용 PDF <span className="button-credit">0 크레딧</span>
+            검수와 출력
           </button>
         </div>
       </header>
       <div className="editor-disclaimer">
         <Info size={14} />
-        <span>데모 구조 · 제조사 미승인</span>
+        <span>
+          {readOnly
+            ? "열람 권한"
+            : String(scene.template_version_id || "").includes("demo")
+              ? "데모 구조 · 제조사 미승인"
+              : "제조 조건 확인 필요"}
+        </span>
         <span className="disclaimer-divider">|</span>
         <span>
-          현재 파일은 디자인 검토용이며 실제 제작에 사용할 수 없습니다.
+          제작용 출력은 승인된 도면·프로필과 출력 검수를 통과해야 합니다.
         </span>
       </div>
       {recovery && (
@@ -684,7 +820,27 @@ export default function EditorPage({
           )}
         </div>
       )}
-      <div className="editor-layout">
+      <nav className="mobile-editor-tabs" aria-label="편집 도구 선택">
+        <button
+          aria-pressed={mobilePane === "canvas"}
+          onClick={() => setMobilePane("canvas")}
+        >
+          <Eye size={17} /> 디자인
+        </button>
+        <button
+          aria-pressed={mobilePane === "tools"}
+          onClick={() => setMobilePane("tools")}
+        >
+          <Layers3 size={17} /> 요소·레이어
+        </button>
+        <button
+          aria-pressed={mobilePane === "properties"}
+          onClick={() => setMobilePane("properties")}
+        >
+          <Type size={17} /> {object ? "선택 속성" : "디자인 설정"}
+        </button>
+      </nav>
+      <div className="editor-layout" data-mobile-pane={mobilePane}>
         <aside className="editor-left">
           <div className="panel-section face-section">
             <h2>
@@ -698,6 +854,7 @@ export default function EditorPage({
                   onClick={() => {
                     setFaceId(f.id);
                     setSelected(null);
+                    setMobilePane("canvas");
                   }}
                 >
                   <span
@@ -721,13 +878,13 @@ export default function EditorPage({
           <div className="panel-section tools-section">
             <h2>디자인 요소</h2>
             <div className="add-tools">
-              <button onClick={addTextLayer}>
+              <button onClick={addTextLayer} disabled={readOnly}>
                 <Type size={22} />
                 <span>텍스트</span>
               </button>
               <button
                 onClick={() => uploadInput.current?.click()}
-                disabled={uploading}
+                disabled={uploading || readOnly}
               >
                 {uploading ? (
                   <LoaderCircle className="spin" size={22} />
@@ -736,7 +893,7 @@ export default function EditorPage({
                 )}
                 <span>이미지</span>
               </button>
-              <button onClick={addShape}>
+              <button onClick={addShape} disabled={readOnly}>
                 <Square size={22} />
                 <span>도형</span>
               </button>
@@ -750,7 +907,25 @@ export default function EditorPage({
                 if (e.target.files?.[0]) void upload(e.target.files[0]);
               }}
             />
-            <p className="panel-hint">PNG · JPG · WebP / 최대 4 MiB</p>
+            <p className="panel-hint">
+              PNG · JPG · WebP{" "}
+              {uploadConfig.data &&
+                `/ 최대 ${uploadConfig.data.upload_max_bytes / 1024 / 1024} MiB`}
+            </p>
+            <div className="editor-feature-tools">
+              <button onClick={() => setPanel("ai")}>
+                <Sparkles size={17} /> AI 디자인 시안
+              </button>
+              <button onClick={() => setPanel("structure")}>
+                <Barcode size={17} /> 바코드와 가공
+              </button>
+              <button onClick={() => setPanel("bindings")}>
+                <Link2 size={17} /> 상품 연결·복제
+              </button>
+              <button onClick={() => setPanel("3d")} disabled={!geometry}>
+                <Box size={17} /> 3D 조립 미리보기
+              </button>
+            </div>
           </div>
           <div className="panel-section layers-section">
             <h2>
@@ -766,7 +941,10 @@ export default function EditorPage({
                   >
                     <button
                       className="layer-main"
-                      onClick={() => setSelected(layer.id)}
+                      onClick={() => {
+                        setSelected(layer.id);
+                        setMobilePane("properties");
+                      }}
                     >
                       {layer.type === "text" ? (
                         <Type size={15} />
@@ -780,11 +958,14 @@ export default function EditorPage({
                           ? layer.text || "빈 텍스트"
                           : layer.type === "image"
                             ? "업로드 이미지"
-                            : "도형"}
+                            : layer.type === "barcode"
+                              ? `EAN-13 ${layer.barcode_value}`
+                              : "도형"}
                       </span>
                     </button>
                     <button
                       className="layer-visible"
+                      disabled={readOnly}
                       aria-label={`${layer.visible === false ? "표시" : "숨기기"}: ${layer.text || layer.type}`}
                       onClick={() =>
                         change(layer.id, { visible: layer.visible === false })
@@ -809,6 +990,28 @@ export default function EditorPage({
           </div>
         </aside>
         <section className="editor-center">
+          <div className="mobile-face-switcher" aria-label="인쇄면 선택">
+            {scene.faces.map((f) => (
+              <button
+                key={f.id}
+                aria-pressed={face.id === f.id}
+                onClick={() => {
+                  setFaceId(f.id);
+                  setSelected(null);
+                  setZoom(1);
+                }}
+              >
+                {f.name}
+              </button>
+            ))}
+            <button
+              className="mobile-preview-button"
+              onClick={() => setPanel("3d")}
+              disabled={!geometry}
+            >
+              <Box size={16} /> 3D
+            </button>
+          </div>
           <div className="canvas-toolbar">
             <div className="history-controls">
               <button
@@ -843,6 +1046,9 @@ export default function EditorPage({
           </div>
           <Canvas
             face={face}
+            holes={scene.holes}
+            geometryFace={geometryFace}
+            readOnly={readOnly}
             selected={selected}
             onSelect={setSelected}
             onChange={change}
@@ -891,328 +1097,464 @@ export default function EditorPage({
           </p>
         </section>
         <aside className="editor-right">
-          <div className="panel-section">
-            <h2>
-              {object
-                ? object.type === "text"
-                  ? "텍스트 속성"
-                  : object.type === "image"
-                    ? "이미지 속성"
-                    : "도형 속성"
-                : "디자인 설정"}
-            </h2>
-            {object ? (
-              <>
-                <div className="property-object-actions">
-                  <span>
-                    {object.type === "text" ? (
-                      <Type size={17} />
-                    ) : object.type === "image" ? (
-                      <ImagePlus size={17} />
-                    ) : (
-                      <Square size={17} />
-                    )}{" "}
-                    선택한 레이어
-                  </span>
-                  <button
-                    className="icon-button danger"
-                    aria-label="선택한 레이어 삭제"
-                    onClick={() => {
-                      commit(removeObject(scene, object.id));
-                      setSelected(null);
-                    }}
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-                {object.type === "text" && (
-                  <>
-                    <label className="field property-field">
-                      문구
-                      <textarea
-                        rows={4}
-                        value={object.text || ""}
-                        onChange={(e) =>
-                          change(object.id, { text: e.target.value })
-                        }
-                        onCompositionStart={() => setEditing(true)}
-                        onCompositionEnd={() => setEditing(false)}
-                        onBlur={() => setEditing(false)}
-                      />
-                    </label>
-                    <label className="field property-field">
-                      글꼴
-                      <select value="NotoSansKR" disabled>
-                        <option>NotoSansKR</option>
-                      </select>
-                    </label>
-                    <div className="property-row">
+          <fieldset className="editor-properties-fieldset" disabled={readOnly}>
+            <div className="panel-section">
+              <h2>
+                {object
+                  ? object.type === "text"
+                    ? "텍스트 속성"
+                    : object.type === "image"
+                      ? "이미지 속성"
+                      : object.type === "barcode"
+                        ? "바코드 속성"
+                        : "도형 속성"
+                  : "디자인 설정"}
+              </h2>
+              {object ? (
+                <>
+                  <div className="property-object-actions">
+                    <span>
+                      {object.type === "text" ? (
+                        <Type size={17} />
+                      ) : object.type === "image" ? (
+                        <ImagePlus size={17} />
+                      ) : (
+                        <Square size={17} />
+                      )}{" "}
+                      선택한 레이어
+                    </span>
+                    <button
+                      className="icon-button danger"
+                      aria-label="선택한 레이어 삭제"
+                      onClick={() => {
+                        commit(removeObject(scene, object.id));
+                        setSelected(null);
+                      }}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                  {object.type === "text" && (
+                    <>
                       <label className="field property-field">
-                        크기 (pt)
-                        <input
-                          type="number"
-                          min={4}
-                          max={180}
-                          value={object.font_size_pt || 16}
-                          onChange={(e) => {
-                            const n = Number(e.target.value);
-                            if (n >= 4 && n <= 180)
-                              change(object.id, { font_size_pt: n });
-                          }}
-                        />
-                      </label>
-                      <label className="field property-field">
-                        정렬
+                        상품 정보 연결
                         <select
-                          value={object.align || "left"}
+                          value={object.binding_key || ""}
                           onChange={(e) =>
                             change(object.id, {
-                              align: e.target.value as SceneObject["align"],
+                              binding_key: e.target.value || undefined,
                             })
                           }
                         >
-                          <option value="left">왼쪽</option>
-                          <option value="center">가운데</option>
-                          <option value="right">오른쪽</option>
+                          <option value="">직접 편집하는 문구</option>
+                          {Object.entries({
+                            brand_name: "브랜드명",
+                            product_name: "상품명",
+                            variant_name: "변형명",
+                            net_weight: "중량·용량",
+                            ingredients: "원재료",
+                            allergens: "알레르기",
+                            manufacturer: "제조사",
+                            storage: "보관 방법",
+                          }).map(([key, label]) => (
+                            <option key={key} value={key}>
+                              {label}
+                            </option>
+                          ))}
+                        </select>
+                        <small>
+                          상품 연결·복제에서 변경을 확인하고 반영합니다. 문구를
+                          직접 수정하면 연결이 해제됩니다.
+                        </small>
+                      </label>
+                      <label className="field property-field">
+                        문구
+                        <textarea
+                          rows={4}
+                          value={object.text || ""}
+                          onChange={(e) =>
+                            change(object.id, { text: e.target.value })
+                          }
+                          onCompositionStart={() => setEditing(true)}
+                          onCompositionEnd={() => setEditing(false)}
+                          onBlur={() => setEditing(false)}
+                        />
+                      </label>
+                      <label className="field property-field">
+                        글꼴
+                        <select value="NotoSansKR" disabled>
+                          <option>NotoSansKR</option>
                         </select>
                       </label>
+                      <div className="property-row">
+                        <label className="field property-field">
+                          크기 (pt)
+                          <input
+                            type="number"
+                            min={4}
+                            max={180}
+                            value={object.font_size_pt || 16}
+                            onChange={(e) => {
+                              const n = Number(e.target.value);
+                              if (n >= 4 && n <= 180)
+                                change(object.id, { font_size_pt: n });
+                            }}
+                          />
+                        </label>
+                        <label className="field property-field">
+                          정렬
+                          <select
+                            value={object.align || "left"}
+                            onChange={(e) =>
+                              change(object.id, {
+                                align: e.target.value as SceneObject["align"],
+                              })
+                            }
+                          >
+                            <option value="left">왼쪽</option>
+                            <option value="center">가운데</option>
+                            <option value="right">오른쪽</option>
+                          </select>
+                        </label>
+                      </div>
+                    </>
+                  )}
+                  {object.type === "barcode" && (
+                    <p className="panel-hint">
+                      EAN-13 {object.barcode_value}
+                      <br />
+                      모듈 {object.module_mm} mm · 비율 고정
+                    </p>
+                  )}
+                  {object.type !== "image" && object.type !== "barcode" && (
+                    <label className="field property-field">
+                      색상
+                      <div className="color-field">
+                        <input
+                          type="color"
+                          aria-label="색상 선택"
+                          value={object.color || "#243829"}
+                          onChange={(e) =>
+                            change(object.id, { color: e.target.value })
+                          }
+                        />
+                        <span>{object.color || "#243829"}</span>
+                      </div>
+                    </label>
+                  )}
+                  <h3 className="property-subtitle">
+                    위치와 크기 <span>mm</span>
+                  </h3>
+                  <div className="property-row">
+                    {(
+                      [
+                        ["x_mm", "X"],
+                        ["y_mm", "Y"],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <label key={key} className="field property-field">
+                        {label}
+                        <input
+                          type="number"
+                          step="0.1"
+                          value={object[key]}
+                          onChange={(e) => {
+                            if (
+                              e.target.value !== "" &&
+                              Number.isFinite(Number(e.target.value))
+                            )
+                              change(object.id, {
+                                [key]: Number(e.target.value),
+                              });
+                          }}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <div className="property-row">
+                    {(
+                      [
+                        ["width_mm", "폭"],
+                        ["height_mm", "높이"],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <label key={key} className="field property-field">
+                        {label}
+                        <input
+                          type="number"
+                          step="0.1"
+                          min={1}
+                          disabled={object.type === "barcode"}
+                          value={object[key]}
+                          onChange={(e) => {
+                            if (Number(e.target.value) >= 1)
+                              change(object.id, {
+                                [key]: Number(e.target.value),
+                              });
+                          }}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <div className="property-row">
+                    <label className="field property-field">
+                      회전 (°)
+                      <input
+                        type="number"
+                        step="1"
+                        value={object.rotation_deg}
+                        onChange={(e) => {
+                          if (e.target.value !== "")
+                            change(object.id, {
+                              rotation_deg: Number(e.target.value),
+                            });
+                        }}
+                      />
+                    </label>
+                    <div className="field property-field">
+                      레이어 순서
+                      <div className="order-buttons">
+                        <button
+                          className="icon-button"
+                          aria-label="레이어 앞으로"
+                          onClick={() => commit(moveLayer(scene, object.id, 1))}
+                        >
+                          <ArrowUp size={17} />
+                        </button>
+                        <button
+                          className="icon-button"
+                          aria-label="레이어 뒤로"
+                          onClick={() =>
+                            commit(moveLayer(scene, object.id, -1))
+                          }
+                        >
+                          <ArrowDown size={17} />
+                        </button>
+                      </div>
                     </div>
-                  </>
-                )}
-                {object.type !== "image" && (
+                  </div>
+                  <label className="guide-toggle print-toggle">
+                    <input
+                      type="checkbox"
+                      checked={object.print_enabled !== false}
+                      onChange={(e) =>
+                        change(object.id, { print_enabled: e.target.checked })
+                      }
+                    />{" "}
+                    PDF 출력에 포함
+                  </label>
+                </>
+              ) : (
+                <>
+                  <p className="panel-description">
+                    캔버스의 요소를 선택하면
+                    <br />
+                    문구와 배치를 바꿀 수 있어요.
+                  </p>
                   <label className="field property-field">
-                    색상
+                    {face.name} 배경색
                     <div className="color-field">
                       <input
                         type="color"
-                        aria-label="색상 선택"
-                        value={object.color || "#243829"}
+                        aria-label="면 배경색"
+                        value={face.background}
                         onChange={(e) =>
-                          change(object.id, { color: e.target.value })
+                          commit({
+                            ...scene,
+                            faces: scene.faces.map((f) =>
+                              f.id === face.id
+                                ? { ...f, background: e.target.value }
+                                : f,
+                            ),
+                          })
                         }
                       />
-                      <span>{object.color || "#243829"}</span>
+                      <span>{face.background}</span>
                     </div>
                   </label>
-                )}
-                <h3 className="property-subtitle">
-                  위치와 크기 <span>mm</span>
-                </h3>
-                <div className="property-row">
-                  {(
-                    [
-                      ["x_mm", "X"],
-                      ["y_mm", "Y"],
-                    ] as const
-                  ).map(([key, label]) => (
-                    <label key={key} className="field property-field">
-                      {label}
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={object[key]}
-                        onChange={(e) => {
-                          if (
-                            e.target.value !== "" &&
-                            Number.isFinite(Number(e.target.value))
-                          )
-                            change(object.id, {
-                              [key]: Number(e.target.value),
-                            });
-                        }}
+                  <div className="color-swatches">
+                    {[
+                      "#f5f0e5",
+                      "#e4ebdd",
+                      "#263f2c",
+                      "#e79a67",
+                      "#fffdf9",
+                      "#e9dfe9",
+                    ].map((color) => (
+                      <button
+                        key={color}
+                        aria-label={`배경색 ${color}`}
+                        style={{ background: color }}
+                        onClick={() =>
+                          commit({
+                            ...scene,
+                            faces: scene.faces.map((f) =>
+                              f.id === face.id
+                                ? { ...f, background: color }
+                                : f,
+                            ),
+                          })
+                        }
                       />
-                    </label>
-                  ))}
-                </div>
-                <div className="property-row">
-                  {(
-                    [
-                      ["width_mm", "폭"],
-                      ["height_mm", "높이"],
-                    ] as const
-                  ).map(([key, label]) => (
-                    <label key={key} className="field property-field">
-                      {label}
-                      <input
-                        type="number"
-                        step="0.1"
-                        min={1}
-                        value={object[key]}
-                        onChange={(e) => {
-                          if (Number(e.target.value) >= 1)
-                            change(object.id, {
-                              [key]: Number(e.target.value),
-                            });
-                        }}
-                      />
-                    </label>
-                  ))}
-                </div>
-                <div className="property-row">
-                  <label className="field property-field">
-                    회전 (°)
-                    <input
-                      type="number"
-                      step="1"
-                      value={object.rotation_deg}
-                      onChange={(e) => {
-                        if (e.target.value !== "")
-                          change(object.id, {
-                            rotation_deg: Number(e.target.value),
-                          });
-                      }}
-                    />
-                  </label>
-                  <div className="field property-field">
-                    레이어 순서
-                    <div className="order-buttons">
-                      <button
-                        className="icon-button"
-                        aria-label="레이어 앞으로"
-                        onClick={() => commit(moveLayer(scene, object.id, 1))}
-                      >
-                        <ArrowUp size={17} />
-                      </button>
-                      <button
-                        className="icon-button"
-                        aria-label="레이어 뒤로"
-                        onClick={() => commit(moveLayer(scene, object.id, -1))}
-                      >
-                        <ArrowDown size={17} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <label className="guide-toggle print-toggle">
-                  <input
-                    type="checkbox"
-                    checked={object.print_enabled !== false}
-                    onChange={(e) =>
-                      change(object.id, { print_enabled: e.target.checked })
-                    }
-                  />{" "}
-                  PDF 출력에 포함
-                </label>
-              </>
-            ) : (
-              <>
-                <p className="panel-description">
-                  캔버스의 요소를 선택하면
-                  <br />
-                  문구와 배치를 바꿀 수 있어요.
-                </p>
-                <label className="field property-field">
-                  {face.name} 배경색
-                  <div className="color-field">
-                    <input
-                      type="color"
-                      aria-label="면 배경색"
-                      value={face.background}
-                      onChange={(e) =>
-                        commit({
-                          ...scene,
-                          faces: scene.faces.map((f) =>
-                            f.id === face.id
-                              ? { ...f, background: e.target.value }
-                              : f,
-                          ),
-                        })
-                      }
-                    />
-                    <span>{face.background}</span>
-                  </div>
-                </label>
-                <div className="color-swatches">
-                  {[
-                    "#f5f0e5",
-                    "#e4ebdd",
-                    "#263f2c",
-                    "#e79a67",
-                    "#fffdf9",
-                    "#e9dfe9",
-                  ].map((color) => (
-                    <button
-                      key={color}
-                      aria-label={`배경색 ${color}`}
-                      style={{ background: color }}
-                      onClick={() =>
-                        commit({
-                          ...scene,
-                          faces: scene.faces.map((f) =>
-                            f.id === face.id ? { ...f, background: color } : f,
-                          ),
-                        })
-                      }
-                    />
-                  ))}
-                </div>
-                <div className="demo-background-options">
-                  <span>예시 배경 이미지</span>
-                  <div>
-                    {(
-                      [
-                        ["forest", "그린"],
-                        ["citrus", "시트러스"],
-                        ["berry", "베리"],
-                      ] as const
-                    ).map(([palette, label]) => (
-                      <button
-                        key={palette}
-                        disabled={uploading}
-                        className={`demo-palette demo-palette-${palette}`}
-                        onClick={() => void demoBackground(palette)}
-                      >
-                        {label}
-                      </button>
                     ))}
                   </div>
-                  <p>자체 제작 예시 · 실제 AI 생성 아님</p>
+                  <div className="demo-background-options">
+                    <span>예시 배경 이미지</span>
+                    <div>
+                      {(
+                        [
+                          ["forest", "그린"],
+                          ["citrus", "시트러스"],
+                          ["berry", "베리"],
+                        ] as const
+                      ).map(([palette, label]) => (
+                        <button
+                          key={palette}
+                          disabled={uploading}
+                          className={`demo-palette demo-palette-${palette}`}
+                          onClick={() => void demoBackground(palette)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <p>자체 제작 예시 · 실제 AI 생성 아님</p>
+                  </div>
+                  <div className="editor-spec">
+                    <span>
+                      포장 형태
+                      <strong>
+                        {{
+                          "three-side-seal": "3면 실링",
+                          "stand-up-pouch": "스탠드 파우치",
+                          "folding-box": "접이식 상자",
+                        }[project.template_id] || project.template_id}
+                      </strong>
+                    </span>
+                    <span>
+                      완성 폭<strong>{project.width_mm} mm</strong>
+                    </span>
+                    <span>
+                      완성 높이<strong>{project.height_mm} mm</strong>
+                    </span>
+                    <span>
+                      인쇄면<strong>{scene.faces.length}개 면</strong>
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="panel-section check-section">
+              <h2>
+                <ShieldCheck size={16} /> 확인할 사항
+              </h2>
+              {warnings.length ? (
+                <button
+                  className="preflight-warning"
+                  onClick={() => setSelected(warnings[0].id)}
+                >
+                  <Info size={17} />
+                  <span>
+                    안전영역 밖의 요소 {warnings.length}개
+                    <small>중요 문구는 초록 점선 안쪽에 놓아 주세요.</small>
+                  </span>
+                </button>
+              ) : (
+                <div className="preflight-ok">
+                  <Check size={16} />
+                  <span>요소가 기본 안전영역 안에 있어요.</span>
                 </div>
-                <div className="editor-spec">
-                  <span>
-                    포장 형태<strong>3면 실링</strong>
-                  </span>
-                  <span>
-                    완성 폭<strong>{project.width_mm} mm</strong>
-                  </span>
-                  <span>
-                    완성 높이<strong>{project.height_mm} mm</strong>
-                  </span>
-                  <span>
-                    인쇄면<strong>앞면 · 뒷면</strong>
-                  </span>
-                </div>
-              </>
-            )}
-          </div>
-          <div className="panel-section check-section">
-            <h2>
-              <ShieldCheck size={16} /> 확인할 사항
-            </h2>
-            {warnings.length ? (
-              <button
-                className="preflight-warning"
-                onClick={() => setSelected(warnings[0].id)}
-              >
-                <Info size={17} />
-                <span>
-                  안전영역 밖의 요소 {warnings.length}개
-                  <small>중요 문구는 초록 점선 안쪽에 놓아 주세요.</small>
-                </span>
-              </button>
-            ) : (
-              <div className="preflight-ok">
-                <Check size={16} />
-                <span>요소가 기본 안전영역 안에 있어요.</span>
-              </div>
-            )}
-            <p className="panel-hint">
-              회전한 요소와 실제 가공 조건은 PDF와 제조사 도면으로 확인해
-              주세요.
-            </p>
-          </div>
+              )}
+              <p className="panel-hint">
+                회전한 요소와 실제 가공 조건은 PDF와 제조사 도면으로 확인해
+                주세요.
+              </p>
+            </div>
+          </fieldset>
         </aside>
       </div>
+      {panel && (
+        <Dialog
+          title={
+            {
+              ai: "AI 디자인 스튜디오",
+              structure: "바코드와 가공 요소",
+              bindings: "상품 연결과 복제",
+              exports: "제조 조건과 출력 검수",
+              "3d": "3D 조립 미리보기",
+            }[panel]
+          }
+          onClose={() => setPanel(null)}
+        >
+          {panel === "ai" && (
+            <AIStudio
+              projectId={id}
+              faceId={face.id}
+              referenceAssets={face.objects
+                .filter((o) => o.type === "image" && o.asset_id)
+                .map((o) => ({ id: o.asset_id! }))}
+              saveCurrent={saveCurrent}
+              onSelect={useGeneratedAsset}
+              readOnly={readOnly}
+            />
+          )}
+          {panel === "structure" && (
+            <StructureTools
+              scene={scene}
+              faceId={face.id}
+              onCommit={commit}
+              readOnly={readOnly}
+            />
+          )}
+          {panel === "bindings" && (
+            <BindingTools
+              project={project}
+              saveCurrent={saveCurrent}
+              onServerProject={onServerProject}
+              readOnly={readOnly}
+            />
+          )}
+          {panel === "exports" && (
+            <ExportTools
+              project={project}
+              scene={scene}
+              saveCurrent={saveCurrent}
+              onServerProject={onServerProject}
+              onCommit={commit}
+              onFaceSelect={(id) => {
+                setFaceId(id);
+                setSelected(null);
+                setPanel(null);
+              }}
+              readOnly={readOnly}
+            />
+          )}
+          {panel === "3d" && geometry && (
+            <div className="editor-preview3d">
+              <div className="alert alert-info">
+                실제 소재의 변형과 광택을 보증하지 않는 구조 미리보기입니다.
+                면을 클릭하면 해당 2D 편집면을 엽니다.
+              </div>
+              <PackagingPreview
+                scene={
+                  {
+                    ...scene,
+                    active_face_id: face.id,
+                  } as unknown as PackagingPreviewProps["scene"]
+                }
+                geometry={geometry}
+                onFaceSelect={(id) => {
+                  setFaceId(id);
+                  setSelected(null);
+                  setPanel(null);
+                }}
+                assetUrl={(id) => `/api/v1/assets/${id}/content`}
+                verificationMode
+              />
+            </div>
+          )}
+        </Dialog>
+      )}
       {exportMessage && (
         <div className="export-toast" role="status">
           <span className="export-toast-icon">
@@ -1253,13 +1595,6 @@ export default function EditorPage({
           )}
         </div>
       )}
-      <div className="mobile-editor-note">
-        <Info size={17} />
-        <span>
-          편집은 PC의 넓은 화면에서 더 편리합니다. 가로로 스크롤해 모든 도구를
-          확인하세요.
-        </span>
-      </div>
     </main>
   );
 }

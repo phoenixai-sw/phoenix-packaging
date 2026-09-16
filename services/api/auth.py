@@ -2,6 +2,7 @@ from datetime import timedelta, timezone
 from hashlib import sha256
 import hmac
 import secrets
+from types import SimpleNamespace
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
@@ -45,14 +46,28 @@ def check_origin(request: Request) -> None:
         raise APIError(403, "ORIGIN_REJECTED", "다른 사이트에서 보낸 요청은 처리할 수 없습니다.")
 
 
-def require_auth(request: Request, db, mutate=False, authorize_write=True):
+def require_auth(request: Request, db, mutate=False, authorize_write=True, enforce_membership=True):
     token = request.cookies.get(COOKIE_NAME, "")
     session = db.scalar(select(LoginSession).where(LoginSession.token_hash == hash_token(token))) if token else None
     if session is None or session.expires_at.replace(tzinfo=timezone.utc) <= utcnow():
         raise APIError(401, "AUTH_REQUIRED", "로그인 후 이용해 주세요.")
     user = db.get(User, session.user_id)
-    if user is None:
+    if user is None or not user.is_active:
         raise APIError(401, "AUTH_REQUIRED", "다시 로그인해 주세요.")
+    if session.active_tenant_id and session.active_tenant_id != user.tenant_id:
+        from .feature_models import Membership
+        membership = db.scalar(select(Membership).where(Membership.user_id == user.id, Membership.tenant_id == session.active_tenant_id, Membership.is_active.is_(True)))
+        if membership is None:
+            if enforce_membership:
+                raise APIError(403, "MEMBERSHIP_UNAVAILABLE", "이 작업 공간의 접근 권한이 없습니다. 개인 공간으로 전환해 주세요.")
+            # Recovery endpoints (switch home, accept invitation, logout) still
+            # authenticate the real account and CSRF token, even after removal.
+        else:
+            user = SimpleNamespace(id=user.id, name=user.name, email=user.email, tenant_id=membership.tenant_id, role=membership.role, is_admin=user.is_admin, email_verified_at=user.email_verified_at)
+    from .billing.payments import enforce_membership_entitlement
+    if enforce_membership:
+        enforce_membership_entitlement(db, user)
+    db.info["principal"] = user
     if mutate:
         check_origin(request)
         supplied = request.headers.get("x-csrf-token", "")
@@ -65,7 +80,13 @@ def require_auth(request: Request, db, mutate=False, authorize_write=True):
 
 def auth_payload(db, user, session):
     tenant = db.get(Tenant, user.tenant_id)
-    return {"user": {"id": user.id, "name": user.name, "email": user.email, "role": user.role, "email_verified": user.email_verified_at is not None}, "tenant": {"id": tenant.id, "name": tenant.name}, "csrf_token": session.csrf_token}
+    from .feature_models import Membership, WorkspaceMember
+    home = db.get(User, user.id)
+    memberships = [{"id": home.tenant_id, "name": db.get(Tenant, home.tenant_id).name, "role": home.role}]
+    for member in db.scalars(select(Membership).where(Membership.user_id == user.id, Membership.is_active.is_(True))):
+        memberships.append({"id": member.tenant_id, "name": db.get(Tenant, member.tenant_id).name, "role": member.role})
+    workspaces = list(db.scalars(select(WorkspaceMember.workspace_id).where(WorkspaceMember.user_id == user.id, WorkspaceMember.tenant_id == user.tenant_id)))
+    return {"user": {"id": user.id, "name": user.name, "email": user.email, "role": user.role, "is_admin": user.is_admin, "email_verified": user.email_verified_at is not None}, "tenant": {"id": tenant.id, "name": tenant.name}, "memberships": memberships, "workspace_ids": workspaces, "csrf_token": session.csrf_token}
 
 
 def throttle_auth(db, email: str):

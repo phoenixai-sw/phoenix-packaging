@@ -11,9 +11,15 @@ import {
   Plus,
   CircleHelp,
   ChevronDown,
+  Palette,
+  Package,
+  Users,
+  Wallet,
+  ShieldCheck,
 } from "lucide-react";
 import { Brand } from "./brand";
 import { api, ApiError, errorMessage, Session } from "@/lib/api";
+import { canEdit } from "@/lib/business";
 const SessionContext = createContext<Session | null>(null);
 export const useSession = () => useContext(SessionContext);
 export function Workspace({ children }: { children: React.ReactNode }) {
@@ -22,6 +28,7 @@ export function Workspace({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [retry, setRetry] = useState(0);
+  const [switching, setSwitching] = useState(false);
   useEffect(() => {
     let active = true;
     setError("");
@@ -33,7 +40,7 @@ export function Workspace({ children }: { children: React.ReactNode }) {
         if (!active) return;
         if (e instanceof ApiError && e.status === 401)
           router.replace(
-            `/auth?mode=login&next=${encodeURIComponent(pathname)}`,
+            `/auth?mode=login&next=${encodeURIComponent(pathname + window.location.search)}`,
           );
         else setError(errorMessage(e));
       });
@@ -47,6 +54,21 @@ export function Workspace({ children }: { children: React.ReactNode }) {
       router.replace("/");
     } catch (e) {
       setError(errorMessage(e));
+    }
+  }
+  async function switchTeam(tenant_id: string) {
+    if (tenant_id === session?.tenant.id) return;
+    setSwitching(true);
+    setError("");
+    try {
+      await api<Session>("/team/switch", {
+        method: "POST",
+        body: JSON.stringify({ tenant_id }),
+      });
+      window.location.assign("/app");
+    } catch (e) {
+      setError(errorMessage(e));
+      setSwitching(false);
     }
   }
   if (!session)
@@ -87,13 +109,38 @@ export function Workspace({ children }: { children: React.ReactNode }) {
             </span>
             <div>
               <strong>{session.tenant?.name || "내 작업 공간"}</strong>
-              <small>개발 시험 워크스페이스</small>
+              <small>
+                {session.user.role === "owner"
+                  ? "소유자"
+                  : session.user.role === "editor"
+                    ? "편집자"
+                    : "열람자"}
+              </small>
             </div>
             <ChevronDown size={14} />
           </div>
-          <Link href="/app/projects/new" className="button button-orange">
-            <Plus size={17} /> 새 프로젝트
-          </Link>
+          {(session.memberships?.length || 0) > 1 && (
+            <label className="workspace-team-select">
+              팀 전환
+              <select
+                aria-label="팀 전환"
+                value={session.tenant.id}
+                disabled={switching}
+                onChange={(e) => void switchTeam(e.target.value)}
+              >
+                {session.memberships?.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {canEdit(session) && (
+            <Link href="/app/projects/new" className="button button-orange">
+              <Plus size={17} /> 새 프로젝트
+            </Link>
+          )}
           <nav className="workspace-nav" aria-label="작업 공간 메뉴">
             <Link className={pathname === "/app" ? "active" : ""} href="/app">
               <LayoutGrid size={18} /> 내 프로젝트
@@ -104,6 +151,29 @@ export function Workspace({ children }: { children: React.ReactNode }) {
             >
               <FolderOpen size={18} /> 포장 선택하기
             </Link>
+            {[
+              { href: "/app/brands", label: "브랜드", icon: Palette },
+              { href: "/app/products", label: "상품과 변형", icon: Package },
+              { href: "/app/team", label: "팀과 작업 공간", icon: Users },
+              { href: "/app/billing", label: "구독과 크레딧", icon: Wallet },
+            ].map((item) => (
+              <Link
+                href={item.href}
+                key={item.href}
+                className={pathname.startsWith(item.href) ? "active" : ""}
+              >
+                <item.icon size={18} />
+                {item.label}
+              </Link>
+            ))}
+            {session.user.is_admin && (
+              <Link
+                href="/admin"
+                className={pathname.startsWith("/admin") ? "active" : ""}
+              >
+                <ShieldCheck size={18} /> 운영 관리
+              </Link>
+            )}
             <Link href="/pricing">
               <ArrowUpRight size={18} /> 요금 안내
             </Link>

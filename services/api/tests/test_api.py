@@ -163,6 +163,9 @@ def test_viewer_cannot_edit_upload_or_export(client, app):
     with app.state.session_factory() as db:
         user = db.get(User, data["user"]["id"])
         user.role = "viewer"
+        from services.api.billing.models import Subscription
+        now=utcnow()
+        db.add(Subscription(tenant_id=user.tenant_id,plan_id="pro",status="active",anchor_day=now.day,current_period_start=now,current_period_end=now+timedelta(days=30),billing_anchor=now,paid_until=now+timedelta(days=30)))
         db.commit()
     assert client.get(f"/v1/projects/{item['id']}").status_code == 200
     assert client.patch(f"/v1/projects/{item['id']}/draft", json={"base_revision": 1, "scene": item["scene"]}).status_code == 403

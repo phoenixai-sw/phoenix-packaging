@@ -1,6 +1,6 @@
 export type SceneObject = {
   id: string;
-  type: "text" | "image" | "shape";
+  type: "text" | "image" | "shape" | "barcode";
   face_id: string;
   x_mm: number;
   y_mm: number;
@@ -24,6 +24,11 @@ export type SceneObject = {
   stroke?: string;
   stroke_width_mm?: number;
   shape?: "rect" | "ellipse" | "circle";
+  barcode_value?: string;
+  module_mm?: number;
+  bar_height_mm?: number;
+  barcode_owned?: boolean;
+  binding_key?: string;
 };
 export type Face = {
   id: string;
@@ -37,6 +42,16 @@ export type Scene = {
   schema_version: string;
   active_face_id: string;
   faces: Face[];
+  holes?: Array<{
+    id: string;
+    face_id: string;
+    center_x_mm: number;
+    center_y_mm: number;
+    diameter_mm: number;
+  }>;
+  reviewed_face_ids?: string[];
+  confirmed_fields?: string[];
+  print_profile_version_id?: string;
   [key: string]: unknown;
 };
 export type Project = {
@@ -47,6 +62,15 @@ export type Project = {
   width_mm: number;
   height_mm: number;
   template_id: string;
+  brand_id?: string;
+  product_variant_id?: string;
+  workspace_id?: string;
+  bottom_mm?: number;
+  depth_mm?: number;
+  geometry?: Record<string, unknown>;
+  template_version_id?: string;
+  print_profile_version_id?: string;
+  material?: string;
   base_revision: number;
   scene: Scene;
   updated_at: string;
@@ -131,10 +155,28 @@ export function moveLayer(scene: Scene, id: string, direction: -1 | 1): Scene {
     }),
   };
 }
-export function safeWarnings(face: Face) {
+export function safeWarnings(
+  face: Face,
+  safeRegion?: {
+    x_mm: number;
+    y_mm: number;
+    width_mm: number;
+    height_mm: number;
+  },
+) {
   return face.objects.filter((o) => {
     if (o.visible === false || o.print_enabled === false) return false;
-    const margin = o.type === "text" ? 15 : -3;
+    const important = o.type === "text" || o.type === "barcode";
+    const margin = important ? 15 : -3;
+    const region =
+      important && safeRegion
+        ? safeRegion
+        : {
+            x_mm: margin,
+            y_mm: margin,
+            width_mm: face.width_mm - margin * 2,
+            height_mm: face.height_mm - margin * 2,
+          };
     const angle = (o.rotation_deg * Math.PI) / 180;
     return [
       [0, 0],
@@ -145,10 +187,10 @@ export function safeWarnings(face: Face) {
       const px = o.x_mm + x * Math.cos(angle) - y * Math.sin(angle);
       const py = o.y_mm + x * Math.sin(angle) + y * Math.cos(angle);
       return (
-        px < margin - 0.0001 ||
-        py < margin - 0.0001 ||
-        px > face.width_mm - margin + 0.0001 ||
-        py > face.height_mm - margin + 0.0001
+        px < region.x_mm - 0.0001 ||
+        py < region.y_mm - 0.0001 ||
+        px > region.x_mm + region.width_mm + 0.0001 ||
+        py > region.y_mm + region.height_mm + 0.0001
       );
     });
   });

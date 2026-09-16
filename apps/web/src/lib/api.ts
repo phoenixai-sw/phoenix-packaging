@@ -48,8 +48,22 @@ export async function api<T>(
   return data as T;
 }
 export type Session = {
-  user: { id: string; name: string; email: string };
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    role?: "owner" | "editor" | "viewer";
+    is_admin?: boolean;
+    email_verified?: boolean;
+  };
+  role?: "owner" | "editor" | "viewer";
   tenant: { id: string; name: string };
+  memberships?: Array<{
+    id: string;
+    name: string;
+    role: "owner" | "editor" | "viewer";
+  }>;
+  workspace_ids?: string[];
   csrf_token: string;
 };
 export function errorMessage(e: unknown): string {

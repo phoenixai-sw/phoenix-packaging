@@ -5,6 +5,8 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, StringConstraints, 
 
 Color = Annotated[str, StringConstraints(pattern=r"^#[0-9a-fA-F]{6}$")]
 Identifier = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,100}$")]
+FaceId = Literal["front", "back", "bottom", "left", "right", "top"]
+TemplateKind = Literal["three-side-seal", "stand-up-pouch", "folding-box"]
 Coordinate = Annotated[float, Field(ge=-2000, le=2000, allow_inf_nan=False)]
 
 
@@ -44,8 +46,8 @@ class ResetPasswordInput(AuthTokenInput):
 
 class SceneObject(StrictModel):
     id: Identifier
-    type: Literal["text", "image", "shape"]
-    face_id: Literal["front", "back"]
+    type: Literal["text", "image", "shape", "barcode"]
+    face_id: FaceId
     x_mm: Coordinate
     y_mm: Coordinate
     width_mm: float = Field(gt=0, le=2000, allow_inf_nan=False)
@@ -70,6 +72,11 @@ class SceneObject(StrictModel):
     stroke_width_mm: float | None = Field(default=None, ge=0, le=20, allow_inf_nan=False)
     shape: Literal["rect", "ellipse", "circle"] | None = None
 
+    barcode_value: str | None = Field(default=None, pattern=r"^[0-9]{13}$")
+    module_mm: float | None = Field(default=None, ge=0.264, le=0.66)
+    bar_height_mm: float | None = Field(default=None, ge=18.28, le=100)
+    barcode_owned: bool = False
+
     @field_validator("x_mm", "y_mm", "width_mm", "height_mm", "rotation_deg")
     @classmethod
     def normalize_mm(cls, value):
@@ -81,14 +88,17 @@ class SceneObject(StrictModel):
             raise ValueError("텍스트 객체에는 문구, 글꼴과 글자 크기가 필요합니다.")
         if self.type == "image" and self.asset_id is None:
             raise ValueError("이미지 객체에는 업로드한 자산 ID가 필요합니다.")
+        if self.type == "barcode":
+            from .geometry.barcodes import validate_ean13
+            validate_ean13(self.barcode_value)
         return self
 
 
 class Face(StrictModel):
-    id: Literal["front", "back"]
+    id: FaceId
     name: str = Field(min_length=1, max_length=30)
-    width_mm: float = Field(ge=60, le=600, allow_inf_nan=False)
-    height_mm: float = Field(ge=80, le=800, allow_inf_nan=False)
+    width_mm: float = Field(ge=20, le=800, allow_inf_nan=False)
+    height_mm: float = Field(ge=20, le=800, allow_inf_nan=False)
     background: Color = "#F5F0E6"
     objects: list[SceneObject] = Field(default_factory=list, max_length=200)
 
@@ -99,17 +109,36 @@ class Face(StrictModel):
         return self
 
 
+class Hole(StrictModel):
+    id: Identifier
+    face_id: FaceId
+    center_x_mm: Coordinate
+    center_y_mm: Coordinate
+    diameter_mm: float = Field(ge=4, le=10, allow_inf_nan=False)
+
+
 class Scene(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
-    template_version_id: Literal["three-side-seal-demo-v1"] | None = None
+    template_version_id: str | None = Field(default=None,max_length=100)
+    template_kind: TemplateKind | None = None
+    bottom_mm: float | None = Field(default=None,ge=30,le=180)
+    depth_mm: float | None = Field(default=None,ge=30,le=300)
+    holes: list[Hole] = Field(default_factory=list,max_length=8)
+    confirmed_fields: list[str] = Field(default_factory=list,max_length=30)
+    reviewed_face_ids: list[FaceId] = Field(default_factory=list,max_length=6)
+    brand_id: UUID | None = None
+    product_variant_id: UUID | None = None
+    workspace_id: UUID | None = None
     geometry_hash: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")] | None = None
-    active_face_id: Literal["front", "back"] = "front"
-    faces: list[Face] = Field(min_length=2, max_length=2)
+    active_face_id: FaceId = "front"
+    faces: list[Face] = Field(min_length=2, max_length=6)
 
     @model_validator(mode="after")
     def unique_faces_objects(self):
-        if {face.id for face in self.faces} != {"front", "back"}:
-            raise ValueError("3면 실링 봉투는 앞면과 뒷면이 각각 필요합니다.")
+        expected = {"three-side-seal":{"front","back"},"stand-up-pouch":{"front","back","bottom"},"folding-box":{"front","back","left","right","top","bottom"}}
+        kind=self.template_kind or next((key for key in expected if self.template_version_id==key+"-demo-v1"),"three-side-seal")
+        if len(self.faces)!=len(expected[kind]) or {face.id for face in self.faces}!=expected[kind] or self.active_face_id not in expected[kind]:
+            raise ValueError("포장 구조의 모든 면을 각각 한 번씩 포함해 주세요.")
         ids = [obj.id for face in self.faces for obj in face.objects]
         if len(ids) != len(set(ids)):
             raise ValueError("객체 ID는 프로젝트 안에서 고유해야 합니다.")
@@ -122,7 +151,12 @@ class CreateProjectInput(StrictModel):
     brand_name: str = Field(default="", max_length=120)
     width_mm: float = Field(default=160, ge=60, le=600, allow_inf_nan=False)
     height_mm: float = Field(default=230, ge=80, le=800, allow_inf_nan=False)
-    template_id: Literal["three-side-seal"] = "three-side-seal"
+    template_id: TemplateKind = "three-side-seal"
+    bottom_mm: float | None = Field(default=None,ge=30,le=180)
+    depth_mm: float | None = Field(default=None,ge=30,le=300)
+    brand_id: UUID | None = None
+    product_variant_id: UUID | None = None
+    workspace_id: UUID | None = None
     description: str = Field(default="", max_length=4000)
 
     @field_validator("name", "product_name")
@@ -136,6 +170,12 @@ class CreateProjectInput(StrictModel):
     @classmethod
     def normalize_mm(cls, value):
         return round(value, 4)
+
+    @model_validator(mode="after")
+    def validate_structure(self):
+        from .geometry import build_geometry
+        build_geometry(self.template_id,self.width_mm,self.height_mm,bottom_mm=self.bottom_mm,depth_mm=self.depth_mm)
+        return self
 
 
 class SaveDraftInput(StrictModel):
@@ -152,7 +192,9 @@ class RevisionInput(StrictModel):
 class ExportInput(StrictModel):
     project_id: UUID
     base_revision: int = Field(ge=1)
-    kind: Literal["review"] = "review"
+    kind: Literal["review", "production"] = "review"
+    reviewed_face_ids: list[FaceId] = Field(default_factory=list,max_length=6)
+    quote_id: UUID | None = None
 
 
 class DemoBackgroundInput(StrictModel):

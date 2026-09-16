@@ -16,7 +16,8 @@
     "plugins": [{ "name": "next" }],
     "paths": {
       "@/*": ["./src/*"],
-      "@editor/*": ["../../packages/editor/src/*"]
+      "@editor/*": ["../../packages/editor/src/*"],
+      "@preview3d/*": ["../../packages/preview3d/src/*"]
     }
   },
   "include": [

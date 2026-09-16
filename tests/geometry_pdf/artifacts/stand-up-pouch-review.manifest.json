@@ -1,0 +1,104 @@
+{
+  "schema_version": "1.0",
+  "kind": "review",
+  "review_only": true,
+  "production_enabled": false,
+  "approval_status": "demo_unapproved",
+  "template_version_id": "stand-up-pouch-demo-v1",
+  "project_id": "structural-qa",
+  "revision": 1,
+  "revision_id": null,
+  "geometry_hash": "45468a760beeb29ce27c4e6d4e584ec230decb6c8fbbbf06f9e640c0779ae32a",
+  "generated_at": "2026-09-16T12:53:33.358707+00:00",
+  "sha256": "4902d59186f00877f84af08f0f3637e6b2664424c561a68009b350b63e58c139",
+  "font": {
+    "id": "NotoSansKR",
+    "sha256": "8e4000a13809588d46c1b791e874cd4567b6283eeb9d2e6835a3136a871a6bd0",
+    "embedded": true,
+    "license": "OFL-1.1"
+  },
+  "pages": [
+    {
+      "face_id": "front",
+      "width_mm": 160.0,
+      "height_mm": 230.0
+    },
+    {
+      "face_id": "back",
+      "width_mm": 160.0,
+      "height_mm": 230.0
+    },
+    {
+      "face_id": "bottom",
+      "width_mm": 160.0,
+      "height_mm": 60.0
+    },
+    {
+      "face_id": "net",
+      "width_mm": 160.0,
+      "height_mm": 520.0
+    }
+  ],
+  "warnings": [
+    {
+      "code": "DEMO_UNAPPROVED",
+      "message": "데모 구조 · 제조사 미승인"
+    },
+    {
+      "code": "REVIEW_ONLY",
+      "message": "검토용 · 제작 사용 불가"
+    },
+    {
+      "code": "RGB_REVIEW",
+      "message": "RGB 검토 PDF입니다. PDF/X·CMYK·별색·화이트 잉크 출력이 아닙니다."
+    },
+    {
+      "code": "FINISHED_SIZE",
+      "message": "페이지는 완성 치수와 같습니다. 바깥 블리드는 검토 페이지에서 잘립니다."
+    }
+  ],
+  "original_texts": [
+    {
+      "object_id": "front-label",
+      "face_id": "front",
+      "text": "앞면 ↑\nFRONT / 좌 → 우",
+      "rendered_lines": [
+        "앞면 ↑",
+        "FRONT / 좌 → 우"
+      ],
+      "visible": true,
+      "print_enabled": true
+    },
+    {
+      "object_id": "back-label",
+      "face_id": "back",
+      "text": "뒷면 ↑\nBACK / 좌 → 우",
+      "rendered_lines": [
+        "뒷면 ↑",
+        "BACK / 좌 → 우"
+      ],
+      "visible": true,
+      "print_enabled": true
+    },
+    {
+      "object_id": "bottom-label",
+      "face_id": "bottom",
+      "text": "바닥 ↑\nBOTTOM / 좌 → 우",
+      "rendered_lines": [
+        "바닥 ↑",
+        "BOTTOM / 좌 → 우"
+      ],
+      "visible": true,
+      "print_enabled": true
+    }
+  ],
+  "capabilities": {
+    "vector_text": true,
+    "embedded_fonts": true,
+    "original_raster_assets": true,
+    "pdf_x": false,
+    "cmyk": false,
+    "spot_colors": false,
+    "production": false
+  }
+}
