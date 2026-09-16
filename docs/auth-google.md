@@ -4,12 +4,14 @@
 
 ## 환경 설정
 
-- `GOOGLE_CLIENT_ID`: Google Cloud의 **웹 애플리케이션** OAuth 클라이언트 ID. 서버 한 곳에만 설정하며 공개 클라이언트 ID는 로그인 준비 응답으로 브라우저에 전달된다. 클라이언트 비밀키는 필요하지 않다.
-- `ADMIN_EMAILS`: 쉼표로 구분한 운영 계정 이메일 허용목록. 서버 전용이며 브라우저에 목록을 반환하지 않는다. 비어 있으면 운영 관리 접근을 허용하지 않는다.
-- 기존 `APP_URL`, `ALLOWED_ORIGINS`, `COOKIE_SECURE`와 저장소·DB 설정은 유지한다. Google Cloud의 승인된 JavaScript 원본에 실제 프런트엔드 원본과 필요한 localhost 원본을 각각 등록해야 한다. 클라이언트 ID 재사용만으로 새 도메인이 허용되지는 않는다.
+- `GOOGLE_CLIENT_ID`: **Package Design 전용 Google Cloud 프로젝트에서 새로 생성하는 웹 애플리케이션 OAuth 클라이언트 ID**. AI브릿지 클라이언트는 재사용하지 않는다. 서버 한 곳에만 설정하며 공개 클라이언트 ID는 로그인 준비 응답으로 브라우저에 전달된다. 클라이언트 비밀키는 필요하지 않다.
+- `ADMIN_EMAILS`: 현재 운영 허용목록은 `phoenixai.sw@gmail.com` 한 계정만 사용한다. 서버 전용이며 브라우저에 목록을 반환하지 않는다. 비어 있으면 운영 관리 접근을 허용하지 않는다.
+- 기존 `APP_URL`, `ALLOWED_ORIGINS`, `COOKIE_SECURE`와 저장소·DB 설정은 유지한다. 전용 클라이언트의 승인된 JavaScript 원본에 실제 프런트엔드 원본과 필요한 localhost 원본을 각각 등록해야 한다. 다른 서비스의 OAuth 설정은 변경하지 않는다.
 - 기존 `WORKER_SECRET`은 웹 프록시와 API에 같은 값으로 유지한다. Vercel 웹 프록시는 플랫폼이 제공하는 `x-vercel-forwarded-for`의 단일 IP를 검증하고 HMAC으로 익명 제한 식별자를 만든다. 식별자·시각·메서드·경로를 다시 서명하며 API는 60초 안의 유효한 서명만 수용한다. 브라우저가 보낸 제한용 헤더는 전달하지 않는다. 이 용도와 워커 인증은 서로 다른 입력 형식이며 비밀값은 응답에 포함하지 않는다.
 
 Google 설정이 없으면 로그인 준비·교환 API가 `503 GOOGLE_LOGIN_NOT_CONFIGURED`로 차단된다. 가짜 버튼, 임시 비밀번호 또는 환경변수 기반 인증 우회는 제공하지 않는다.
+
+전용 Google Cloud 프로젝트 `phoenix-packaging` / `Phoenix Packaging` 생성은 완료했다. 새 OAuth 앱의 사용자 데이터 정책 동의 확인과 클라이언트 발급은 아직 진행 중이다. AI브릿지 ID는 패키지의 로컬·Vercel 설정에서 제거했다. 새 ID는 `C:\codex\phoenix-service-keys.local.txt`의 `GOOGLE_CLIENT_ID`에 보관한 뒤 별도 환경 반영 절차에서 사용한다. 실제 Google 로그인 성공이나 운영 배포 완료로 간주하지 않는다.
 
 ## 서버 검증과 세션
 
