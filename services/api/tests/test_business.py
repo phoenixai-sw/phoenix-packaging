@@ -1,6 +1,7 @@
 from copy import deepcopy
 from datetime import timedelta
 from uuid import uuid4
+from urllib.parse import urlparse,parse_qs
 from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy import select
@@ -11,10 +12,11 @@ from services.api.models import User
 from services.api.feature_models import Membership,Variant,RegistryVersion,AuditEvent
 from services.api.billing.models import Subscription
 from services.api.tests.test_api import register,project,image_file
+from services.api.tests.auth_helpers import google_login
 
 @pytest.fixture
 def business(tmp_path):
-    app=create_app(Settings(environment="test",database_url=f"sqlite:///{tmp_path/'business.db'}",storage_dir=tmp_path/"storage",mail_outbox_dir=tmp_path/"mail"))
+    app=create_app(Settings(environment="test",database_url=f"sqlite:///{tmp_path/'business.db'}",storage_dir=tmp_path/"storage"))
     clients=[]
     with TestClient(app) as owner:
         auth=register(owner)
@@ -39,7 +41,7 @@ def invitation(client,email,workspaces=None,role="editor"):
     response=client.post("/v1/team/invitations",json={"email":email,"role":role,"workspace_ids":workspaces or []});assert response.status_code==201,response.text;return response.json()["data"]
 
 def accept(client,invite):
-    response=client.post("/v1/team/invitations/accept",json={"token":invite["token"]});assert response.status_code==200,response.text;return response.json()["data"]
+    response=client.post("/v1/team/invitations/accept",json={"token":parse_qs(urlparse(invite["invitation_url"]).query)["invite"][0]});assert response.status_code==200,response.text;return response.json()["data"]
 
 def test_catalog_tenant_ids_and_csrf_are_not_trusted(business):
     app,owner,auth,member=business;other,_=member("other@example.com")
@@ -53,7 +55,7 @@ def test_catalog_tenant_ids_and_csrf_are_not_trusted(business):
     assert owner.get("/v1/admin/overview").status_code==403
     assert owner.post("/v1/admin/template-versions",json={"name":"fake","manufacturer":"fake","source":"fake","license":"fake"}).status_code==403
 
-def test_partner_seats_invitation_email_and_replay(business):
+def test_partner_seats_manual_invitation_and_replay(business):
     app,owner,auth,member=business
     assert owner.post("/v1/workspaces",json={"name":"no plan"}).status_code==403
     paid(app,auth["tenant"]["id"])
@@ -61,14 +63,29 @@ def test_partner_seats_invitation_email_and_replay(business):
     denied=owner.post("/v1/team/invitations",json={"email":"member5@example.com","role":"editor"})
     assert denied.status_code==403 and denied.json()["code"]=="SEAT_LIMIT"
     wrong,_=member("wrong@example.com")
-    assert wrong.post("/v1/team/invitations/accept",json={"token":invitations[0]["token"]}).status_code==422
+    assert wrong.post("/v1/team/invitations/accept",json={"token":parse_qs(urlparse(invitations[0]["invitation_url"]).query)["invite"][0]}).status_code==422
     first,first_auth=member("member0@example.com");accepted=accept(first,invitations[0])
     assert accepted["tenant"]["id"]==auth["tenant"]["id"] and accepted["user"]["role"]=="editor"
-    assert first.post("/v1/team/invitations/accept",json={"token":invitations[0]["token"]}).status_code==422
+    assert first.post("/v1/team/invitations/accept",json={"token":parse_qs(urlparse(invitations[0]["invitation_url"]).query)["invite"][0]}).status_code==422
     assert len(owner.get("/v1/team").json()["data"]["members"])==2
     with app.state.session_factory() as db:
         event=db.scalar(select(AuditEvent).where(AuditEvent.action=="invitation_accepted"))
         assert event.tenant_id==auth["tenant"]["id"]
+
+
+def test_external_google_email_cannot_claim_email_addressed_invitation(business):
+    app,owner,auth,_=business
+    paid(app,auth["tenant"]["id"])
+    invite=invitation(owner,"external@example.com")
+    assert invite["delivery"]=="manual_share" and "token" not in invite
+    assert "invitation_url" not in owner.get("/v1/team").json()["data"]["invitations"][0]
+    with TestClient(app) as external:
+        signed=google_login(external,"external@example.com",claims={"hd":None})
+        assert signed.status_code==200 and signed.json()["data"]["user"]["email_verified"] is True
+        external.headers["X-CSRF-Token"]=signed.json()["data"]["csrf_token"]
+        token=parse_qs(urlparse(invite["invitation_url"]).query)["invite"][0]
+        denied=external.post("/v1/team/invitations/accept",json={"token":token})
+        assert denied.status_code==403 and denied.json()["code"]=="GOOGLE_TEAM_IDENTITY_REQUIRED"
 
 def test_member_workspace_project_asset_and_export_isolation(business):
     app,owner,auth,member=business;paid(app,auth["tenant"]["id"])
@@ -132,7 +149,7 @@ def test_catalog_variant_ids_bindings_cas_and_clone_preserve_identity(business):
 
 def test_registry_approval_requires_dimensions_and_is_irreversible(business):
     app,owner,auth,member=business
-    with app.state.session_factory() as db:db.get(User,auth["user"]["id"]).is_admin=True;db.commit()
+    app.state.settings.admin_emails=(auth["user"]["email"],)
     evidence=owner.post("/v1/admin/evidence",files={"file":image_file()});assert evidence.status_code==201,evidence.text
     evidence_id=evidence.json()["data"]["id"]
     spec={"name":"Own fixture","manufacturer":"Fixture factory","is_demo":False,"geometry_template_id":"three-side-seal","billing_family_key":"family","source":"test-only","license":"test-only","material":"test-paper"}

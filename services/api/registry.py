@@ -16,7 +16,6 @@ from .feature_models import RegistryVersion, Evidence, AuditEvent, ProviderAttem
 from .models import Job, Project, User
 from .business import owned_record
 from .geometry import geometry_for_scene
-from .mail import mail_available
 from .printer_intakes import intake_metadata, intake_metrics
 
 
@@ -157,7 +156,7 @@ def install_registry_routes(app,db_session,project_payload,snapshot_revision):
         admin(request,db)
         versions=list(db.scalars(select(RegistryVersion)))
         billing=app.state.billing_settings.capabilities()
-        readiness=[{"key":"smtp","label":"이메일 발송","ready":bool(settings.smtp_host),"detail":"SMTP 연결됨" if settings.smtp_host else "회사 도메인과 SMTP 연결 필요"},{"key":"payments","label":"결제 연동","ready":billing["checkout_available"],"detail":billing["provider"] if "provider" in billing else app.state.billing_settings.provider},{"key":"policy","label":"운영 정책 확정","ready":settings.policy_approved,"detail":"약관·환불·개인정보 운영 정책 승인"},{"key":"templates","label":"제조사 승인 도면","ready":any(v.kind=="template" and v.status=="approved" and not v.is_demo for v in versions),"detail":"제조사 증빙과 별도 관리자 승인 필요"},{"key":"profiles","label":"인쇄 조건","ready":any(v.kind=="profile" and v.status=="approved" and not v.is_demo for v in versions),"detail":"지원 가능한 출력 조건만 승인"},{"key":"ai","label":"AI 제공자","ready":settings.ai_provider=="openai","detail":settings.image_model if settings.ai_provider=="openai" else settings.ai_provider}]
+        readiness=[{"key":"google_login","label":"Google 로그인","ready":bool(settings.google_client_id),"detail":"Google 계정 로그인 연결됨" if settings.google_client_id else "Google 로그인 클라이언트 연결 필요"},{"key":"payments","label":"결제 연동","ready":billing["checkout_available"],"detail":billing["provider"] if "provider" in billing else app.state.billing_settings.provider},{"key":"policy","label":"운영 정책 확정","ready":settings.policy_approved,"detail":"약관·환불·개인정보 운영 정책 승인"},{"key":"templates","label":"제조사 승인 도면","ready":any(v.kind=="template" and v.status=="approved" and not v.is_demo for v in versions),"detail":"제조사 증빙과 별도 관리자 승인 필요"},{"key":"profiles","label":"인쇄 조건","ready":any(v.kind=="profile" and v.status=="approved" and not v.is_demo for v in versions),"detail":"지원 가능한 출력 조건만 승인"},{"key":"ai","label":"AI 제공자","ready":settings.ai_provider=="openai","detail":settings.image_model if settings.ai_provider=="openai" else settings.ai_provider}]
         events=list(db.scalars(select(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(100)))
         costs=db.execute(select(ProviderAttempt.provider,ProviderAttempt.model,func.count(),func.sum(ProviderAttempt.cost_usd)).group_by(ProviderAttempt.provider,ProviderAttempt.model)).all()
         intake=db.execute(select(IntakeRecord.status,IntakeRecord.category,func.count()).group_by(IntakeRecord.status,IntakeRecord.category)).all()

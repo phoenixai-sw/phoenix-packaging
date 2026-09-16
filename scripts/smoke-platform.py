@@ -15,13 +15,14 @@ import uuid
 import httpx
 from PIL import Image
 from pypdf import PdfReader
+from smoke_session import attach_session
 
 ROOT=Path(__file__).resolve().parents[1]
 LOCAL=ROOT/'.local'
 ORIGIN='https://phoenix-packaging.vercel.app'
 STATE=LOCAL/'cloud-platform-smoke-state.json'
 REPORT=LOCAL/'cloud-platform-smoke-result.json'
-parser=argparse.ArgumentParser();parser.add_argument('--ai',action='store_true');args=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument('--ai',action='store_true');parser.add_argument('--session-file',type=Path,default=LOCAL/'google-smoke-session.json');args=parser.parse_args()
 state=json.loads(STATE.read_text()) if STATE.exists() else {'run':uuid.uuid4().hex,'projects':{},'jobs':{}}
 report=json.loads(REPORT.read_text()) if REPORT.exists() else {'origin':ORIGIN,'checks':[]}
 client=httpx.Client(base_url=ORIGIN+'/api/v1',headers={'Origin':ORIGIN},timeout=60,follow_redirects=True)
@@ -91,8 +92,8 @@ def core():
         final=wait_job(job['id'])
         pdf=client.get('/exports/'+job['id']+'/download');assert pdf.status_code==200 and pdf.content.startswith(b'%PDF-')
         reader=PdfReader(BytesIO(pdf.content));assert len(reader.pages)==pages
-        assert abs(float(reader.pages[0].mediabox.width)*25.4/72-160)<.01
-        assert abs(float(reader.pages[0].mediabox.height)*25.4/72-230)<.01
+        assert abs(float(reader.pages[0].trimbox.width)*25.4/72-160)<.01
+        assert abs(float(reader.pages[0].trimbox.height)*25.4/72-230)<.01
         assert '높은 단백질 함량' in reader.pages[0].extract_text()
         (LOCAL/('cloud-'+kind+'-review.pdf')).write_bytes(pdf.content)
         report[kind]={'project_id':item['id'],'job_id':job['id'],'pages':pages,'pdf_bytes':len(pdf.content),'sha256':sha256(pdf.content).hexdigest()}
@@ -177,8 +178,10 @@ def ai():
 
 
 try:
-    account=json.loads((LOCAL/'smoke-account.json').read_text())
-    auth=request('POST','/auth/login',json=account);client.headers['X-CSRF-Token']=auth['csrf_token']
+    auth=attach_session(client,args.session_file,ORIGIN)
+    if state.get('user_id') and state['user_id']!=auth['user']['id']:
+        raise RuntimeError('This QA state belongs to another Google account')
+    state['user_id']=auth['user']['id'];persist()
     ai() if args.ai else core()
     print('Platform integration checks complete.',flush=True)
 except Exception as exc:

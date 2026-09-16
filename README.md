@@ -36,9 +36,9 @@ python -m venv .venv
 powershell -ExecutionPolicy Bypass -File scripts/dev.ps1
 ```
 
-http://localhost:3000 에서 가입합니다. `.env.example`을 `.env`로 복사하면 설정을 변경할 수 있습니다. 로컬은 `.data/phoenix.db`와 `.data/storage`를 사용하며 종료 시 데이터를 지우지 않습니다. 로컬 AI 기본값은 명시적인 fixture이고 결제 기본값은 disabled입니다. 개발 전용 예제 계정은 `python -m services.api.seed`, 중단은 `scripts/dev.ps1 -Stop`을 사용합니다.
+`.env.example`을 `.env`로 복사하고 `GOOGLE_CLIENT_ID`를 설정한 뒤 http://localhost:3000 에서 Google로 로그인합니다. 운영 계정은 `ADMIN_EMAILS`로 지정합니다. Google 웹 클라이언트에 접속 원본도 등록해야 합니다. 비밀번호·인증메일·재설정은 없습니다. 로컬은 `.data/phoenix.db`와 `.data/storage`를 사용하며 종료 시 데이터를 지우지 않습니다. 로컬 AI 기본값은 명시적인 fixture이고 결제 기본값은 disabled입니다. 중단은 `scripts/dev.ps1 -Stop`을 사용합니다.
 
-Docker Compose는 `make dev`, `make seed`, `make down`을 제공합니다. PostgreSQL·Redis·Celery·Mailpit을 포함하지만 이 호스트에는 Docker가 없어 Compose 실기동은 검증하지 않았습니다.
+Docker Compose는 `make dev`, `make down`을 제공합니다. PostgreSQL·Redis·Celery를 포함하지만 이 호스트에는 Docker가 없어 Compose 실기동은 검증하지 않았습니다. 메일 서비스는 제거했습니다.
 
 ## 검증
 
@@ -55,6 +55,6 @@ npm run build
 
 Next.js 웹과 FastAPI API는 별도 Vercel 프로젝트이며 같은 저장소의 `main`을 배포합니다. 웹의 동일 출처 API 프록시가 세션을 전달하고 비밀키는 서버에만 둡니다. DB 작업 큐, 응답 후 worker 호출, 매분 보호된 Cron이 AI·출력·결제 복구를 처리합니다. 함수 제한은 Pro의800초이며 작업 임대와 공급자 중복 호출 방지를 별도로 적용합니다.
 
-마이그레이션은 `0006_direct_uploads`까지 있습니다. API의 루트 `requirements.txt`와 `services/api/requirements.txt`를 동일하게 유지합니다. 관리자 권한은 가입만으로 생기지 않으며 운영자가 `scripts/manage-admin.py --email EMAIL`로 부여합니다.
+마이그레이션은 `0007_google_auth`까지 있습니다. API의 루트 `requirements.txt`와 `services/api/requirements.txt`를 동일하게 유지합니다. Google이 검증한 계정 중 서버 `ADMIN_EMAILS`에 등록된 계정만 운영 관리자가 됩니다. 클라이언트나 기존 DB의 is_admin 값으로 권한을 부여하지 않습니다.
 
-외부 자료의 준비 순서는 [대표님 준비 안내](docs/owner-setup.ko.md), 남은 운영 조건은 [유료 운영 준비 상태](docs/production-readiness.md)에 있습니다. 키·백업·계정 정보는 Git 제외 경로에 보관합니다.
+Google·Toss 설정은 [연결 안내](docs/owner-setup.ko.md), 남은 운영 조건은 [유료 운영 준비 상태](docs/production-readiness.md)에 있습니다. 제조사 자료 요청 절차는 공개 기본 규격 조사와 엔진 검증으로 대체했습니다. 키·백업·계정 정보는 Git 제외 경로에 보관합니다.

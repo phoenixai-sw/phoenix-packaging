@@ -99,8 +99,17 @@ def preflight_project(project:dict, approved_conditions:dict|None=None, asset_re
                         add("BARCODE_OWNERSHIP_REQUIRED","GS1 발급 번호와 사용 권한을 고객이 확인해야 합니다.",**details)
                 except GeometryValidationError as exc:
                     add(exc.code,exc.message,"review",field=exc.field,**details)
+    basic_review = None
+    if scene:
+        from .public_profiles import inspect_basic_review
+        try:
+            basic_review = inspect_basic_review(project, asset_resolver)
+            issues.extend(basic_review["issues"])
+        except GeometryValidationError as exc:
+            if not any(i["code"] == exc.code and i["scope"] == "review" for i in issues):
+                add(exc.code, exc.message, "review", field=exc.field)
     review_allowed=not any(i["scope"]=="review" and i["severity"]=="error" for i in issues)
     production_allowed=review_allowed and not any(i["severity"]=="error" for i in issues)
     return {"schema_version":"1.0","status":"pass" if production_allowed else "blocked","review_allowed":review_allowed,"production_allowed":production_allowed,
-            "issues":issues,"capabilities":deepcopy(CAPABILITIES),"geometry_hash":geometry["geometry_hash"] if geometry else None,
+            "issues":issues,"basic_review":basic_review,"capabilities":deepcopy(CAPABILITIES),"geometry_hash":geometry["geometry_hash"] if geometry else None,
             "faces":[f["id"] for f in scene["faces"]] if scene else [],"revision_id":str(revision_id) if revision_id else None}

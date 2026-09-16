@@ -1,279 +1,218 @@
 "use client";
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useRef, useState, Suspense } from "react";
 import Link from "next/link";
+import Script from "next/script";
 import { useRouter, useSearchParams } from "next/navigation";
-import {
-  ArrowLeft,
-  ArrowRight,
-  CheckCircle2,
-  LoaderCircle,
-  Mail,
-  ShieldCheck,
-} from "lucide-react";
+import { ArrowLeft, LoaderCircle, ShieldCheck } from "lucide-react";
 import { Brand } from "@/components/brand";
 import { packagingMedia } from "@/lib/media";
 import { api, errorMessage, Session } from "@/lib/api";
-type Mode = "register" | "login" | "forgot" | "reset" | "verify";
+
+type GoogleIdentity = {
+  initialize: (options: {
+    client_id: string;
+    nonce: string;
+    callback: (response: { credential: string }) => void;
+    auto_select: boolean;
+    ux_mode: "popup";
+    itp_support: boolean;
+  }) => void;
+  renderButton: (
+    element: HTMLElement,
+    options: {
+      theme: "outline";
+      size: "large";
+      text: "continue_with";
+      shape: "rectangular";
+      width: number;
+      locale: "ko";
+    },
+  ) => void;
+};
+type Challenge = {
+  client_id: string;
+  nonce: string;
+  csrf_token: string;
+  expires_at: string;
+};
 function AuthForm() {
   const params = useSearchParams();
   const router = useRouter();
-  const [mode, setMode] = useState<Mode>(() => {
-    const m = params.get("mode");
-    return ["login", "reset", "verify"].includes(m || "")
-      ? (m as Mode)
-      : "register";
-  });
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [challenge, setChallenge] = useState<Challenge>();
+  const [scriptReady, setScriptReady] = useState(false);
+  const [scriptFailed, setScriptFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const [mailAvailable, setMailAvailable] = useState<boolean | null>(null);
+  const [retry, setRetry] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const buttonHost = useRef<HTMLDivElement>(null);
+  const request = useRef<Promise<Challenge> | undefined>(undefined);
+  const credentialBusy = useRef(false);
   const destination = params.get("next");
   const next =
-    destination?.startsWith("/app") && !destination.startsWith("//")
+    destination &&
+    (destination === "/app" ||
+      destination.startsWith("/app/") ||
+      destination === "/admin" ||
+      destination.startsWith("/admin/"))
       ? destination
       : "/app";
   useEffect(() => {
-    if (mode === "register" || mode === "login")
-      api<Session>("/me")
-        .then(() => router.replace(next))
-        .catch(() => {});
-  }, [mode, next, router]);
+    api<Session>("/me")
+      .then(() => router.replace(next))
+      .catch(() => {});
+    if (params.has("token"))
+      window.history.replaceState(
+        {},
+        "",
+        `/auth?next=${encodeURIComponent(next)}`,
+      );
+  }, [next, router, params]);
   useEffect(() => {
-    api<{ email_verification_available: boolean }>("/config")
-      .then((config) => setMailAvailable(config.email_verification_available))
-      .catch(() => setMailAvailable(false));
-  }, []);
-  function switchMode(value: Mode) {
-    setMode(value);
-    setError("");
-    setNotice("");
-    setPassword("");
-  }
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    setBusy(true);
-    setError("");
-    setNotice("");
-    try {
-      if (mode === "forgot") {
-        const result = await api<{ message: string }>(
-          "/auth/request-password-reset",
-          { method: "POST", body: JSON.stringify({ email }) },
-        );
-        setNotice(result.message);
-      } else if (mode === "verify") {
-        await api("/auth/verify-email", {
-          method: "POST",
-          body: JSON.stringify({ token: params.get("token") }),
-        });
-        setNotice("이메일 확인을 완료했습니다. 작업 공간에서 계속해 주세요.");
-      } else if (mode === "reset") {
-        await api("/auth/reset-password", {
-          method: "POST",
-          body: JSON.stringify({ token: params.get("token"), password }),
-        });
-        setNotice("비밀번호를 변경했습니다. 새 비밀번호로 로그인해 주세요.");
-        setPassword("");
-      } else {
-        await api<Session>(
-          mode === "login" ? "/auth/login" : "/auth/register",
-          {
-            method: "POST",
-            body: JSON.stringify({
-              email,
-              password,
-              ...(mode === "register" ? { name } : {}),
-            }),
-          },
-        );
-        router.push(next);
-      }
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(false);
+    let active = true;
+    setLoading(true);
+    request.current ||= api<Challenge>("/auth/google/challenge");
+    request.current
+      .then((value) => {
+        if (active) setChallenge(value);
+      })
+      .catch((e) => {
+        if (active) setError(errorMessage(e));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [retry]);
+  useEffect(() => {
+    if (!challenge || !scriptReady || !buttonHost.current) return;
+    const google = (
+      window as unknown as { google?: { accounts?: { id?: GoogleIdentity } } }
+    ).google?.accounts?.id;
+    if (!google) {
+      setScriptFailed(true);
+      setError("Google 로그인 버튼을 불러오지 못했습니다. 다시 시도해 주세요.");
+      return;
     }
+    let active = true;
+    google.initialize({
+      client_id: challenge.client_id,
+      nonce: challenge.nonce,
+      auto_select: false,
+      ux_mode: "popup",
+      itp_support: true,
+      callback: (response) => {
+        if (!active || credentialBusy.current) return;
+        credentialBusy.current = true;
+        setBusy(true);
+        setError("");
+        api<Session>("/auth/google", {
+          method: "POST",
+          body: JSON.stringify({
+            credential: response.credential,
+            csrf_token: challenge.csrf_token,
+          }),
+        })
+          .then(() => {
+            if (active) router.replace(next);
+          })
+          .catch((e) => {
+            if (active) setError(errorMessage(e));
+          })
+          .finally(() => {
+            credentialBusy.current = false;
+            if (active) setBusy(false);
+          });
+      },
+    });
+    buttonHost.current.replaceChildren();
+    google.renderButton(buttonHost.current, {
+      theme: "outline",
+      size: "large",
+      text: "continue_with",
+      shape: "rectangular",
+      width: Math.min(380, Math.max(240, buttonHost.current.clientWidth)),
+      locale: "ko",
+    });
+    return () => {
+      active = false;
+    };
+  }, [challenge, scriptReady, next, router]);
+  function restart() {
+    if (scriptFailed) {
+      window.location.reload();
+      return;
+    }
+    setError("");
+    setChallenge(undefined);
+    request.current = undefined;
+    setRetry((value) => value + 1);
   }
-  const titles = {
-    register: "좋은 시작을 함께해요.",
-    login: "다시 만나 반가워요.",
-    forgot: "비밀번호를 잊으셨나요?",
-    reset: "새 비밀번호를 정해 주세요.",
-    verify: "이메일 주소를 확인해요.",
-  };
-  const descriptions = {
-    register: "우리 브랜드를 위한 첫 번째 패키지 프로젝트.",
-    login: "이어 만들고 싶은 패키지가 기다리고 있어요.",
-    forgot: "가입한 이메일로 재설정 링크를 보내드립니다.",
-    reset: "12자 이상의 안전한 비밀번호를 입력하세요.",
-    verify: "아래 버튼을 누르면 이메일 확인이 완료됩니다.",
-  };
-  const basic = mode === "login" || mode === "register";
   return (
     <div className="auth-form-wrap">
       <Link href="/" className="text-link muted">
         <ArrowLeft size={16} /> 홈으로 돌아가기
       </Link>
       <div className="eyebrow">YOUR NEXT CHAPTER</div>
-      <h1>{titles[mode]}</h1>
-      <p className="auth-intro">{descriptions[mode]}</p>
-      {basic ? (
-        <div className="auth-tabs" role="tablist">
-          <button
-            role="tab"
-            aria-selected={mode === "register"}
-            className={mode === "register" ? "active" : ""}
-            onClick={() => switchMode("register")}
-          >
-            회원가입
-          </button>
-          <button
-            role="tab"
-            aria-selected={mode === "login"}
-            className={mode === "login" ? "active" : ""}
-            onClick={() => switchMode("login")}
-          >
-            로그인
-          </button>
-        </div>
-      ) : (
-        <div className="auth-mode-spacer" />
-      )}
-      <form onSubmit={submit}>
-        {mode === "register" && (
-          <label className="field">
-            이름
-            <input
-              autoComplete="name"
-              name="name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="홍길동"
-              minLength={2}
-              maxLength={80}
-              required
-            />
-          </label>
+      <h1>좋은 시작을 함께해요.</h1>
+      <p className="auth-intro">
+        Google 계정 하나로, 우리 브랜드의 다음 패키지를.
+      </p>
+      <div className="google-auth-panel">
+        <p>
+          처음이라면 작업 공간을 만들고,
+          <br />
+          다시 오셨다면 저장한 디자인을 이어갑니다.
+        </p>
+        {challenge && (
+          <Script
+            src="https://accounts.google.com/gsi/client?hl=ko"
+            strategy="afterInteractive"
+            onReady={() => setScriptReady(true)}
+            onError={() => {
+              setScriptFailed(true);
+              setError(
+                "Google 로그인 서비스를 불러오지 못했습니다. 인터넷 연결을 확인해 주세요.",
+              );
+            }}
+          />
         )}
-        {(basic || mode === "forgot") && (
-          <label className="field">
-            이메일
-            <input
-              type="email"
-              autoComplete="email"
-              name="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="hello@yourbrand.com"
-              required
-            />
-          </label>
+        {(loading || busy || (challenge && !scriptReady && !error)) && (
+          <div className="loading-state" role="status">
+            <LoaderCircle className="spin" size={18} />{" "}
+            {busy
+              ? "Google 계정을 확인하고 있어요."
+              : "로그인을 준비하고 있어요."}
+          </div>
         )}
-        {(basic || mode === "reset") && !notice && (
-          <label className="field">
-            {mode === "reset" ? "새 비밀번호" : "비밀번호"}
-            <input
-              type="password"
-              autoComplete={
-                mode === "login" ? "current-password" : "new-password"
-              }
-              name="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={
-                mode === "login"
-                  ? "비밀번호를 입력하세요"
-                  : "12자 이상으로 입력하세요"
-              }
-              minLength={mode === "login" ? 1 : 12}
-              maxLength={128}
-              required
-            />
-          </label>
+        {challenge && (
+          <div
+            ref={buttonHost}
+            className="google-auth-button"
+            aria-busy={busy}
+            style={{
+              pointerEvents: busy ? "none" : undefined,
+              opacity: busy ? 0.6 : 1,
+            }}
+          />
         )}
         {error && (
-          <div className="alert alert-error" role="alert">
-            {error}
-          </div>
-        )}
-        {notice && (
-          <div className="alert alert-info" role="status">
-            <CheckCircle2 size={17} />
-            {notice}
-          </div>
-        )}
-        {mode === "forgot" && mailAvailable === false ? (
-          <div className="alert alert-info">
-            <Mail size={17} />
-            <span>
-              이메일 발송 서비스 연결을 준비하고 있습니다. 현재 배포에서는
-              비밀번호 재설정 메일을 보낼 수 없습니다.
-            </span>
-          </div>
-        ) : (
-          !notice && (
-            <button
-              className="button button-dark full-width"
-              disabled={busy || (mode === "forgot" && mailAvailable === null)}
-            >
-              {busy ? (
-                <LoaderCircle className="spin" size={18} />
-              ) : (
-                <>
-                  {
-                    {
-                      register: "무료로 시작하기",
-                      login: "로그인",
-                      forgot: "재설정 링크 받기",
-                      reset: "비밀번호 변경",
-                      verify: "이메일 확인 완료하기",
-                    }[mode]
-                  }
-                  <ArrowRight size={18} />
-                </>
-              )}
+          <>
+            <div className="alert alert-error" role="alert">
+              {error}
+            </div>
+            <button className="text-link" onClick={restart} disabled={busy}>
+              {scriptFailed ? "페이지를 새로 불러오기" : "로그인 다시 준비하기"}
             </button>
-          )
+          </>
         )}
-        {notice && mode === "verify" && (
-          <Link className="button button-dark full-width" href="/app">
-            작업 공간으로 이동 <ArrowRight size={18} />
-          </Link>
-        )}
-        {mode === "login" && (
-          <button
-            className="auth-text-button"
-            type="button"
-            onClick={() => switchMode("forgot")}
-          >
-            비밀번호를 잊으셨나요?
-          </button>
-        )}
-        {!basic && mode !== "verify" && (
-          <button
-            className="auth-text-button"
-            type="button"
-            onClick={() => switchMode("login")}
-          >
-            로그인으로 돌아가기
-          </button>
-        )}
-        {basic && (
-          <p className="auth-disclaimer">
-            현재 개발 시험 서비스입니다. 결제 없이 프로젝트를 만들고 편집할 수
-            있습니다.
-            {mailAvailable === false && (
-              <>
-                <br />
-                이메일 확인 및 비밀번호 재설정은 연결 준비 중입니다.
-              </>
-            )}
-          </p>
-        )}
-      </form>
+        <p className="auth-disclaimer">
+          별도의 비밀번호나 인증 메일 없이 Google에서 계정을 확인합니다. 운영
+          관리 권한은 승인된 계정에만 제공됩니다.
+        </p>
+      </div>
       <div className="auth-secure">
         <ShieldCheck size={17} /> 내 작업은 내 작업 공간에 안전하게 저장됩니다.
       </div>

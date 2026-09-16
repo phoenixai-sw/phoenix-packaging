@@ -44,7 +44,7 @@ export async function api<T>(
     );
   }
   const data = json.data ?? json;
-  if (data.csrf_token) csrf = data.csrf_token;
+  if (data.csrf_token && data.user) csrf = data.csrf_token;
   return data as T;
 }
 export type Session = {
@@ -55,6 +55,7 @@ export type Session = {
     role?: "owner" | "editor" | "viewer";
     is_admin?: boolean;
     email_verified?: boolean;
+    auth_provider?: "google";
   };
   role?: "owner" | "editor" | "viewer";
   tenant: { id: string; name: string };

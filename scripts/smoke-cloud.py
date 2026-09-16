@@ -1,28 +1,21 @@
-"""Real deployment smoke test; creates a separate test tenant and private review PDF."""
+"""Real deployment smoke test in an explicitly selected Google QA workspace."""
 from pathlib import Path
 import json
-import secrets
+import argparse
 import time
-import uuid
 import httpx
 from pypdf import PdfReader
+from smoke_session import attach_session
 
 root = Path(__file__).resolve().parents[1]
 local = root / '.local'
 local.mkdir(exist_ok=True)
 origin = 'https://phoenix-packaging.vercel.app'
 client = httpx.Client(base_url=origin+'/api/v1', headers={'Origin':origin}, timeout=60, follow_redirects=True)
-record = local / 'smoke-account.json'
-if record.exists():
-    credentials = json.loads(record.read_text())
-    response = client.post('/auth/login', json=credentials)
-else:
-    credentials = {'email':f'qa-{uuid.uuid4().hex[:12]}@example.com','password':secrets.token_urlsafe(24)}
-    response = client.post('/auth/register', json={**credentials,'name':'배포 자동 검수'})
-    if response.status_code < 300:
-        record.write_text(json.dumps(credentials), encoding='utf-8')
-response.raise_for_status()
-client.headers['X-CSRF-Token'] = response.json()['data']['csrf_token']
+parser = argparse.ArgumentParser()
+parser.add_argument('--session-file', type=Path, default=local/'google-smoke-session.json')
+args = parser.parse_args()
+attach_session(client, args.session_file, origin)
 print('PASS authenticated server session', flush=True)
 response = client.post('/projects', json={'name':'배포 검수 '+time.strftime('%H:%M'), 'product_name':'제주 말차 그래놀라','brand_name':'피닉스 푸드','width_mm':230,'height_mm':310,'template_id':'three-side-seal'})
 response.raise_for_status()
@@ -56,8 +49,8 @@ output.write_bytes(pdf.content)
 reader = PdfReader(output)
 assert len(reader.pages) == 2
 for page in reader.pages:
-    assert abs(float(page.mediabox.width)*25.4/72-230)<.01
-    assert abs(float(page.mediabox.height)*25.4/72-310)<.01
+    assert abs(float(page.trimbox.width)*25.4/72-230)<.01
+    assert abs(float(page.trimbox.height)*25.4/72-310)<.01
 assert '높은 단백질 함량' in reader.pages[0].extract_text()
 print('PASS durable queue, private PDF download, Korean text, 2 pages at 230x310mm', flush=True)
 result = {'origin':origin,'project_id':project['id'],'job_id':job['id'],'pdf_bytes':len(pdf.content),'pages':len(reader.pages),'checks':['auth','server-save','reopen','409-conflict','queued-export','private-download','korean-text','exact-size']}

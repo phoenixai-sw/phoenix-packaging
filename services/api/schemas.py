@@ -14,36 +14,6 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
 
 
-class RegisterInput(StrictModel):
-    name: str = Field(min_length=1, max_length=80)
-    email: EmailStr
-    password: str = Field(min_length=10, max_length=128)
-
-    @field_validator("name")
-    @classmethod
-    def clean_name(cls, value):
-        if not value.strip():
-            raise ValueError("이름을 입력해 주세요.")
-        return value.strip()
-
-
-class LoginInput(StrictModel):
-    email: EmailStr
-    password: str = Field(min_length=1, max_length=128)
-
-
-class EmailInput(StrictModel):
-    email: EmailStr
-
-
-class AuthTokenInput(StrictModel):
-    token: str = Field(min_length=32, max_length=200)
-
-
-class ResetPasswordInput(AuthTokenInput):
-    password: str = Field(min_length=10, max_length=128)
-
-
 class SceneObject(StrictModel):
     id: Identifier
     type: Literal["text", "image", "shape", "barcode"]

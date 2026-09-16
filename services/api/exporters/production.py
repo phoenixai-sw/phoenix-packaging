@@ -54,7 +54,7 @@ def _ticket_pdf(path,ticket):
     canvas.save()
 
 
-def _decode_barcodes(document,scene):
+def _decode_barcodes(document,scene,*,bleed_mm=0):
     """Decode the actual final PDF, independently of the encoder, before publishing."""
     import zxingcpp
     lookup={f["id"]:f for f in scene["faces"]};checks=[]
@@ -63,7 +63,7 @@ def _decode_barcodes(document,scene):
         for obj in face["objects"]:
             if obj["type"]!="barcode" or not obj["visible"] or not obj["print_enabled"]:continue
             left,top,right,bottom=bounds(obj)
-            crop=(max(0,left-2)*mm,max(0,face["height_mm"]-bottom-2)*mm,max(0,face["width_mm"]-right-2)*mm,max(0,top-2)*mm)
+            crop=(max(0,left+bleed_mm-2)*mm,max(0,face["height_mm"]+bleed_mm-bottom-2)*mm,max(0,face["width_mm"]+bleed_mm-right-2)*mm,max(0,top+bleed_mm-2)*mm)
             page=document[index]
             try:
                 bitmap=page.render(scale=300/72,crop=crop)

@@ -27,7 +27,7 @@ from services.api.tests.test_business import paid, workspace, invitation, accept
 
 @pytest.fixture
 def ai(tmp_path):
-    app = create_app(Settings(environment="test", database_url=f"sqlite:///{tmp_path/'ai.db'}", storage_dir=tmp_path/"storage", mail_outbox_dir=tmp_path/"mail", ai_provider="fixture"))
+    app = create_app(Settings(environment="test", database_url=f"sqlite:///{tmp_path/'ai.db'}", storage_dir=tmp_path/"storage", ai_provider="fixture"))
     with TestClient(app) as client:
         auth = register(client)
         yield app, client, auth, project(client)

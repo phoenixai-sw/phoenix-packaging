@@ -13,9 +13,10 @@ from sqlalchemy import select, exists, or_
 
 from ..database import new_id, utcnow
 from ..errors import APIError
-from .models import BillingAccount, BillingOutbox, CreditBucket, Invoice, Payment, PaymentEvent, PaymentOrder, Subscription, Wallet, WebhookEvent
+from .models import BillingAccount, BillingOutbox, CreditBucket, Invoice, Payment, PaymentEvent, PaymentOrder, Subscription, WebhookEvent
 from .policy import SEOUL, add_months, aware, plan, pricing, prorate
-from .service import _event, canonical_hash, ensure_trial, grant_credits, lock_wallet
+from .service import canonical_hash, ensure_trial, grant_credits, lock_wallet
+from .sync import reversible_upgrade, sync_verified_payment
 
 
 class _NoPaymentURLLogs(logging.Filter):
@@ -92,6 +93,7 @@ class PaymentProvider(Protocol):
     name: str
     def confirm(self, payment_key, order_id, amount): ...
     def query(self, order_id): ...
+    def query_payment(self, payment_key): ...
     def issue_billing(self, auth_key, customer_key): ...
     def charge(self, billing_key, customer_key, order_id, amount, order_name): ...
     def cancel(self, payment_key, amount, reason, operation_key): ...
@@ -109,16 +111,26 @@ class TossProvider:
         try:
             with httpx.Client(base_url="https://api.tosspayments.com", timeout=20, transport=self.transport) as client:
                 response = client.request(method, path, json=body, headers=headers)
-        except (httpx.TimeoutException, httpx.NetworkError):
+        except httpx.TransportError:
             raise ProviderError("PAYMENT_RESPONSE_UNCERTAIN", retryable=True, uncertain=method != "GET") from None
         if allow_not_found and response.status_code == 404:
             return None
         if response.status_code >= 400:
-            raise ProviderError("PAYMENT_PROVIDER_REJECTED", retryable=response.status_code >= 500 or response.status_code == 429, uncertain=response.status_code >= 500 and method != "GET")
+            try:
+                error = response.json()
+            except ValueError:
+                error = {}
+            # Re-query an already processed operation; its error alone never
+            # proves that the intended order was approved or canceled.
+            already_processed = isinstance(error, dict) and error.get("code") in {"ALREADY_PROCESSED_PAYMENT", "ALREADY_CANCELED_PAYMENT"}
+            raise ProviderError("PAYMENT_ALREADY_PROCESSED" if already_processed else "PAYMENT_PROVIDER_REJECTED", retryable=response.status_code >= 500 or response.status_code == 429, uncertain=method != "GET" and (response.status_code >= 500 or already_processed))
         try:
-            return response.json()
+            value = response.json()
         except ValueError:
             raise ProviderError("PAYMENT_RESPONSE_UNCERTAIN", retryable=True, uncertain=True) from None
+        if not isinstance(value, dict):
+            raise ProviderError("PAYMENT_RESPONSE_UNCERTAIN", retryable=True, uncertain=method != "GET")
+        return value
 
     def confirm(self, payment_key, order_id, amount):
         return self._request("POST", "/v1/payments/confirm", {"paymentKey": payment_key, "orderId": order_id, "amount": amount}, key="confirm:" + order_id)
@@ -126,6 +138,10 @@ class TossProvider:
     def query(self, order_id):
         from urllib.parse import quote
         return self._request("GET", "/v1/payments/orders/" + quote(order_id, safe=""), allow_not_found=True)
+
+    def query_payment(self, payment_key):
+        from urllib.parse import quote
+        return self._request("GET", "/v1/payments/" + quote(payment_key, safe=""), allow_not_found=True)
 
     def issue_billing(self, auth_key, customer_key):
         return self._request("POST", "/v1/billing/authorizations/issue", {"authKey": auth_key, "customerKey": customer_key}, key="billing-key:" + customer_key + ":" + sha256(auth_key.encode()).hexdigest())
@@ -136,7 +152,7 @@ class TossProvider:
 
     def cancel(self, payment_key, amount, reason, operation_key):
         from urllib.parse import quote
-        return self._request("POST", "/v1/payments/" + quote(payment_key, safe="") + "/cancel", {"cancelReason": reason, "cancelAmount": amount}, key="cancel:" + operation_key)
+        return self._request("POST", "/v1/payments/" + quote(payment_key, safe="") + "/cancel", {"cancelReason": reason[:200], "cancelAmount": amount, "refundableAmount": amount}, key="cancel:" + operation_key)
 
 
 class MockProvider:
@@ -157,6 +173,9 @@ class MockProvider:
     def query(self, order_id):
         self.calls.append(("query", order_id))
         return dict(self.payments[order_id]) if order_id in self.payments else None
+
+    def query_payment(self, payment_key):
+        return next((dict(value) for value in self.payments.values() if value["paymentKey"] == payment_key), None)
 
     def issue_billing(self, auth_key, customer_key):
         return {"billingKey": "mock_billing_" + sha256(customer_key.encode()).hexdigest(), "customerKey": customer_key, "mId": "mock"}
@@ -278,7 +297,7 @@ def _owned_order(db, tenant_id, order_id):
 
 
 def validate_provider_payment(order, result, settings, expected_payment_key=None):
-    if not isinstance(result, dict) or result.get("orderId") != order.order_id or result.get("totalAmount") != order.amount or result.get("currency") != order.currency:
+    if not isinstance(result, dict) or result.get("orderId") != order.order_id or type(result.get("totalAmount")) is not int or result.get("totalAmount") != order.amount or result.get("currency") != order.currency:
         raise APIError(409, "PAYMENT_MISMATCH", "결제 조회 결과의 주문·금액·통화가 일치하지 않습니다.")
     if settings.provider != "mock" and result.get("mId") != settings.merchant_id:
         raise APIError(409, "PAYMENT_ACCOUNT_MISMATCH", "다른 상점의 결제는 처리할 수 없습니다.")
@@ -308,6 +327,11 @@ def _apply_paid(db, order, result, settings, now):
             raise APIError(409, "PAYMENT_TIMESTAMP_INVALID", "PG 승인 시각을 확인할 수 없습니다.") from None
     payment = Payment(tenant_id=order.tenant_id, order_id=order.id, provider_payment_key=result["paymentKey"], provider=settings.provider, amount=order.amount, currency=order.currency, status="DONE", approved_at=approved_at, created_at=now)
     db.add(payment)
+    if order.kind == "subscription" and (not subscription or aware(subscription.current_period_start) != aware(order.period_start)):
+        order.status, order.error = "reconciliation_required", "이전 구독 주문의 승인이 확인되어 운영 확인이 필요합니다."
+        db.add(BillingOutbox(tenant_id=order.tenant_id, event_key=f"late-subscription:{order.id}", kind="payment.reconciliation_required", payload={"order_id": order.order_id}, created_at=now))
+        db.flush()
+        return order
     if order.kind == "upgrade" and (not subscription or subscription.plan_id != order.source_plan_id or aware(subscription.current_period_start) != aware(order.period_start) or aware(subscription.current_period_end) <= aware(now)):
         order.status, order.error = "reconciliation_required", "이전 구독 주기의 상향 결제가 확인되어 운영 확인이 필요합니다."
         db.add(BillingOutbox(tenant_id=order.tenant_id, event_key=f"late-upgrade:{order.id}", kind="payment.reconciliation_required", payload={"order_id": order.order_id}, created_at=now))
@@ -351,16 +375,16 @@ def _provider_outcome(db, order, provider, settings, execute, now, expected_paym
         if result is None or result.get("status") in {"READY", "IN_PROGRESS"}:
             result = execute()
         validate_provider_payment(order, result, settings, expected_payment_key)
-        return _apply_paid(db, order, result, settings, now)
+        return sync_verified_payment(db, order, result, settings=settings, source="approval", now=now)
     except ProviderError as error:
         if error.uncertain:
             try:
                 found = provider.query(order.order_id)
             except ProviderError:
                 found = None
-            if found and found.get("status") == "DONE":
+            if found and found.get("status") not in {"READY", "IN_PROGRESS"}:
                 validate_provider_payment(order, found, settings, expected_payment_key)
-                return _apply_paid(db, order, found, settings, now)
+                return sync_verified_payment(db, order, found, settings=settings, source="approval_requery", now=now)
         order.status = "reconciliation_required" if error.uncertain else "failed"
         order.error = "결제 결과를 조회하고 있습니다. 중복 결제하지 마세요." if error.uncertain else "결제 승인을 완료하지 못했습니다. 결제 수단을 확인해 주세요."
         db.flush()
@@ -372,9 +396,12 @@ def confirm_order(db, tenant_id, order_id, payment_key, amount, *, provider, set
     settings.validate()
     lock_wallet(db, tenant_id, now)
     order = _owned_order(db, tenant_id, order_id)
-    if amount != order.amount:
+    if type(amount) is not int or amount != order.amount:
         raise APIError(409, "PAYMENT_AMOUNT_MISMATCH", "서버 주문 금액과 다릅니다.")
     if order.status in {"paid", "refunded"}:
+        payment = db.scalar(select(Payment).where(Payment.order_id == order.id))
+        if settings.provider != "mock" and payment and payment.provider_payment_key != payment_key:
+            raise APIError(409, "PAYMENT_KEY_MISMATCH", "이미 연결된 결제 식별자와 다릅니다.")
         return order
     if order.kind == "upgrade" and (aware(order.period_end) <= aware(now) or aware(order.created_at) + timedelta(minutes=5) <= aware(now)):
         raise APIError(409, "UPGRADE_QUOTE_EXPIRED", "상향 변경 견적이 만료되었습니다.")
@@ -395,7 +422,7 @@ def bind_and_charge(db, tenant_id, order_id, auth_key, customer_key, *, provider
     account = billing_account(db, tenant_id, settings)
     if not secrets.compare_digest(account.customer_key_hash, sha256(customer_key.encode()).hexdigest()):
         raise APIError(403, "CUSTOMER_KEY_MISMATCH", "이 계정의 결제 수단 인증이 아닙니다.")
-    if order.status == "paid":
+    if order.status in {"paid", "refunded"}:
         return order
     # An earlier process may have died after charging but before committing the
     # newly issued billing key. Query the durable order before trying to reuse
@@ -407,8 +434,8 @@ def bind_and_charge(db, tenant_id, order_id, auth_key, customer_key, *, provider
         order.status, order.error = "reconciliation_required", "기존 결제 결과를 조회하고 있습니다. 중복 결제하지 마세요."
         db.flush()
         return order
-    if previous and previous.get("status") == "DONE":
-        return _apply_paid(db, order, previous, settings, now)
+    if previous and previous.get("status") not in {"READY", "IN_PROGRESS"}:
+        return sync_verified_payment(db, order, previous, settings=settings, source="billing_auth_requery", now=now)
     issued = {"billingKey": settings.decrypt(account.billing_key_encrypted), "customerKey": customer_key, "mId": settings.merchant_id if settings.provider != "mock" else "mock"} if account.billing_key_encrypted and order.status in {"failed", "reconciliation_required"} else provider.issue_billing(auth_key, customer_key)
     if issued.get("customerKey") != customer_key or (settings.provider != "mock" and issued.get("mId") != settings.merchant_id) or not isinstance(issued.get("billingKey"), str):
         raise APIError(409, "BILLING_KEY_MISMATCH", "결제 수단 등록 결과가 일치하지 않습니다.")
@@ -538,7 +565,10 @@ def reconcile_pending_orders(session_factory, *, provider, settings, now=None, l
     now = now or utcnow()
     settings.validate()
     with session_factory() as db:
-        ids = list(db.scalars(select(PaymentOrder.id).where(PaymentOrder.status == "reconciliation_required").order_by(PaymentOrder.created_at).limit(max(1, min(limit, 100)))))
+        # Confirmed partial/spent cancellations need an operator decision, not
+        # endless polling that crowds uncertain approvals out of this batch.
+        needs_review = exists(select(PaymentEvent.id).join(Payment, Payment.id == PaymentEvent.payment_id).where(Payment.order_id == PaymentOrder.id, PaymentEvent.kind == "REFUND"))
+        ids = list(db.scalars(select(PaymentOrder.id).where(PaymentOrder.status == "reconciliation_required", ~needs_review).order_by(PaymentOrder.created_at).limit(max(1, min(limit, 100)))))
     processed = 0
     for order_id in ids:
         with session_factory() as db:
@@ -553,44 +583,72 @@ def reconcile_pending_orders(session_factory, *, provider, settings, now=None, l
             except ProviderError:
                 db.commit()
                 continue
-            if verified and verified.get("status") == "DONE":
-                validate_provider_payment(order, verified, settings)
-                _apply_paid(db, order, verified, settings, now)
+            if verified:
+                sync_verified_payment(db, order, verified, settings=settings, source="worker_requery", now=now)
                 processed += 1
             db.commit()
     return processed
 
 
-def reconcile_webhook(db, payload, *, provider, settings, now=None):
-    """General Toss payment webhooks have no universal HMAC signature: re-query."""
+def sync_order(db, tenant_id, order_id, *, provider, settings, now=None):
+    """Owner-triggered provider lookup. This endpoint never approves or charges."""
     now = now or utcnow()
     settings.validate()
-    data = payload.get("data") if isinstance(payload, dict) else None
-    order_id = (data or payload).get("orderId") if isinstance(data or payload, dict) else None
-    if not isinstance(order_id, str) or len(order_id) > 64:
-        raise APIError(422, "WEBHOOK_ORDER_REQUIRED", "주문 식별자가 없는 결제 알림입니다.")
-    order = db.scalar(select(PaymentOrder).where(PaymentOrder.order_id == order_id))
-    if order is None:
-        raise APIError(404, "ORDER_NOT_FOUND", "연결된 주문을 찾을 수 없습니다.")
-    lock_wallet(db, order.tenant_id, now)
+    lock_wallet(db, tenant_id, now)
+    order = _owned_order(db, tenant_id, order_id)
     try:
         verified = provider.query(order.order_id)
     except ProviderError:
         raise APIError(503, "PAYMENT_QUERY_UNAVAILABLE", "결제 상태 재조회를 기다리고 있습니다.", retryable=True) from None
     if verified is None:
+        raise APIError(409, "PAYMENT_UNVERIFIED", "PG에서 확인되지 않은 주문입니다.")
+    return sync_verified_payment(db, order, verified, settings=settings, source="owner_requery", now=now)
+
+
+def reconcile_webhook(db, payload, *, provider, settings, transmission_id=None, now=None):
+    """Treat general Toss webhooks as lookup hints, never as payment proof."""
+    now = now or utcnow()
+    settings.validate()
+    if not isinstance(payload, dict):
+        raise APIError(422, "WEBHOOK_INVALID", "결제 알림 형식을 확인해 주세요.")
+    if payload.get("eventType") not in {"PAYMENT_STATUS_CHANGED", "CANCEL_STATUS_CHANGED"}:
+        return None
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        raise APIError(422, "WEBHOOK_INVALID", "결제 알림 데이터 형식을 확인해 주세요.")
+    order_id, payment_key = data.get("orderId"), data.get("paymentKey")
+    if order_id is not None and (not isinstance(order_id, str) or not 1 <= len(order_id) <= 64):
+        raise APIError(422, "WEBHOOK_ORDER_REQUIRED", "주문 식별자 형식을 확인해 주세요.")
+    if payment_key is not None and (not isinstance(payment_key, str) or not 1 <= len(payment_key) <= 200):
+        raise APIError(422, "PAYMENT_KEY_MISMATCH", "결제 식별자 형식을 확인해 주세요.")
+    if not order_id and not payment_key:
+        raise APIError(422, "WEBHOOK_ORDER_REQUIRED", "주문 식별자가 없는 결제 알림입니다.")
+    order = db.scalar(select(PaymentOrder).where(PaymentOrder.order_id == order_id)) if order_id else db.scalar(select(PaymentOrder).join(Payment, Payment.order_id == PaymentOrder.id).where(Payment.provider_payment_key == payment_key))
+    # The same MID can serve another product. Unknown orders must never be
+    # synthesized from caller data, or poison the provider's retry queue.
+    if order is None:
+        return None
+    lock_wallet(db, order.tenant_id, now)
+    db.refresh(order)
+    transmission_key = None
+    if transmission_id:
+        if not isinstance(transmission_id, str) or len(transmission_id) > 200:
+            raise APIError(422, "WEBHOOK_TRANSMISSION_INVALID", "결제 알림 식별자 형식을 확인해 주세요.")
+        transmission_key = canonical_hash({"kind": "transmission", "provider": settings.provider, "order_id": order.order_id, "transmission_id": transmission_id})
+        if db.scalar(select(WebhookEvent.id).where(WebhookEvent.event_key == transmission_key)):
+            return order
+    try:
+        verified = provider.query_payment(payment_key) if payment_key else provider.query(order.order_id)
+    except ProviderError:
+        raise APIError(503, "PAYMENT_QUERY_UNAVAILABLE", "결제 상태 재조회를 기다리고 있습니다.", retryable=True) from None
+    if verified is None:
         raise APIError(409, "PAYMENT_UNVERIFIED", "PG에서 확인되지 않은 결제 알림입니다.")
-    validate_provider_payment(order, verified, settings)
-    event_key = canonical_hash({"provider": settings.provider, "order_id": order.order_id, "payment_key": verified["paymentKey"], "status": verified.get("status"), "balance": verified.get("balanceAmount")})
-    if db.scalar(select(WebhookEvent.id).where(WebhookEvent.event_key == event_key)):
-        return order
-    if verified.get("status") == "DONE":
-        _apply_paid(db, order, verified, settings, now)
-    elif verified.get("status") in {"CANCELED", "PARTIAL_CANCELED"} and order.status == "paid":
-        # Unexpected PG-side cancellation is an audited support case. Never
-        # silently remove spent credits or overwrite the original payment row.
-        order.status, order.error = "reconciliation_required", "PG 취소가 확인되어 사용량과 환불 내역을 확인하고 있습니다."
-        db.add(BillingOutbox(tenant_id=order.tenant_id, event_key="external-cancel:" + event_key, kind="payment.external_cancellation", payload={"order_id": order.order_id}, created_at=now))
-    db.add(WebhookEvent(tenant_id=order.tenant_id, event_key=event_key, order_id=order.id, verified_status=str(verified.get("status", "UNKNOWN"))[:40], created_at=now))
+    validate_provider_payment(order, verified, settings, payment_key)
+    sync_verified_payment(db, order, verified, settings=settings, source="webhook", now=now)
+    # Only acknowledge delivery in the SAME transaction as payment+ledger.
+    # Failed requests remain retryable even with the same transmission ID.
+    if transmission_key:
+        db.add(WebhookEvent(tenant_id=order.tenant_id, event_key=transmission_key, order_id=order.id, verified_status=verified["status"], created_at=now))
     db.flush()
     return order
 
@@ -607,22 +665,33 @@ def refund_order(db, tenant_id, order_id, reason, *, provider, settings, now=Non
     bucket = db.scalar(select(CreditBucket).where(CreditBucket.tenant_id == tenant_id, CreditBucket.grant_key == "order:" + order.id))
     if bucket is None or bucket.reserved or bucket.consumed or bucket.expired or bucket.available != bucket.granted:
         raise APIError(409, "REFUND_REVIEW_REQUIRED", "사용·예약·만료 내역이 있어 환불 검토가 필요합니다. 잔액을 임의 삭제하지 않습니다.")
+    if order.kind == "upgrade" and reversible_upgrade(db, order, now) is None:
+        raise APIError(409, "REFUND_REVIEW_REQUIRED", "이후 요금제 변경이 있거나 이전 요금제를 안전하게 복구할 수 없어 환불 검토가 필요합니다.")
     payment = db.scalar(select(Payment).where(Payment.order_id == order.id, Payment.tenant_id == tenant_id))
+    if payment is None:
+        raise APIError(409, "PAYMENT_UNVERIFIED", "원본 결제 내역을 확인할 수 없습니다.")
+    # Query first even on retries: an earlier cancel may have succeeded before
+    # a process died. Never issue another cancel against a changed balance.
+    result = provider.query(order.order_id)
+    validate_provider_payment(order, result, settings, payment.provider_payment_key)
+    if result.get("status") in {"CANCELED", "PARTIAL_CANCELED"}:
+        return sync_verified_payment(db, order, result, settings=settings, source="refund_requery", now=now)
+    if result.get("status") != "DONE" or result.get("balanceAmount") != order.amount:
+        raise APIError(409, "REFUND_UNCONFIRMED", "PG 결제 상태와 환불 가능 금액을 확인해 주세요.")
+    if result.get("method") == "가상계좌":
+        raise APIError(409, "REFUND_REVIEW_REQUIRED", "가상계좌 환불은 별도 계좌 확인이 필요하므로 운영 문의로 접수해 주세요.")
     try:
         result = provider.cancel(payment.provider_payment_key, order.amount, reason, "refund:" + order.id)
     except ProviderError:
-        result = provider.query(order.order_id)
+        try:
+            result = provider.query(order.order_id)
+        except ProviderError:
+            result = None
+        if result is None:
+            order.status, order.error = "reconciliation_required", "취소 결과를 조회하고 있습니다. 중복 취소하지 마세요."
+            db.flush()
+            return order
     validate_provider_payment(order, result, settings, payment.provider_payment_key)
-    if result.get("status") != "CANCELED" or result.get("balanceAmount") != 0:
-        raise APIError(409, "REFUND_UNCONFIRMED", "PG에서 전액 취소 완료가 확인되지 않았습니다.")
-    bucket.expired += bucket.available
-    bucket.available = 0
-    _event(db, tenant_id, bucket.id, "ADJUSTMENT", -bucket.granted, "refund:" + order.id, "PG 환불 확인 후 미사용 지급분 정정", now, invoice_id=order.invoice_id)
-    db.add(PaymentEvent(tenant_id=tenant_id, payment_id=payment.id, event_key="refund:" + order.id, kind="REFUND", amount=order.amount, reason=reason[:300], created_at=now))
-    order.status = "refunded"
-    if order.kind in {"subscription", "renewal"}:
-        subscription = db.get(Subscription, order.subscription_id)
-        if subscription and aware(subscription.current_period_start) == aware(order.period_start):
-            subscription.cancel_at_period_end, subscription.status, subscription.paid_until = True, "canceled", now
-    db.flush()
-    return order
+    if result.get("status") not in {"CANCELED", "PARTIAL_CANCELED"}:
+        raise APIError(409, "REFUND_UNCONFIRMED", "PG에서 취소 완료가 확인되지 않았습니다.")
+    return sync_verified_payment(db, order, result, settings=settings, source="refund", now=now)

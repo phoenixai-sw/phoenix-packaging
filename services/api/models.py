@@ -20,7 +20,10 @@ class User(Base):
     tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
     name: Mapped[str] = mapped_column(String(80))
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
-    password_hash: Mapped[str] = mapped_column(Text)
+    # Legacy schema compatibility only. No authentication path reads this column.
+    password_hash: Mapped[str] = mapped_column(Text, default="")
+    google_sub: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True, index=True)
+    google_email_authoritative: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     role: Mapped[str] = mapped_column(String(20), default="owner")
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
@@ -46,12 +49,10 @@ class AuthAttempt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
-class AuthToken(Base):
-    __tablename__ = "auth_tokens"
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
-    kind: Mapped[str] = mapped_column(String(30), index=True)
+class GoogleLoginChallenge(Base):
+    __tablename__ = "google_login_challenges"
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    nonce_hash: Mapped[str] = mapped_column(String(64))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

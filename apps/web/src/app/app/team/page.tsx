@@ -44,6 +44,7 @@ export default function TeamPage() {
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [invitationUrl, setInvitationUrl] = useState("");
   const [formError, setFormError] = useState("");
   useEffect(() => {
     const value = new URLSearchParams(window.location.search).get("invite");
@@ -73,12 +74,16 @@ export default function TeamPage() {
         window.location.assign("/app");
         return;
       } else {
-        await api("/team/invitations", {
-          method: "POST",
-          body: JSON.stringify({ email, role, workspace_ids: workspaceIds }),
-        });
+        const invitation = await api<{ invitation_url: string }>(
+          "/team/invitations",
+          {
+            method: "POST",
+            body: JSON.stringify({ email, role, workspace_ids: workspaceIds }),
+          },
+        );
+        setInvitationUrl(invitation.invitation_url);
         setNotice(
-          "초대를 보냈습니다. 받는 분이 로그인한 뒤 초대 링크를 확인해야 합류할 수 있습니다.",
+          "초대 링크를 만들었습니다. 지정한 이메일의 사용자에게 직접 전달해 주세요.",
         );
         refresh();
       }
@@ -142,6 +147,36 @@ export default function TeamPage() {
       }
     >
       <Feedback error={error || formError} notice={notice} />
+      {invitationUrl && (
+        <section className="management-card">
+          <h2>초대 링크</h2>
+          <p className="field-hint">
+            이 링크는 지금만 표시됩니다. 지정한 Gmail 또는 Google Workspace
+            계정으로 로그인한 분이 7일 안에 한 번 수락할 수 있습니다.
+          </p>
+          <label className="field">
+            직접 전달할 링크
+            <input
+              readOnly
+              value={invitationUrl}
+              onFocus={(e) => e.target.select()}
+            />
+          </label>
+          <button
+            className="button button-light"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(invitationUrl);
+                setNotice("초대 링크를 복사했습니다.");
+              } catch {
+                setFormError("링크를 선택해 직접 복사해 주세요.");
+              }
+            }}
+          >
+            링크 복사
+          </button>
+        </section>
+      )}
       {loading ? (
         <Loading />
       ) : (
@@ -334,7 +369,7 @@ export default function TeamPage() {
                   />
                 </label>
                 <p className="field-hint">
-                  초대받은 이메일로 로그인한 상태에서 이메일의 코드를
+                  초대받은 Google 계정으로 로그인한 상태에서 전달받은 코드를
                   입력하세요.
                 </p>
               </>
@@ -385,7 +420,7 @@ export default function TeamPage() {
               {busy ? (
                 <LoaderCircle className="spin" size={17} />
               ) : dialog === "invite" ? (
-                "초대 메일 보내기"
+                "초대 링크 만들기"
               ) : dialog === "workspace" ? (
                 "공간 생성"
               ) : (

@@ -66,7 +66,7 @@ def test_intake_unique_jobs_technical_rejections_and_aesthetic_changes(business)
     # A deliberately marked test rejection for the same job cannot alter live figures.
     assert record(owner, item, jobs[0], "rejected", rejection_kind="technical").status_code == 201
     with app.state.session_factory() as db:
-        db.get(User, auth["user"]["id"]).is_admin = True
+        app.state.settings.admin_emails = (auth["user"]["email"],)
         event = db.scalar(select(AuditEvent).where(AuditEvent.action == "printer_intake_recorded"))
         job = db.get(Job, jobs[0])
         assert event.details["revision_id"] == job.revision_id
