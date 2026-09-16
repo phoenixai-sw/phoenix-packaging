@@ -1,0 +1,14 @@
+{
+  "name": "phoenix-packaging",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["apps/web"],
+  "engines": {"node": ">=22 <25"},
+  "scripts": {
+    "dev": "npm run dev --workspace=@phoenix/web",
+    "build": "npm run build --workspace=@phoenix/web",
+    "start": "npm run start --workspace=@phoenix/web",
+    "typecheck": "npm run typecheck --workspace=@phoenix/web",
+    "test": "npm run test --workspace=@phoenix/web --if-present"
+  }
+}

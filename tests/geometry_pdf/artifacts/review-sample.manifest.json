@@ -1,0 +1,188 @@
+{
+  "schema_version": "1.0",
+  "kind": "review",
+  "review_only": true,
+  "production_enabled": false,
+  "approval_status": "demo_unapproved",
+  "template_version_id": "three-side-seal-demo-v1",
+  "project_id": "phoenix-review-sample",
+  "revision": 1,
+  "revision_id": null,
+  "geometry_hash": "11a12fdb51c12a605b7854c3ac1d509fa1afd418af2641e25dc4a66cfdf3fb43",
+  "generated_at": "2026-09-16T09:51:28.813030+00:00",
+  "sha256": "f3e4f4cc6b579a3325d63a4055f20bc927cd414e8b51d6d7abc7a4c5f757239c",
+  "font": {
+    "id": "NotoSansKR",
+    "sha256": "8e4000a13809588d46c1b791e874cd4567b6283eeb9d2e6835a3136a871a6bd0",
+    "embedded": true,
+    "license": "OFL-1.1"
+  },
+  "pages": [
+    {
+      "face_id": "front",
+      "width_mm": 230.0,
+      "height_mm": 310.0
+    },
+    {
+      "face_id": "back",
+      "width_mm": 230.0,
+      "height_mm": 310.0
+    }
+  ],
+  "warnings": [
+    {
+      "code": "DEMO_UNAPPROVED",
+      "message": "데모 구조 · 제조사 미승인"
+    },
+    {
+      "code": "REVIEW_ONLY",
+      "message": "검토용 · 제작 사용 불가"
+    },
+    {
+      "code": "RGB_REVIEW",
+      "message": "RGB 검토 PDF입니다. PDF/X·CMYK·별색·화이트 잉크 출력이 아닙니다."
+    },
+    {
+      "code": "FINISHED_SIZE",
+      "message": "페이지는 완성 치수와 같습니다. 바깥 블리드는 검토 페이지에서 잘립니다."
+    }
+  ],
+  "original_texts": [
+    {
+      "object_id": "f-brand",
+      "face_id": "front",
+      "text": "PHOENIX FOODS",
+      "rendered_lines": [
+        "PHOENIX FOODS"
+      ],
+      "visible": true,
+      "print_enabled": true
+    },
+    {
+      "object_id": "f-title",
+      "face_id": "front",
+      "text": "매일의 고소함\n단백질 한 봉지",
+      "rendered_lines": [
+        "매일의 고소함",
+        "단백질 한 봉지"
+      ],
+      "visible": true,
+      "print_enabled": true
+    },
+    {
+      "object_id": "f-protein",
+      "face_id": "front",
+      "text": "높은 단백질 함량",
+      "rendered_lines": [
+        "높은 단백질 함량"
+      ],
+      "visible": true,
+      "print_enabled": true
+    },
+    {
+      "object_id": "f-en",
+      "face_id": "front",
+      "text": "Protein 20g · 100%",
+      "rendered_lines": [
+        "Protein 20g · 100%"
+      ],
+      "visible": true,
+      "print_enabled": true
+    },
+    {
+      "object_id": "f-note",
+      "face_id": "front",
+      "text": "한글 · English · 숫자 123 · 특수문자 & ()",
+      "rendered_lines": [
+        "한글 · English · 숫자 123 · 특수문자 & ()"
+      ],
+      "visible": true,
+      "print_enabled": true
+    },
+    {
+      "object_id": "f-demo",
+      "face_id": "front",
+      "text": "문구·배치 검증을 위한 가상 상품입니다.",
+      "rendered_lines": [
+        "문구·배치 검증을 위한 가상 상품입니다."
+      ],
+      "visible": true,
+      "print_enabled": true
+    },
+    {
+      "object_id": "b-brand",
+      "face_id": "back",
+      "text": "PHOENIX FOODS",
+      "rendered_lines": [
+        "PHOENIX FOODS"
+      ],
+      "visible": true,
+      "print_enabled": true
+    },
+    {
+      "object_id": "b-title",
+      "face_id": "back",
+      "text": "제품 표시사항",
+      "rendered_lines": [
+        "제품 표시사항"
+      ],
+      "visible": true,
+      "print_enabled": true
+    },
+    {
+      "object_id": "b-desc",
+      "face_id": "back",
+      "text": "고객이 입력한 한글은 이미지와 분리된\n편집 가능한 텍스트로 보존됩니다.",
+      "rendered_lines": [
+        "고객이 입력한 한글은 이미지와 분리된",
+        "편집 가능한 텍스트로 보존됩니다."
+      ],
+      "visible": true,
+      "print_enabled": true
+    },
+    {
+      "object_id": "b-details",
+      "face_id": "back",
+      "text": "상품명: 단백질 한 봉지\n내용량: 20g\n원재료: 대두 & 우유 (국산)\n보관 방법: 서늘하고 건조한 곳",
+      "rendered_lines": [
+        "상품명: 단백질 한 봉지",
+        "내용량: 20g",
+        "원재료: 대두 & 우유 (국산)",
+        "보관 방법: 서늘하고 건조한 곳"
+      ],
+      "visible": true,
+      "print_enabled": true
+    },
+    {
+      "object_id": "b-info",
+      "face_id": "back",
+      "text": "확인 필요\n표시사항·영양정보·원재료는 가상 예시입니다.\n실제 상품의 확정 문구를 입력해 주세요.",
+      "rendered_lines": [
+        "확인 필요",
+        "표시사항·영양정보·원재료는 가상 예시입니다.",
+        "실제 상품의 확정 문구를 입력해 주세요."
+      ],
+      "visible": true,
+      "print_enabled": true
+    },
+    {
+      "object_id": "b-footer",
+      "face_id": "back",
+      "text": "230 × 310 mm / 앞면·뒷면 / 검토용",
+      "rendered_lines": [
+        "230 × 310 mm / 앞면·뒷면 / 검토용"
+      ],
+      "visible": true,
+      "print_enabled": true
+    }
+  ],
+  "capabilities": {
+    "vector_text": true,
+    "embedded_fonts": true,
+    "original_raster_assets": true,
+    "pdf_x": false,
+    "cmyk": false,
+    "spot_colors": false,
+    "production": false
+  }
+}

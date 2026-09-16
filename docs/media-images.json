@@ -1,0 +1,34 @@
+{
+  "created_at": "2026-09-16",
+  "method": "imagegen CLI generate-batch",
+  "prompt_file": "docs/media-image-prompts.jsonl",
+  "images": [
+    {
+      "file": "apps/web/public/media/granola-design.webp",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 254836,
+      "sha256": "18517d38f2764b0924f676a70ef06fde35bd6cd990b417181de5f824eacab301",
+      "model": "gpt-image-2.5-sunburst",
+      "quality": "high"
+    },
+    {
+      "file": "apps/web/public/media/matcha-design.webp",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 201936,
+      "sha256": "ebbf6ee4f285e26ebe3425976ac5040e374b89eb870862312362f7e93d3e685b",
+      "model": "gpt-image-2.5-sunburst",
+      "quality": "high"
+    },
+    {
+      "file": "apps/web/public/media/packaging-hero.webp",
+      "width": 1536,
+      "height": 1024,
+      "bytes": 362178,
+      "sha256": "f76d3050cae2a6b6ea16b88e33cb35a0ec137394b209f31ee218070d9665a636",
+      "model": "gpt-image-2.5-sunburst",
+      "quality": "high"
+    }
+  ]
+}

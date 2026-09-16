@@ -1,0 +1,30 @@
+name: Quality checks
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: test
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: services/api/requirements-dev.txt
+      - run: npm ci --no-fund
+      - run: pip install -r services/api/requirements-dev.txt
+      - run: python -m pytest services/api/tests tests/geometry_pdf -q
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build

@@ -1,0 +1,74 @@
+name: phoenix-packaging
+x-api-env: &api-env
+  APP_ENV: development
+  DATABASE_URL: postgresql+psycopg://phoenix:phoenix_local@db:5432/phoenix
+  STORAGE_BACKEND: local
+  STORAGE_DIR: /app/.data/storage
+  ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+  COOKIE_SECURE: "false"
+  DEMO_MODE: "true"
+  REDIS_URL: redis://redis:6379/0
+  SMTP_HOST: mail
+  SMTP_PORT: "1025"
+  APP_URL: http://localhost:3000
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: phoenix
+      POSTGRES_PASSWORD: phoenix_local
+      POSTGRES_DB: phoenix
+    volumes: [database:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U phoenix -d phoenix]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  mail:
+    image: axllent/mailpit:v1.27
+    ports: ["127.0.0.1:8025:8025"]
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    command: [sh, -c, "alembic -c services/api/alembic.ini upgrade head && uvicorn services.api.main:app --host 0.0.0.0 --port 8000"]
+    environment: *api-env
+    volumes: [assets:/app/.data/storage]
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      db: {condition: service_healthy}
+  worker:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    environment: *api-env
+    volumes: [assets:/app/.data/storage]
+    depends_on:
+      api: {condition: service_started}
+      redis: {condition: service_healthy}
+  scheduler:
+    build:
+      context: .
+      dockerfile: services/worker/Dockerfile
+    command: [celery, -A, services.worker.app, beat, --loglevel=INFO]
+    environment: *api-env
+    depends_on:
+      redis: {condition: service_healthy}
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      API_ORIGIN: http://api:8000
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on: [api]
+volumes:
+  database:
+  assets:

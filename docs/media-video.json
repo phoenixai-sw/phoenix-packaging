@@ -1,0 +1,68 @@
+{
+  "provider": "BytePlus ModelArk",
+  "requested_model": "dreamina-seedance-2-5-260628",
+  "status": "succeeded",
+  "attempts": 1,
+  "created_at": "2026-09-16T10:08:02.916382+00:00",
+  "prompt": "Create an 8-second photorealistic premium food packaging campaign film based on the supplied reference image. Match exactly the three existing stand-up pouches: forest-green MATCHA pouch on the left, warm cream OAT & HONEY granola pouch in the middle, and muted coral ORCHARD pouch on the right. Preserve their package proportions, typography, printed label design, colors, sealed tops, and believable soft paper-film materials throughout. Use the same warm sunlit travertine studio, subtle tea leaves, ceramic bowl, oats and apricot accents. Compose a wide cinematic 16:9 shot by extending the surrounding studio space naturally, keeping all three pouches visible and the product design beautifully legible. One continuous sophisticated slow camera dolly moving a few centimeters forward and slightly right, gentle parallax and almost imperceptible warm natural shadow movement. Elegant restrained luxury editorial product cinematography, realistic soft daylight, creamy warm highlights, deep forest greens, tactile material detail, stable geometry, physically believable contact shadows, smooth controlled motion, high-end Korean lifestyle brand art direction. End on a calm hero composition. No cuts, no floating products, no hands, no people, no morphing, no new packaging, no added letters, no text overlays, no captions, no watermark. Silent video, no music or sound.",
+  "reference_image": "apps/web/public/media/packaging-hero.webp",
+  "reference_sha256": "f76d3050cae2a6b6ea16b88e33cb35a0ec137394b209f31ee218070d9665a636",
+  "reference_role": "reference_image",
+  "requested_output": {
+    "duration": 8,
+    "resolution": "720p",
+    "ratio": "16:9",
+    "generate_audio": false,
+    "watermark": false
+  },
+  "documentation": [
+    "https://docs.byteplus.com/en/docs/ModelArk/1520757",
+    "https://docs.byteplus.com/en/docs/ModelArk/1521309",
+    "https://docs.byteplus.com/en/docs/Byteplus_LAS/video_gen_enhanced"
+  ],
+  "note": "The 3:2 reference uses reference_image rather than first_frame so the output can be 16:9. No credentials, signed URLs, or Base64 input are retained.",
+  "updated_at": "2026-09-16T10:13:47.515883+00:00",
+  "task_id": "cgt-20260916180803-wzwu0",
+  "actual_model": "dreamina-seedance-2-5-260628",
+  "actual_output": {
+    "generate_audio": false,
+    "resolution": "720p",
+    "ratio": "16:9",
+    "duration": 8,
+    "framespersecond": 24,
+    "seed": 62070
+  },
+  "usage": {
+    "completion_tokens": 173700,
+    "total_tokens": 173700
+  },
+  "asset": "apps/web/public/media/packaging-film.mp4",
+  "bytes": 8533115,
+  "sha256": "5b154392175f5b9eaff4214f67dbfbc62a889e2732a60a13ee0d23d22c625f11",
+  "provider_artifact": {
+    "sha256": "d6d65fa4d2eb0e3d9d41a56c2eab115c3d20645e6b7aa1e098c979937c52015b",
+    "bytes": 8554791
+  },
+  "postprocessing": "Lossless H.264 copy with MP4 fast-start; no visual re-encoding or model substitution.",
+  "poster": {
+    "asset": "apps/web/public/media/packaging-film-poster.jpg",
+    "sha256": "758639fa67627f24e584c5caf28fd0879313781025e8fe5d142f6555176c84f7",
+    "bytes": 122247,
+    "frame_time_seconds": 0.1
+  },
+  "verification": {
+    "width": 1280,
+    "height": 720,
+    "codec": "h264",
+    "pixel_format": "yuv420p",
+    "frame_rate": "24/1",
+    "duration_seconds": 8.041667,
+    "audio_streams": 0,
+    "visual_frames_reviewed_seconds": [
+      0.1,
+      3.8,
+      7.7
+    ],
+    "visual_review": "Stable three-pouch composition and major product labels; gentle dolly and sunlight movement; premium material detail; no people or text overlays. Small decorative package copy is illustrative AI artwork."
+  }
+}

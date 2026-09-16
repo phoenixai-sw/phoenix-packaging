@@ -1,0 +1,396 @@
+{
+  "$defs": {
+    "Face": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "enum": [
+            "front",
+            "back"
+          ],
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 30,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "width_mm": {
+          "maximum": 600,
+          "minimum": 60,
+          "title": "Width Mm",
+          "type": "number"
+        },
+        "height_mm": {
+          "maximum": 800,
+          "minimum": 80,
+          "title": "Height Mm",
+          "type": "number"
+        },
+        "background": {
+          "default": "#F5F0E6",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "title": "Background",
+          "type": "string"
+        },
+        "objects": {
+          "items": {
+            "$ref": "#/$defs/SceneObject"
+          },
+          "maxItems": 200,
+          "title": "Objects",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "width_mm",
+        "height_mm"
+      ],
+      "title": "Face",
+      "type": "object"
+    },
+    "SceneObject": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9_-]{1,100}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "text",
+            "image",
+            "shape"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "face_id": {
+          "enum": [
+            "front",
+            "back"
+          ],
+          "title": "Face Id",
+          "type": "string"
+        },
+        "x_mm": {
+          "maximum": 2000,
+          "minimum": -2000,
+          "title": "X Mm",
+          "type": "number"
+        },
+        "y_mm": {
+          "maximum": 2000,
+          "minimum": -2000,
+          "title": "Y Mm",
+          "type": "number"
+        },
+        "width_mm": {
+          "exclusiveMinimum": 0,
+          "maximum": 2000,
+          "title": "Width Mm",
+          "type": "number"
+        },
+        "height_mm": {
+          "exclusiveMinimum": 0,
+          "maximum": 2000,
+          "title": "Height Mm",
+          "type": "number"
+        },
+        "rotation_deg": {
+          "default": 0,
+          "maximum": 360,
+          "minimum": -360,
+          "title": "Rotation Deg",
+          "type": "number"
+        },
+        "z_index": {
+          "default": 0,
+          "maximum": 10000,
+          "minimum": -10000,
+          "title": "Z Index",
+          "type": "integer"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "maxLength": 12000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Text"
+        },
+        "font_size_pt": {
+          "anyOf": [
+            {
+              "maximum": 400,
+              "minimum": 4,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Font Size Pt"
+        },
+        "font_id": {
+          "anyOf": [
+            {
+              "const": "NotoSansKR",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Font Id"
+        },
+        "color": {
+          "anyOf": [
+            {
+              "pattern": "^#[0-9a-fA-F]{6}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Color"
+        },
+        "align": {
+          "anyOf": [
+            {
+              "enum": [
+                "left",
+                "center",
+                "right"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Align"
+        },
+        "asset_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Asset Id"
+        },
+        "visible": {
+          "default": true,
+          "title": "Visible",
+          "type": "boolean"
+        },
+        "print_enabled": {
+          "default": true,
+          "title": "Print Enabled",
+          "type": "boolean"
+        },
+        "locked": {
+          "default": false,
+          "title": "Locked",
+          "type": "boolean"
+        },
+        "opacity": {
+          "default": 1,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Opacity",
+          "type": "number"
+        },
+        "line_height": {
+          "anyOf": [
+            {
+              "maximum": 4,
+              "minimum": 0.5,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Line Height"
+        },
+        "letter_spacing": {
+          "anyOf": [
+            {
+              "maximum": 30,
+              "minimum": -5,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Letter Spacing"
+        },
+        "binding_key": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Binding Key"
+        },
+        "fill": {
+          "anyOf": [
+            {
+              "pattern": "^#[0-9a-fA-F]{6}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fill"
+        },
+        "stroke": {
+          "anyOf": [
+            {
+              "pattern": "^#[0-9a-fA-F]{6}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stroke"
+        },
+        "stroke_width_mm": {
+          "anyOf": [
+            {
+              "maximum": 20,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stroke Width Mm"
+        },
+        "shape": {
+          "anyOf": [
+            {
+              "enum": [
+                "rect",
+                "ellipse",
+                "circle"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Shape"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "face_id",
+        "x_mm",
+        "y_mm",
+        "width_mm",
+        "height_mm"
+      ],
+      "title": "SceneObject",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0",
+      "default": "1.0",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "template_version_id": {
+      "anyOf": [
+        {
+          "const": "three-side-seal-demo-v1",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Template Version Id"
+    },
+    "geometry_hash": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Geometry Hash"
+    },
+    "active_face_id": {
+      "default": "front",
+      "enum": [
+        "front",
+        "back"
+      ],
+      "title": "Active Face Id",
+      "type": "string"
+    },
+    "faces": {
+      "items": {
+        "$ref": "#/$defs/Face"
+      },
+      "maxItems": 2,
+      "minItems": 2,
+      "title": "Faces",
+      "type": "array"
+    }
+  },
+  "required": [
+    "faces"
+  ],
+  "title": "Scene",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://phoenix-packaging.invalid/contracts/scene-1.0.schema.json"
+}

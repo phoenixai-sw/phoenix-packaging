@@ -1,0 +1,23 @@
+{
+  "version": "2026-09-16-proposal-1",
+  "currency": "KRW",
+  "live_billing_enabled": false,
+  "plans": [
+    {"id": "starter", "name": "Starter", "monthly_ex_vat": 49000, "monthly_inc_vat": 53900, "credits": 500, "seats": 1},
+    {"id": "pro", "name": "Pro", "monthly_ex_vat": 99000, "monthly_inc_vat": 108900, "credits": 1500, "seats": 3},
+    {"id": "partner", "name": "Partner", "monthly_ex_vat": 249000, "monthly_inc_vat": 273900, "credits": 4500, "seats": 5}
+  ],
+  "topups": [
+    {"credits": 500, "ex_vat": 39000, "inc_vat": 42900, "expires_months": 12},
+    {"credits": 1000, "ex_vat": 69000, "inc_vat": 75900, "expires_months": 12}
+  ],
+  "trial": {"credits": 30, "expires_days": 14, "production_export": false, "auto_conversion": false},
+  "actions": {
+    "image.generate.standard": 10,
+    "image.edit.standard": 10,
+    "image.generate.high": 20,
+    "export.production.first": 40,
+    "export.production.repeat": 0,
+    "export.review": 0
+  }
+}

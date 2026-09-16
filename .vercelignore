@@ -1,0 +1,14 @@
+.git
+.venv
+.local
+.data
+node_modules
+**/node_modules
+**/.next
+**/__pycache__
+**/.pytest_cache
+supabase/.temp
+test-results
+playwright-report
+Phoenix_Packaging_Codex_*.docx
+Phoenix_Packaging_Codex_*.md
