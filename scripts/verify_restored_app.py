@@ -10,7 +10,7 @@ from hashlib import sha256
 from io import BytesIO
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import sys
 from unittest.mock import patch
 from zipfile import ZipFile
@@ -52,16 +52,84 @@ def _data(response,label):
     return response.json()["data"]
 
 
-def _check_export(raw,kind):
-    if kind=="production_export":
-        with ZipFile(BytesIO(raw)) as archive:
-            expected={"production.pdf","preview.png","job-ticket.json","job-ticket.pdf","preflight.json","manifest.json"}
-            require(set(archive.namelist())==expected and archive.testzip() is None,"Recovered production bundle is invalid")
-            for name in ("production.pdf","job-ticket.pdf"):
-                require(len(PdfReader(BytesIO(archive.read(name))).pages)>0,"Recovered production PDF has no pages")
-            with Image.open(BytesIO(archive.read("preview.png"))) as image: image.load()
-    else:
+def _check_asset_content(raw,item):
+    expected=(item['width_px'],item['height_px'])
+    if item.get('content_type')=='image/svg+xml':
+        from services.api.svg_import import sanitize_svg
+        require(item.get('source')=='sanitized_svg',"Recovered SVG source type differs")
+        source=sanitize_svg(raw)
+        require(source.raw==raw and (source.width,source.height)==expected,"Recovered sanitized SVG or dimensions differ")
+        return
+    with Image.open(BytesIO(raw)) as image:
+        require(image.size==expected and image.width*image.height<=40_000_000,"Recovered image dimensions differ")
+        image.verify()
+    with Image.open(BytesIO(raw)) as image:image.load()
+
+
+def _check_export(raw,kind,*,result=None,snapshot=None,project_id=None,revision_id=None):
+    """Validate existing artifacts without rebuilding them or expanding rights.
+
+    No archive extraction. Limit compressed and expanded bytes before reads so
+    an otherwise well-formed backup cannot make this verifier unpack a bomb.
+    """
+    result=result or {};snapshot=snapshot or {}
+    require(0<len(raw)<=256*1024*1024,"Recovered export exceeds supported size")
+    engine_test=result.get("format")=="print_engine_zip"
+    if kind=="review_export" and not engine_test:
         require(len(PdfReader(BytesIO(raw)).pages)>0,"Recovered review PDF has no pages")
+        return
+    require(kind in {"production_export","editable_export"} or engine_test,"Unsupported recovered export kind")
+    with ZipFile(BytesIO(raw)) as archive:
+        infos=archive.infolist();names=[info.filename for info in infos]
+        require(0<len(infos)<=4096 and len(set(names))==len(names),"Recovered ZIP has duplicate or excessive members")
+        require(sum(info.file_size for info in infos)<=256*1024*1024,"Recovered ZIP expanded size exceeds limit")
+        for info in infos:
+            path=PurePosixPath(info.filename)
+            require(not path.is_absolute() and '\\' not in info.filename and ':' not in info.filename and '..' not in path.parts
+                    and not info.is_dir() and not info.flag_bits&1 and (info.external_attr>>16)&0o170000!=0o120000,
+                    "Recovered ZIP contains an unsafe member")
+        require('manifest.json' in names and archive.getinfo('manifest.json').file_size<=32*1024*1024,"Recovered ZIP manifest missing or oversized")
+        manifest=json.loads(archive.read('manifest.json'))
+        entries=manifest.get('files');require(isinstance(entries,list),"Recovered ZIP file manifest missing")
+        paths=[entry.get('path') if kind=='editable_export' else entry.get('name') for entry in entries]
+        require(len(set(paths))==len(paths) and set(paths)==set(names)-{'manifest.json'},"Recovered ZIP file manifest differs")
+        for entry,path in zip(entries,paths):
+            expected_size=entry.get('byte_size') if kind=='editable_export' else entry.get('bytes')
+            require(type(expected_size) is int and archive.getinfo(path).file_size==expected_size,"Recovered ZIP member size differs")
+            require(sha256(archive.read(path)).hexdigest()==entry.get('sha256'),"Recovered ZIP member hash differs")
+        require(archive.testzip() is None,"Recovered ZIP CRC mismatch")
+        if result.get('manifest'):require(result['manifest']==manifest,"Recovered stored manifest differs")
+        if project_id is not None and not engine_test:require(manifest.get('project_id')==project_id,"Recovered ZIP project differs")
+        if revision_id is not None and not engine_test:require(manifest.get('revision_id')==revision_id,"Recovered ZIP revision differs")
+        if kind=='editable_export':
+            expected={'project.json','scene.json','geometry.json','assets.json','README.ko.txt','fonts/OFL.txt','fonts/README.md','manifest.json'}
+            require(expected<=set(names) and manifest.get('format')=='phoenix-editable' and manifest.get('review_only') is True
+                    and manifest.get('production_approved') is False and bool(manifest.get('rights_notice')),"Recovered editable manifest invalid")
+            for name,key in [('scene.json','scene'),('geometry.json','geometry'),('structure.json','structure_snapshot')]:
+                if key in snapshot and snapshot[key] is not None:
+                    require(name in names and json.loads(archive.read(name))==snapshot[key],"Recovered editable snapshot differs")
+            items=json.loads(archive.read('assets.json'))['items']
+            require(len({item['id'] for item in items})==len(items),"Recovered asset index contains duplicates")
+            for item in items:
+                content=archive.read(item['path'])
+                require(len(content)==item['byte_size'] and sha256(content).hexdigest()==item['sha256'],"Recovered indexed asset differs")
+                _check_asset_content(content,item)
+            for font in manifest.get('fonts',[]):
+                require(font['path'] in names and sha256(archive.read(font['path'])).hexdigest()==font['sha256'],"Recovered font hash differs")
+                require(font.get('license') and (font.get('license_path') or 'fonts/OFL.txt') in names,"Recovered font license missing")
+            return
+        required={'production.pdf','preview.png','preflight.json','manifest.json'}
+        if kind=='production_export':required|={'job-ticket.json','job-ticket.pdf'}
+        if engine_test or manifest.get('adapter')=='icc-cmyk-outline-v1':required|={'cut.pdf','fold.pdf'}
+        require(set(names)==required,"Recovered print bundle members differ")
+        require(manifest.get('kind')==('print_engine_test' if engine_test else 'production'),"Recovered print purpose differs")
+        if engine_test:require(manifest.get('review_only') is True,"Recovered test output must stay review-only")
+        for name in names:
+            if name.endswith('.pdf'):require(len(PdfReader(BytesIO(archive.read(name))).pages)>0,"Recovered print PDF has no pages")
+            elif name.endswith('.json'):json.loads(archive.read(name))
+        with Image.open(BytesIO(archive.read('preview.png'))) as image:
+            require(image.width*image.height<=40_000_000,"Recovered print preview exceeds pixel limit")
+            image.load()
 
 
 def verify_restored_app(restore_dir,credentials_path):
@@ -128,7 +196,7 @@ def verify_restored_app(restore_dir,credentials_path):
             unavailable_assets=0
             for asset in assets:
                 response=client.get(f"/v1/assets/{asset.id}/content")
-                if asset.metadata_json.get("integrity_status")=="unavailable_compensated":
+                if asset.metadata_json.get("integrity_status")=="unavailable_compensated" or asset.metadata_json.get("_retention", {}).get("state") in {"deleting", "deleted"}:
                     require(response.status_code==410,"Recovered compensated asset must remain unavailable")
                     unavailable_assets+=1
                     continue
@@ -137,9 +205,13 @@ def verify_restored_app(restore_dir,credentials_path):
                 require(len(response.content)==asset.byte_size and response.content==stored,"Recovered asset bytes differ")
                 if asset.metadata_json.get("sha256"):
                     require(sha256(stored).hexdigest()==asset.metadata_json["sha256"],"Recovered asset baseline differs")
-                with Image.open(BytesIO(stored)) as image:
-                    image.load()
-                    require(image.size==(asset.width_px,asset.height_px),"Recovered image dimensions differ")
+                if asset.content_type=='image/svg+xml':
+                    require(sha256(stored).hexdigest()==asset.metadata_json.get('sha256'),"Recovered SVG baseline missing or changed")
+                    require(response.headers.get('content-type')=='application/octet-stream'
+                            and response.headers.get('content-disposition','').startswith('attachment;')
+                            and response.headers.get('x-content-type-options')=='nosniff',"Recovered SVG must remain an inert attachment")
+                _check_asset_content(stored,{'content_type':asset.content_type,'source':asset.source,
+                                            'width_px':asset.width_px,'height_px':asset.height_px})
                 reopened_assets+=1
             reopened_exports=0
             for job in jobs:
@@ -147,11 +219,14 @@ def verify_restored_app(restore_dir,credentials_path):
                 require(item["project_id"]==job.project_id and item["status"]==job.status,"Recovered job link differs")
                 if job.status=="succeeded" and job.kind.endswith("_export") and job.result and job.result.get("storage_key"):
                     response=client.get(f"/v1/exports/{job.id}/download")
+                    if job.result.get("_retention", {}).get("state") in {"deleting", "deleted"}:
+                        require(response.status_code==410 and item["download_url"] is None,"Recovered deleted export must remain unavailable")
+                        continue
                     require(response.status_code==200,"Recovered export download failed")
                     raw=response.content
                     require(raw==app.state.storage.get(job.result["storage_key"]),"Recovered export bytes differ")
                     if job.result.get("sha256"): require(sha256(raw).hexdigest()==job.result["sha256"],"Recovered export baseline differs")
-                    _check_export(raw,job.kind)
+                    _check_export(raw,job.kind,result=job.result,snapshot=job.snapshot,project_id=job.project_id,revision_id=job.revision_id)
                     reopened_exports+=1
             report={"application_reopen_verified":True,"transport":"local FastAPI TestClient",
                     "external_network_enabled":False,"source_database_used":False,

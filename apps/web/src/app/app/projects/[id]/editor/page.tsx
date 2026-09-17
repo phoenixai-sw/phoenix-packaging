@@ -48,8 +48,10 @@ import { RegisteredStructureTools } from "@/components/registered-structure-tool
 import { BindingTools } from "@/components/binding-tools";
 import { ExportTools } from "@/components/export-tools";
 import { ImageCropTools } from "@/components/image-crop-tools";
+import { FontPicker } from "@/components/font-picker";
 import { RevisionTools } from "@/components/revision-tools";
 import { EditorActivity } from "@/components/editor-activity";
+import { UsageActivityTracker } from "@/components/usage-activity-tracker";
 import { AssetLibrary, type LibraryAsset } from "@/components/asset-library";
 import { useEditorLease } from "@/lib/use-editor-lease";
 import {
@@ -1024,6 +1026,7 @@ export default function EditorPage({
         </div>
       </header>
       <EditorActivity projectId={id} onAI={() => setPanel("ai")} />
+      <UsageActivityTracker projectId={id} readOnly={readOnly} />
       <div
         className={`editor-lease-bar ${readOnly ? "readonly" : ""}`}
         role="status"
@@ -1215,7 +1218,7 @@ export default function EditorPage({
             <input
               ref={uploadInput}
               type="file"
-              accept="image/png,image/jpeg,image/webp"
+              accept="image/png,image/jpeg,image/webp,image/svg+xml"
               className="visually-hidden"
               onChange={(e) => {
                 if (e.target.files?.[0]) void upload(e.target.files[0]);
@@ -1225,6 +1228,7 @@ export default function EditorPage({
               PNG · JPG · WebP{" "}
               {uploadConfig.data &&
                 `/ 최대 ${uploadConfig.data.upload_max_bytes / 1024 / 1024} MiB`}
+              <br />SVG는 1MiB 이하 정적 윤곽선을 PNG로 변환합니다. 글자·외부 이미지·실행 코드는 지원하지 않습니다.
             </p>
             <div className="editor-feature-tools">
               <button onClick={() => setPanel("ai")}>
@@ -1668,25 +1672,19 @@ export default function EditorPage({
                           onBlur={() => setEditing(false)}
                         />
                       </label>
-                      <label className="field property-field">
-                        글꼴
-                        <select value="NotoSansKR" disabled>
-                          <option>NotoSansKR</option>
-                        </select>
-                      </label>
+                      <FontPicker key={object.id} object={object} brandId={project.brand_id} readOnly={readOnly || !!object.locked} onChange={patch => change(object.id, patch)} />
                       <label className="field property-field">
                         글자 굵기
                         <select
+                          disabled={!!object.font_asset_id}
                           value={object.font_weight ?? 400}
                           onChange={(event) =>
                             change(object.id, {
-                              font_weight: Number(event.target.value) as
-                                400 | 700,
+                              font_weight: Number(event.target.value),
                             })
                           }
                         >
-                          <option value={400}>보통 · Regular</option>
-                          <option value={700}>굵게 · Bold</option>
+                          {object.font_asset_id ? <option value={object.font_weight}>{object.font_weight} · 등록 파일 실제 두께</option> : <><option value={400}>보통 · Regular</option><option value={700}>굵게 · Bold</option></>}
                         </select>
                         <small>
                           캔버스·3D·PDF에 같은 굵기 글꼴을 사용합니다.

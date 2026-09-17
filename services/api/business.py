@@ -1,4 +1,7 @@
 """Tenant catalog, stable variant bindings, team seats and workspace isolation."""
+from .contracts.base import Envelope, ERROR_RESPONSES
+from .contracts import business as B
+from .contracts import core as C
 from copy import deepcopy
 from datetime import timedelta
 import secrets
@@ -24,6 +27,7 @@ class BrandBody(Body):
     name: str = Field(min_length=1, max_length=120)
     colors: list[str] = Field(default_factory=list, max_length=12)
     font_ids: list[Literal["NotoSansKR"]] = Field(default_factory=lambda:["NotoSansKR"])
+    font_asset_ids: list[UUID] | None = Field(default=None,max_length=50)
     logo_asset_id: UUID | None = None
 
 
@@ -95,6 +99,9 @@ def enforce_item_access(db, item):
         item=db.get(Project,item.project_id)
     if hasattr(item,"workspace_id") and not workspace_access(db,user,item.workspace_id):
         raise APIError(404,"NOT_FOUND","요청한 항목을 찾을 수 없습니다.")
+    if isinstance(item, Asset):
+        from .retention.deletion import lock_asset_access
+        lock_asset_access(db, item)
 
 
 def owned_record(db, model, identity, tenant):
@@ -116,7 +123,7 @@ def validate_project_links(db,user,values):
 
 
 def brand_payload(row):
-    return {"id":row.id,"name":row.name,"colors":row.colors,"font_ids":row.font_ids,"logo_asset_id":row.logo_asset_id}
+    return {"id":row.id,"name":row.name,"colors":row.colors,"font_ids":row.font_ids,"font_asset_ids":row.font_asset_ids or [],"logo_asset_id":row.logo_asset_id}
 
 
 def product_payload(db,row):
@@ -168,7 +175,7 @@ def install_business_routes(app, db_session, project_payload, snapshot_revision)
         if not access["team_access"] or count>=access["seats"]:
             raise APIError(403,"SEAT_LIMIT","팀 좌석이 부족합니다. 요금제와 초대를 확인해 주세요.")
 
-    @router.get("/brands")
+    @router.get("/brands", response_model=Envelope[C.Items[B.BrandData]], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def brands(request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db)
         return result(request,{"items":[brand_payload(r) for r in db.scalars(select(Brand).where(Brand.tenant_id==user.tenant_id).order_by(Brand.name))]})
@@ -176,18 +183,22 @@ def install_business_routes(app, db_session, project_payload, snapshot_revision)
         import re
         if any(not re.fullmatch(r"#[0-9a-fA-F]{6}",c) for c in body.colors): raise APIError(422,"COLOR_INVALID","색상은 #RRGGBB 형식으로 입력해 주세요.")
         if body.logo_asset_id: owned_record(db,Asset,body.logo_asset_id,user.tenant_id)
-        for key,value in body.model_dump(mode="json").items(): setattr(row,key,value)
+        from .font_assets.service import owned_font
+        for identity in body.font_asset_ids or []: owned_font(db,user.tenant_id,identity)
+        for key,value in body.model_dump(mode="json").items():
+            if key=='font_asset_ids' and value is None: continue
+            setattr(row,key,value)
         db.add(row);db.flush();audit(db,user,"brand_saved",row.id);db.commit();return brand_payload(row)
-    @router.post("/brands",status_code=201)
+    @router.post("/brands",status_code=201, response_model=Envelope[B.BrandData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def create_brand(body:BrandBody,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True)
         return result(request,write_brand(db,user,body,Brand(tenant_id=user.tenant_id)))
-    @router.patch("/brands/{identity}")
+    @router.patch("/brands/{identity}", response_model=Envelope[B.BrandData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def update_brand(identity:UUID,body:BrandBody,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True)
         return result(request,write_brand(db,user,body,owned_record(db,Brand,identity,user.tenant_id)))
 
-    @router.get("/products")
+    @router.get("/products", response_model=Envelope[C.Items[B.ProductData]], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def products(request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db)
         return result(request,{"items":[product_payload(db,r) for r in db.scalars(select(Product).where(Product.tenant_id==user.tenant_id).order_by(Product.name))]})
@@ -226,28 +237,28 @@ def install_business_routes(app, db_session, project_payload, snapshot_revision)
             variant.name=entry.name;variant.details=values;variant.updated_at=utcnow();db.add(variant);db.flush()
         # Omitted variants are retained: immutable project identities must survive catalog edits.
         db.flush();audit(db,user,"product_saved",row.id);db.commit();return product_payload(db,row)
-    @router.post("/products",status_code=201)
+    @router.post("/products",status_code=201, response_model=Envelope[B.ProductData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def create_product(body:ProductBody,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True)
         return result(request,write_product(db,user,body,Product(tenant_id=user.tenant_id)))
-    @router.patch("/products/{identity}")
+    @router.patch("/products/{identity}", response_model=Envelope[B.ProductData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def update_product(identity:UUID,body:ProductBody,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True)
         return result(request,write_product(db,user,body,owned_record(db,Product,identity,user.tenant_id)))
 
-    @router.get("/workspaces")
+    @router.get("/workspaces", response_model=Envelope[C.Items[B.WorkspaceData]], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def workspaces(request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db)
         rows=db.scalars(select(Workspace).where(Workspace.tenant_id==user.tenant_id).order_by(Workspace.name))
         return result(request,{"items":[{"id":r.id,"name":r.name,"description":r.description} for r in rows if workspace_access(db,user,r.id)]})
-    @router.post("/workspaces",status_code=201)
+    @router.post("/workspaces",status_code=201, response_model=Envelope[B.WorkspaceData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def create_workspace(body:WorkspaceBody,request:Request,db=Depends(db_session)):
         user,_=owner(request,db,True)
         if entitlements(db,user.tenant_id)["seats"]<5: raise APIError(403,"PARTNER_REQUIRED","고객 작업 공간은 Partner 요금제에서 사용할 수 있습니다.")
         row=Workspace(tenant_id=user.tenant_id,**body.model_dump());db.add(row);db.flush();audit(db,user,"workspace_created",row.id);db.commit()
         return result(request,{"id":row.id,"name":row.name,"description":row.description})
 
-    @router.get("/team")
+    @router.get("/team", response_model=Envelope[B.TeamData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def team(request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db)
         primary=list(db.scalars(select(User).where(User.tenant_id==user.tenant_id)))
@@ -258,7 +269,7 @@ def install_business_routes(app, db_session, project_payload, snapshot_revision)
         # This list contains only current, unconsumed invitations; terminal rows stay private history.
         data={"members":members,"seat_limit":entitlements(db,user.tenant_id)["seats"],"invitations":[{"id":i.id,"email":i.email,"role":i.role,"status":"pending","expires_at":aware(i.expires_at).isoformat()} for i in invites]};db.commit()
         return result(request,data)
-    @router.post("/team/invitations",status_code=201)
+    @router.post("/team/invitations",status_code=201, response_model=Envelope[B.CreatedInvitation], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def invite(body:InviteBody,request:Request,db=Depends(db_session)):
         user,_=owner(request,db,True);settings=app.state.settings
         check_seats(db,user.tenant_id)
@@ -271,7 +282,7 @@ def install_business_routes(app, db_session, project_payload, snapshot_revision)
         row=Invitation(tenant_id=user.tenant_id,email=email,role=body.role,workspace_ids=list(map(str,body.workspace_ids)),invited_by=user.id,token_hash=hash_token(token),expires_at=utcnow()+timedelta(days=7));db.add(row);db.flush()
         audit(db,user,"team_invited",row.id);db.commit()
         return result(request,{"id":row.id,"email":row.email,"role":row.role,"delivery":"manual_share","invitation_url":f"{settings.app_url}/app/team?invite={token}"})
-    @router.delete("/team/invitations/{identity}")
+    @router.delete("/team/invitations/{identity}", response_model=Envelope[B.RevokedInvitation], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def revoke_invitation(identity:UUID,request:Request,db=Depends(db_session)):
         user,_=owner(request,db,True)
         row=owned_record(db,Invitation,identity,user.tenant_id)
@@ -290,7 +301,7 @@ def install_business_routes(app, db_session, project_payload, snapshot_revision)
             raise APIError(409,"INVITATION_EXPIRED","이미 만료된 초대입니다. 새 초대를 만들어 주세요.")
         audit(db,user,"invitation_revoked",row.id);db.commit()
         return result(request,{"id":row.id,"status":"revoked"})
-    @router.post("/team/invitations/accept")
+    @router.post("/team/invitations/accept", response_model=Envelope[C.SessionData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def accept(body:TokenBody,request:Request,db=Depends(db_session)):
         user,session=require_auth(request,db,mutate=True,authorize_write=False,enforce_membership=False)
         if not user.email_verified_at or not user.google_email_authoritative:
@@ -306,7 +317,7 @@ def install_business_routes(app, db_session, project_payload, snapshot_revision)
         membership.role=row.role;membership.is_active=True;assign(db,row.tenant_id,user.id,row.workspace_ids)
         session.active_tenant_id=row.tenant_id;db.add(AuditEvent(tenant_id=row.tenant_id,actor_id=user.id,action="invitation_accepted",entity_id=row.id));db.commit()
         user,session=require_auth(request,db);return result(request,auth_payload(db,user,session))
-    @router.patch("/team/members/{identity}")
+    @router.patch("/team/members/{identity}", response_model=Envelope[B.MemberUpdated], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def change_member(identity:UUID,body:MemberBody,request:Request,db=Depends(db_session)):
         user,_=owner(request,db,True)
         member=db.scalar(select(Membership).where(Membership.user_id==str(identity),Membership.tenant_id==user.tenant_id))
@@ -314,7 +325,7 @@ def install_business_routes(app, db_session, project_payload, snapshot_revision)
         if body.is_active and not member.is_active: check_seats(db,user.tenant_id,False,exclude_user=str(identity))
         member.role=body.role;member.is_active=body.is_active;assign(db,user.tenant_id,str(identity),body.workspace_ids);audit(db,user,"member_updated",str(identity));db.commit()
         return result(request,{"updated":True})
-    @router.post("/team/switch")
+    @router.post("/team/switch", response_model=Envelope[C.SessionData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def switch(body:SwitchBody,request:Request,db=Depends(db_session)):
         user,session=require_auth(request,db,mutate=True,authorize_write=False,enforce_membership=False)
         target=str(body.tenant_id);home=db.get(User,user.id)
@@ -323,11 +334,11 @@ def install_business_routes(app, db_session, project_payload, snapshot_revision)
         session.active_tenant_id=target;db.flush();user,session=require_auth(request,db);db.commit()
         return result(request,auth_payload(db,user,session))
 
-    @router.post("/projects/{identity}/bindings/preview")
+    @router.post("/projects/{identity}/bindings/preview", response_model=Envelope[B.BindingPreview], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def preview_bindings(identity:UUID,body:BindingBody,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True);project=owned_record(db,Project,identity,user.tenant_id);variant=owned_record(db,Variant,body.product_variant_id,user.tenant_id)
         return result(request,{"base_revision":project.base_revision,"changes":binding_changes(db,project,variant)})
-    @router.post("/projects/{identity}/bindings/apply")
+    @router.post("/projects/{identity}/bindings/apply", response_model=Envelope[C.ProjectData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def apply_bindings(identity:UUID,body:BindingBody,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True);project=owned_record(db,Project,identity,user.tenant_id);variant=owned_record(db,Variant,body.product_variant_id,user.tenant_id)
         from .editor_sessions import enforce_edit_lease
@@ -342,7 +353,7 @@ def install_business_routes(app, db_session, project_payload, snapshot_revision)
         won=db.execute(update(Project).where(Project.id==project.id,Project.base_revision==body.base_revision).values(scene=scene,product_variant_id=variant.id,brand_id=product.brand_id,base_revision=body.base_revision+1,updated_at=utcnow()).execution_options(synchronize_session=False))
         if won.rowcount!=1: raise APIError(409,"REVISION_CONFLICT","문서가 변경되었습니다.")
         db.refresh(project);snapshot_revision(db,project,"bindings_applied");audit(db,user,"bindings_applied",project.id);db.commit();return result(request,project_payload(project))
-    @router.post("/projects/{identity}/duplicate",status_code=201)
+    @router.post("/projects/{identity}/duplicate",status_code=201, response_model=Envelope[C.ProjectData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def duplicate(identity:UUID,body:DuplicateBody,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True);source=owned_record(db,Project,identity,user.tenant_id)
         keys=("product_name","brand_name","description","width_mm","height_mm","bottom_mm","depth_mm","template_id","brand_id","product_variant_id","workspace_id","template_version_id","print_profile_version_id","material")

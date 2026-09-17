@@ -1,4 +1,6 @@
 "use client";
+import { apiRequest } from "@/lib/api-contract";
+import { captureAcquisition } from "@/lib/acquisition";
 import { useEffect, useRef, useState, Suspense } from "react";
 import Link from "next/link";
 import Script from "next/script";
@@ -58,7 +60,7 @@ function AuthForm() {
       ? destination
       : "/app";
   useEffect(() => {
-    api<Session>("/me")
+    apiRequest("get", "/v1/me", {})
       .then(() => router.replace(next))
       .catch(() => {});
     if (params.has("token"))
@@ -108,12 +110,12 @@ function AuthForm() {
         credentialBusy.current = true;
         setBusy(true);
         setError("");
-        api<Session>("/auth/google", {
-          method: "POST",
-          body: JSON.stringify({
+        apiRequest("post", "/v1/auth/google", {
+          body: {
             credential: response.credential,
             csrf_token: challenge.csrf_token,
-          }),
+            acquisition: captureAcquisition(),
+          },
         })
           .then(() => {
             if (active) router.replace(next);

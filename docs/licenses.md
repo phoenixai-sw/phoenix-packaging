@@ -27,6 +27,11 @@
 | pypdfium2 | 5.13.0 | BSD-3-Clause, Apache-2.0 및 포함 의존성 라이선스 |
 | zxing-cpp | 3.1.1 | Apache-2.0 |
 | reportlab | 4.5.1 | BSD license (see license.txt for details), Copyright (c) 2000-2025, ReportLab Inc. |
+| fonttools | 4.61.1 | MIT |
+| resvg-py | 0.5.0 | MIT; 포함된 Rust 의존성의 배포 라이선스도 유지 |
+| defusedxml | 0.7.1 | Python Software Foundation License (PSFL) |
+| openapi-typescript | 7.13.0 | MIT (개발 계약 생성 도구) |
+| 자체 합성 ICC 시험 파일·SVG 시험 도형 | 2026-09-18 | CC0; 제조사 승인 프로필 또는 고객 로고가 아님 |
 | Noto Sans KR | Google Fonts source; SHA256 recorded | SIL Open Font License 1.1 |
 
 Font SHA256: `8e4000a13809588d46c1b791e874cd4567b6283eeb9d2e6835a3136a871a6bd0`.

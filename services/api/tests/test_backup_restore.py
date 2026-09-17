@@ -28,11 +28,11 @@ spec=spec_from_file_location("backup_platform_fixture",SCRIPTS/"backup-platform.
 backup_script=module_from_spec(spec)
 spec.loader.exec_module(backup_script)
 sys.path.insert(0,str(SCRIPTS))
-from verify_restored_app import isolated_runtime, verify_restored_app
+from verify_restored_app import isolated_runtime, verify_restored_app, _check_export
 
 
 @pytest.fixture
-def recovery(tmp_path,monkeypatch):
+def recovery(tmp_path,monkeypatch,request):
     source=tmp_path/"source"
     source.mkdir()
     settings=Settings(environment="test",database_url=f"sqlite:///{source/'source.db'}",storage_backend="local",storage_dir=source/"storage",ai_provider="disabled")
@@ -47,6 +47,11 @@ def recovery(tmp_path,monkeypatch):
         queued=client.post("/v1/exports",json={"project_id":item["id"],"base_revision":2})
         assert queued.status_code==202,queued.text
         assert process_pending_jobs(client.app.state.session_factory,client.app.state.storage)==1
+        if getattr(request,'param',None)=='editable':
+            editable=client.post('/v1/exports',json={'project_id':item['id'],'base_revision':2,'kind':'editable'})
+            assert editable.status_code==202,editable.text
+            from services.api.editable_exports import process_editable_jobs
+            assert process_editable_jobs(client.app.state.session_factory,client.app.state.storage)==1
         assert client.get("/v1/credits").status_code==200
         with client.app.state.session_factory() as db:
             row=db.get(Asset,asset["id"])
@@ -59,7 +64,7 @@ def recovery(tmp_path,monkeypatch):
     output=tmp_path/"encrypted-backup"
     key=tmp_path/"separate.key"
     report=backup_script.backup(output,key)
-    assert report["verified"] and report["objects_verified"]==2
+    assert report["verified"] and report["objects_verified"]==(3 if getattr(request,'param',None)=='editable' else 2)
     credentials=tmp_path/"explicit-qa.json"
     credentials.write_text(json.dumps({"email":"owner@example.com"}),encoding="utf-8")
     return source,output,key,credentials
@@ -156,3 +161,60 @@ def test_recovery_preserves_self_references_even_when_sql_rows_arrive_out_of_ord
         for name,data in contents.items():archive.writestr(name,data)
     encrypted.write_bytes(cipher.encrypt(stream.getvalue()))
     assert backup_script.verify(output,key,tmp_path/"unordered-recovery")["verified"]
+
+
+@pytest.mark.parametrize('recovery',['editable'],indirect=True)
+def test_encrypted_backup_reopens_actual_editable_zip_with_scene_assets_fonts_and_license(recovery,tmp_path):
+    source,output,key,credentials=recovery;unchanged=sha256((source/'source.db').read_bytes()).hexdigest()
+    restored=tmp_path/'editable-recovery';backup_script.verify(output,key,restored)
+    report=verify_restored_app(restored,credentials)
+    assert report['application_reopen_verified'] and report['export_files_reopened']==2
+    assert sha256((source/'source.db').read_bytes()).hexdigest()==unchanged
+
+
+@pytest.fixture(scope='module')
+def print_bundles(tmp_path_factory):
+    from services.api.geometry import new_scene,validate_scene
+    from services.api.exporters.print_profile import parse_print_profile
+    from services.api.exporters.print_pdf import render_print_artifacts
+    from services.api.exporters.production import export_production_bundle
+    root=SCRIPTS.parent;directory=tmp_path_factory.mktemp('recovery-bundles')
+    module_spec=spec_from_file_location('recovery_production_fixture',root/'tests/geometry_pdf/test_structures_production.py')
+    fixture=module_from_spec(module_spec);module_spec.loader.exec_module(fixture)
+    project,conditions=fixture.approved_project()
+    legacy_dir=directory/'rgb';export_production_bundle(project,legacy_dir,conditions)
+    icc=(root/'fixtures/icc/synthetic-cmyk-test.icc').read_bytes()
+    profile=parse_print_profile({'icc_id':'test-fixture','icc_sha256':sha256(icc).hexdigest()})
+    scene=validate_scene(new_scene('three-side-seal',160,230))
+    test_dir=directory/'engine';render_print_artifacts({'id':'fixture','revision_id':'1','scene':scene},test_dir,profile,icc,test_mode=True)
+    cmyk_dir=directory/'production';project['print_output']={'mode':'production','profile_id':conditions['profile']['id'],'requirements':profile}
+    conditions['profile']['requirements']=profile
+    export_production_bundle(project,cmyk_dir,conditions,icc_bytes=icc)
+    result={}
+    for name,path in [('legacy',legacy_dir),('engine',test_dir),('cmyk',cmyk_dir)]:
+        content=BytesIO()
+        with ZipFile(content,'w',ZIP_DEFLATED) as archive:
+            for file in path.iterdir():archive.write(file,file.name)
+        result[name]=content.getvalue()
+    return result
+
+
+@pytest.mark.parametrize('name',['legacy','engine','cmyk'])
+def test_recovery_validates_actual_rgb_cmyk_and_test_zip_payloads(print_bundles,name):
+    raw=print_bundles[name]
+    _check_export(raw,'review_export' if name=='engine' else 'production_export',result={'format':'print_engine_zip'} if name=='engine' else {})
+
+
+@pytest.mark.parametrize('damage',['hash','missing','duplicate','escape','size'])
+def test_recovery_rejects_zip_manifest_damage_and_unsafe_members(print_bundles,damage):
+    with ZipFile(BytesIO(print_bundles['engine'])) as archive:contents={name:archive.read(name) for name in archive.namelist()}
+    if damage=='hash':contents['cut.pdf']+=b'changed'
+    elif damage=='missing':contents.pop('fold.pdf')
+    elif damage=='escape':contents['../escape.txt']=b'unsafe'
+    elif damage=='size':
+        manifest=json.loads(contents['manifest.json']);manifest['files'][0]['bytes']+=1;contents['manifest.json']=json.dumps(manifest).encode()
+    raw=BytesIO()
+    with ZipFile(raw,'w',ZIP_DEFLATED) as archive:
+        for name,content in contents.items():archive.writestr(name,content)
+        if damage=='duplicate':archive.writestr('cut.pdf',contents['cut.pdf'])
+    with pytest.raises(ValueError):_check_export(raw.getvalue(),'review_export',result={'format':'print_engine_zip'})

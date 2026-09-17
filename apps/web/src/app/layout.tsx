@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import "./workspace-tools.css";
+import { AcquisitionCapture } from "@/components/acquisition-capture";
 export const metadata: Metadata = {
   title: {
     default: "Phoenix Packaging — 좋은 제품의 다음 모습",
@@ -15,7 +16,7 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="ko">
-      <body>{children}</body>
+      <body><AcquisitionCapture />{children}</body>
     </html>
   );
 }

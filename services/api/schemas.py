@@ -42,7 +42,8 @@ class SceneObject(StrictModel):
     text: str | None = Field(default=None, max_length=12000)
     font_size_pt: float | None = Field(default=None, ge=4, le=400, allow_inf_nan=False)
     font_id: Literal["NotoSansKR"] | None = None
-    font_weight: Literal[400, 700] = 400
+    font_weight: int = Field(default=400, ge=1, le=1000, strict=True)
+    font_asset_id: UUID | None = None
     color: Color | None = None
     align: Literal["left", "center", "right"] | None = None
     asset_id: UUID | None = None
@@ -72,6 +73,10 @@ class SceneObject(StrictModel):
 
     @model_validator(mode="after")
     def validate_kind(self):
+        if self.font_asset_id is not None and self.type != "text":
+            raise ValueError("업로드 글꼴은 텍스트 객체에서만 사용할 수 있습니다.")
+        if self.type == "text" and self.font_asset_id is None and self.font_weight not in (400, 700):
+            raise ValueError("기본 글꼴은 400 또는 700 두께를 지원합니다.")
         if self.crop is not None and self.type != "image":
             raise ValueError("자르기는 이미지 객체에서만 사용할 수 있습니다.")
         if self.type == "text" and (self.text is None or self.font_size_pt is None or self.font_id is None):

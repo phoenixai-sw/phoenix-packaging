@@ -82,6 +82,8 @@ def resolve_image_selection(settings, data):
             raise ProviderError("AI_QUALITY_ACTION_MISMATCH", "선택 품질과 크레딧 견적이 일치하지 않습니다.")
     if action.endswith(".high") and not settings.ai_high_enabled:
         raise ProviderError("HIGH_RESOLUTION_DISABLED", "고품질 이미지 작업은 현재 제공되지 않습니다.")
+    if quality not in settings.ai_image_qualities:
+        raise ProviderError("AI_QUALITY_DISABLED", "선택한 품질은 현재 사용할 수 없습니다. 새 견적을 확인해 주세요.")
     return model, quality
 
 
@@ -179,10 +181,10 @@ def composite_edit_result(data, reference, result):
         "warning": "선택 영역 밖 원본 픽셀을 보존했습니다. 제거 영역의 배경·경계는 직접 확인하고 문구는 별도 텍스트로 추가하세요."})
 
 
-def get_capabilities(settings):
+def get_capabilities(settings, db=None):
     from .billing.policy import pricing
     available = settings.ai_provider != "disabled"
-    actions = pricing()["actions"]
+    actions = pricing(db)["actions"]
     labels = {"low":"낮음", "medium":"보통", "high":"높음", "xhigh":"매우 높음", "max":"최대", "auto":"자동"}
     return {"provider": settings.ai_provider, "model": settings.image_model if settings.ai_provider == "openai" else "fixture-v1",
             "generate": settings.ai_provider != "disabled", "edit": settings.ai_provider != "disabled", "mask": False,
@@ -193,7 +195,7 @@ def get_capabilities(settings):
                         "enabled": available and model in settings.ai_image_models} for model in IMAGE_MODELS],
             "qualities": [{"id": quality, "label": labels[quality], "action_tier": quality_tier(quality),
                            "credit_cost": actions["image.generate."+quality_tier(quality)],
-                           "enabled": available and (quality not in PREMIUM_QUALITIES or settings.ai_high_enabled)} for quality in IMAGE_QUALITIES],
+                           "enabled": available and quality in settings.ai_image_qualities and (quality not in PREMIUM_QUALITIES or settings.ai_high_enabled)} for quality in IMAGE_QUALITIES],
             "defaults": {"model": settings.image_model, "quality": "high"},
             "selection_version": AI_SELECTION_VERSION,
             "auto_quality": {"selects": "quality", "changes_model": False, "credit_cost": actions["image.generate.high"], "actual_quality_may_be_unknown": True},

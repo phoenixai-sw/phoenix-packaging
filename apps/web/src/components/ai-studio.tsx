@@ -10,6 +10,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { api, errorMessage } from "@/lib/api";
+import type { ApiSchema } from "@/lib/api-contract";
 import styles from "./ai-layout-context.module.css";
 import {
   DEFAULT_IMAGE_MODEL,
@@ -35,63 +36,10 @@ import {
 } from "@/lib/ai-image-settings";
 import { Feedback } from "./management";
 
-type Asset = {
-  id: string;
-  name?: string;
-  source?: string;
-  width_px?: number;
-  height_px?: number;
-  url?: string;
-  model?: string;
-  requested_quality?: string;
-  actual_quality?: string | null;
-  output_size?: string;
-  actual_size?: string;
-};
-type Job = {
-  id: string;
-  status: string;
-  cancelable?: boolean;
-  credit_reserved?: number;
-  credit_charged?: number;
-  credit_returned?: number;
-  image_settings?: ImageSettings;
-  error?: { message?: string } | string;
-  result?: {
-    assets?: Asset[];
-    units?: Array<{ status: string; error?: string }>;
-  };
-};
-type Quote = {
-  id: string;
-  credit_total: number;
-  balance_before: number;
-  balance_after: number;
-  expires_at: string;
-  provider_mode?: string;
-  action: string;
-  requested_units: number;
-  image_settings: ImageSettings;
-};
-type Capabilities = {
-  provider: string;
-  generate: boolean;
-  edit: boolean;
-  models: Array<{
-    id: ImageModel;
-    label: string;
-    description: string;
-    enabled: boolean;
-  }>;
-  qualities: Array<{
-    id: ImageQuality;
-    label: string;
-    action_tier: "standard" | "high";
-    credit_cost: number;
-    enabled: boolean;
-  }>;
-  defaults: { model: ImageModel; quality: ImageQuality };
-};
+type Asset = ApiSchema<"GeneratedAsset">;
+type Job = ApiSchema<"AIGenerationJob">;
+type Quote = ApiSchema<"QuoteData">;
+type Capabilities = ApiSchema<"ImageCapabilities">;
 type ConfirmedQuote = {
   value: Quote;
   ticket: ImageQuoteTicket;
@@ -190,7 +138,7 @@ export function AIStudio({
 }: {
   projectId: string;
   faceId: string;
-  referenceAssets: Asset[];
+  referenceAssets: Array<Pick<Asset, "id"> & Partial<Pick<Asset, "name">>>;
   saveCurrent: () => Promise<number>;
   onSelect: (asset: Asset) => void | Promise<void>;
   readOnly: boolean;
@@ -722,8 +670,8 @@ export function AIStudio({
                 {currentQuote.requested_units}장 · {currentQuote.credit_total}{" "}
                 크레딧
               </h3>
-              <ImageSettingsSummary settings={currentQuote.image_settings} />
-              {currentQuote.image_settings.quality === "auto" && (
+              {currentQuote.image_settings && <ImageSettingsSummary settings={currentQuote.image_settings} />}
+              {currentQuote.image_settings?.quality === "auto" && (
                 <p>
                   자동 품질 · 장당 20크레딧 고정. 실제 품질은 결과에 제공된 경우
                   별도로 표시합니다.
@@ -781,9 +729,7 @@ export function AIStudio({
               {job.error && (
                 <Feedback
                   error={
-                    typeof job.error === "string"
-                      ? job.error
-                      : job.error.message
+                    job.error
                   }
                 />
               )}

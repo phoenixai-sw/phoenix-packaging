@@ -24,6 +24,9 @@ jobs:
           cache-dependency-path: services/api/requirements-dev.txt
       - run: npm ci --no-fund
       - run: pip install -r services/api/requirements-dev.txt
+      - run: python packages/contracts/generate.py --check
+      - run: python packages/contracts/export_openapi.py --check
+      - run: npm run contracts:check
       - run: python -m pytest services/api/tests services/api/billing/tests tests/geometry_pdf -q
       - run: npm test
       - run: npm run typecheck

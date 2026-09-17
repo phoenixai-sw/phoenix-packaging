@@ -1,7 +1,9 @@
+"use client";
 import Link from "next/link";
 import { ArrowUpRight, Check, Info } from "lucide-react";
 import { SiteHeader, SiteFooter } from "@/components/brand";
-import pricing from "../../../../../config/pricing.seed.json";
+import { useApiData } from "@/lib/business";
+import type { components } from "../../../../../packages/contracts/api.generated";
 const formatNumber = (amount: number) => amount.toLocaleString("ko-KR");
 const planCopy: Record<string, { desc: string; features: string[] }> = {
   starter: {
@@ -29,12 +31,32 @@ const planCopy: Record<string, { desc: string; features: string[] }> = {
     ],
   },
 };
-const plans = pricing.plans.map((plan) => ({ ...plan, ...planCopy[plan.id] }));
-const sampleCredits =
-  pricing.actions["image.generate.standard"] * 3 +
-  pricing.actions["image.edit.standard"] +
-  pricing.actions["export.production.first"];
 export default function Pricing() {
+  const result = useApiData<components["schemas"]["PublicPricing"]>("/pricing");
+  if (!result.data)
+    return (
+      <>
+        <SiteHeader />
+        <main className="section-wrap">
+          <p role="status">
+            {result.error || "현재 요금 정책을 확인하고 있습니다."}
+          </p>
+          <button className="button button-light" onClick={result.refresh}>
+            다시 확인
+          </button>
+        </main>
+        <SiteFooter />
+      </>
+    );
+  const pricing = result.data.policy;
+  const plans = pricing.plans.map((plan) => ({
+    ...plan,
+    ...planCopy[plan.id],
+  }));
+  const sampleCredits =
+    pricing.actions["image.generate.standard"] * 3 +
+    pricing.actions["image.edit.standard"] +
+    pricing.actions["export.production.first"];
   return (
     <>
       <SiteHeader />

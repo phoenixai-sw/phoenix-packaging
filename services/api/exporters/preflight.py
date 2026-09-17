@@ -12,6 +12,13 @@ DEFAULT_CONFIRMED_FIELDS=["product_name","net_weight","ingredients","allergens",
 def validate_output_requirements(requirements):
     """Shared by readiness and final preflight; advertised capabilities aren't arbitrary registry keys."""
     issues=[]
+    if isinstance(requirements,dict) and requirements.get("adapter_id")=="icc-cmyk-outline-v1":
+        from .print_profile import parse_print_profile
+        try:
+            profile=parse_print_profile(requirements)
+            return {"issues":[],"min_ppi":profile["min_ppi"],"required_fields":profile["required_fields"],"print_profile":profile}
+        except GeometryValidationError as exc:
+            return {"issues":[{"code":exc.code,"message":exc.message,"severity":"error","scope":"production"}],"min_ppi":300,"required_fields":DEFAULT_CONFIRMED_FIELDS}
     def add(code,message,**details):
         issues.append({"code":code,"message":message,"severity":"error","scope":"production",**details})
     if not isinstance(requirements,dict):
@@ -45,10 +52,17 @@ def preflight_project(project:dict, approved_conditions:dict|None=None, asset_re
     except GeometryValidationError as exc:
         add(exc.code,exc.message,"review",field=exc.field)
     conditions=approved_conditions or {}
-    if project.get("structure_snapshot") is not None or (scene and scene.get("structure_ref")):
-        add("STRUCTURE_V2_PRODUCTION_UNSUPPORTED","등록 구조 V2는 현재 검토용입니다. 제조사별 제작 어댑터 검증 전에는 제작용 출력할 수 없습니다.")
     template=conditions.get("template") or {}; profile=conditions.get("profile") or {}
     requirements=profile.get("requirements") or {}
+    print_engine=requirements.get("adapter_id")=="icc-cmyk-outline-v1"
+    if project.get("structure_snapshot") is not None or (scene and scene.get("structure_ref")):
+        if not print_engine:
+            add("STRUCTURE_V2_PRODUCTION_UNSUPPORTED","등록 구조 V2는 검증된 ICC 제작 어댑터와 실제 승인 조건이 필요합니다.")
+        else:
+            from ..geometry.snapshots import canonical_hash
+            snapshot=project.get("structure_snapshot") or {}
+            if snapshot.get("definition_hash")!=canonical_hash(template.get("structure_definition")) or (template.get("approval") or {}).get("structure_definition_hash")!=snapshot.get("definition_hash"):
+                add("STRUCTURE_APPROVAL_MISMATCH","승인 증빙에 연결된 구조 정의 해시가 현재 동결 구조와 일치하지 않습니다.")
     if conditions.get("registry_verified") is not True:
         add("REGISTRY_UNVERIFIED","서버에서 승인 증빙을 확인한 제조사 템플릿·출력 프로파일이 필요합니다.")
     for label,item in (("template",template),("profile",profile)):
@@ -90,6 +104,16 @@ def preflight_project(project:dict, approved_conditions:dict|None=None, asset_re
     output_rules=validate_output_requirements(requirements)
     issues.extend(output_rules["issues"])
     min_ppi,required_fields=output_rules["min_ppi"],output_rules["required_fields"]
+    if print_engine and scene and output_rules.get("print_profile"):
+        from .print_pdf import inspect_print
+        from ..geometry.snapshots import canonical_hash
+        frozen=project.get("print_output") or {}
+        if frozen.get("mode")!="production" or frozen.get("profile_id")!=profile.get("id") or canonical_hash(frozen.get("requirements"))!=canonical_hash(output_rules["print_profile"]):
+            add("PRINT_SNAPSHOT_REQUIRED","서버가 동결한 ICC·프로필 버전이 필요합니다.")
+        try:
+            checked=inspect_print(project,output_rules["print_profile"],asset_resolver)
+            issues.extend({**issue,"scope":"production"} for issue in checked["issues"])
+        except GeometryValidationError as exc:add(exc.code,exc.message,field=exc.field)
     if scene:
         expected={f["id"] for f in scene["faces"]}
         reviewed=set(conditions.get("reviewed_face_ids") or [])
@@ -108,7 +132,7 @@ def preflight_project(project:dict, approved_conditions:dict|None=None, asset_re
                 if not obj["visible"] or not obj["print_enabled"]: continue
                 details={"face_id":face["id"],"object_id":obj["id"]}
                 try:
-                    if obj["type"]=="text": _layout_text(obj)
+                    if obj["type"]=="text": _layout_text(obj,asset_resolver)
                     elif obj["type"]=="image":
                         _,pixels=_resolve_image(obj["asset_id"],asset_resolver)
                         quality=resolver_quality_metrics(asset_resolver,obj["asset_id"],pixels,obj)
@@ -135,6 +159,10 @@ def preflight_project(project:dict, approved_conditions:dict|None=None, asset_re
                 add(exc.code, exc.message, "review", field=exc.field)
     review_allowed=not any(i["scope"]=="review" and i["severity"]=="error" for i in issues)
     production_allowed=review_allowed and not any(i["severity"]=="error" for i in issues)
+    effective_capabilities=deepcopy(CAPABILITIES)
+    if print_engine and output_rules.get("print_profile"):
+        from .print_profile import capabilities
+        effective_capabilities=capabilities(output_rules["print_profile"])
     return {"schema_version":"1.0","status":"pass" if production_allowed else "blocked","review_allowed":review_allowed,"production_allowed":production_allowed,
-            "issues":issues,"basic_review":basic_review,"capabilities":deepcopy(CAPABILITIES),"geometry_hash":geometry["geometry_hash"] if geometry else None,
+            "issues":issues,"basic_review":basic_review,"capabilities":effective_capabilities,"geometry_hash":geometry["geometry_hash"] if geometry else None,
             "faces":[f["id"] for f in scene["faces"]] if scene else [],"revision_id":str(revision_id) if revision_id else None}

@@ -323,12 +323,23 @@
         },
         "font_weight": {
           "default": 400,
-          "enum": [
-            400,
-            700
-          ],
+          "maximum": 1000,
+          "minimum": 1,
           "title": "Font Weight",
           "type": "integer"
+        },
+        "font_asset_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Font Asset Id"
         },
         "color": {
           "anyOf": [

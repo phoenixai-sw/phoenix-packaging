@@ -33,12 +33,12 @@ MAX_ASSETS = 2000
 MAX_ASSET_BYTES = 64 * 1024 * 1024
 MAX_BUNDLE_BYTES = 256 * 1024 * 1024
 MAX_JSON_BYTES = 32 * 1024 * 1024
-RIGHTS_NOTICE = "원본 이미지·문구의 권리는 기존 권리자에게 있습니다. 이 다운로드는 추가 이용·재배포 권리나 제조 승인을 부여하지 않습니다. 포함 글꼴에는 동봉한 SIL OFL 1.1이 적용됩니다."
+RIGHTS_NOTICE = "원본 이미지·문구·글꼴의 권리는 기존 권리자에게 있습니다. 이 다운로드는 추가 이용·재배포 권리나 제조 승인을 부여하지 않습니다. 기본 글꼴에는 SIL OFL 1.1, 업로드 글꼴에는 각 동봉 라이선스가 적용됩니다."
 FONT_FILES = {
     400: ("NotoSansKR-Regular.ttf", "8e4000a13809588d46c1b791e874cd4567b6283eeb9d2e6835a3136a871a6bd0"),
     700: ("NotoSansKR-Bold.ttf", "f83cb7d28cc6c5ab36629da7bbed2d925f4c740665d0ae0de7455dadd9630efc"),
 }
-MIME_EXT = {"image/png": ("png", "PNG"), "image/jpeg": ("jpg", "JPEG"), "image/webp": ("webp", "WEBP")}
+MIME_EXT = {"image/png": ("png", "PNG"), "image/jpeg": ("jpg", "JPEG"), "image/webp": ("webp", "WEBP"), "image/svg+xml": ("svg", "SVG")}
 
 
 def _json(value):
@@ -56,29 +56,41 @@ def _asset_identity(asset):
 
 def _lineage(metadata):
     quality = metadata.get("image_quality") or {}
-    return {str(value) for value in (metadata.get("reference_asset_id"), quality.get("root_source_asset_id"), quality.get("parent_asset_id")) if value}
+    return {str(value) for value in (metadata.get("reference_asset_id"), quality.get("root_source_asset_id"), quality.get("parent_asset_id"), (metadata.get("svg_import") or {}).get("source_asset_id")) if value}
 
 
 def _safe_metadata(metadata):
     # Prompts, provider responses, URLs, actor/session IDs and storage keys are
     # deliberately excluded. Quality provenance is server-authored geometry.
     keys = ("image_quality", "model", "requested_quality", "actual_quality", "actual_size", "output_size",
-            "reference_asset_id", "edit_mode", "edit_region", "edit_pixel_box", "preservation_scope")
+            "reference_asset_id", "edit_mode", "edit_region", "edit_pixel_box", "preservation_scope", "svg_import")
     return {key: deepcopy(metadata[key]) for key in keys if key in metadata}
 
 
-def _font_inventory(scene):
+def _font_inventory(scene, custom_fonts=None):
     weights = {400}
     for face in scene["faces"]:
         for obj in face["objects"]:
             if obj.get("type") != "text":
                 continue
+            if obj.get('font_asset_id'):
+                continue
             weight = obj.get("font_weight", 400)
             if obj.get("font_id", "NotoSansKR") != "NotoSansKR" or type(weight) is not int or weight not in FONT_FILES:
                 raise APIError(422, "EDITABLE_FONT_UNSUPPORTED", "재배포가 확인된 NotoSansKR 400/700 글꼴만 묶을 수 있습니다.")
             weights.add(weight)
-    return [{"id": "NotoSansKR", "weight": weight, "path": "fonts/" + FONT_FILES[weight][0],
+    result=[{"id": "NotoSansKR", "weight": weight, "path": "fonts/" + FONT_FILES[weight][0],
              "sha256": FONT_FILES[weight][1], "license": "OFL-1.1"} for weight in sorted(weights)]
+    for font in custom_fonts or []:
+        if not font['redistribution_allowed']:
+            raise APIError(422,'FONT_REDISTRIBUTION_NOT_ALLOWED','선택한 글꼴은 파일 전달 권한이 확인되지 않았습니다. 편집 ZIP에는 전달 가능한 글꼴을 사용해 주세요.')
+        identity=str(UUID(font['id']))
+        result.append({'id':'NotoSansKR','font_asset_id':identity,'family':font['family'],'weight':font['weight'],
+                       'path':f'fonts/{identity}.ttf','sha256':font['sha256'],'license':font['license_name'],
+                       'license_path':f'fonts/{identity}.license.txt','rights_verification':'user_attested'})
+    if {str(obj['font_asset_id']) for face in scene['faces'] for obj in face['objects'] if obj.get('font_asset_id')} != {font['id'] for font in custom_fonts or []}:
+        raise APIError(422,'FONT_SNAPSHOT_REQUIRED','편집 묶음의 글꼴 원본 기록이 없습니다.')
+    return result
 
 
 def _inventory(db, user, scene):
@@ -98,6 +110,8 @@ def _inventory(db, user, scene):
         validate_key(asset.storage_key)
         if not asset.storage_key.startswith(user.tenant_id + "/") or asset.content_type not in MIME_EXT:
             raise APIError(422, "EDITABLE_ASSET_INVALID", "원본 자산의 저장 위치 또는 파일 형식을 확인해 주세요.")
+        if asset.content_type=="image/svg+xml" and (asset.source!="sanitized_svg" or identity in placed):
+            raise APIError(422,"EDITABLE_ASSET_INVALID","SVG 원본은 정화된 변환 이미지의 출처로만 포함할 수 있습니다.")
         if not 0 < asset.byte_size <= MAX_ASSET_BYTES:
             raise APIError(422, "EDITABLE_SIZE_LIMIT", "원본 파일의 편집 묶음 크기 한도를 초과했습니다.")
         total += asset.byte_size
@@ -141,7 +155,9 @@ def create_editable_export(db, user, body, request, project, project_payload, sn
     # Forward compatible with the server-owned StructureDefinitionV2 snapshot.
     if getattr(project, "structure_snapshot", None):
         snapshot["structure_snapshot"] = deepcopy(project.structure_snapshot)
-    assets, fonts = _inventory(db, user, snapshot["scene"]), _font_inventory(snapshot["scene"])
+    from .font_assets.service import freeze_fonts
+    snapshot['font_assets']=freeze_fonts(db,user.tenant_id,snapshot['scene'])
+    assets, fonts = _inventory(db, user, snapshot["scene"]), _font_inventory(snapshot["scene"],snapshot['font_assets'])
     snapshot.update({"actor_id": user.id, "bundle_version": BUNDLE_VERSION, "editable_assets": assets,
                      "editable_fonts": fonts, "rights_notice": RIGHTS_NOTICE})
     _json(snapshot)
@@ -194,6 +210,10 @@ def check_archive_access(db, user, snapshot, *, creating=False, lock=False):
     project = db.scalar(statement.with_for_update() if lock else statement)
     if project is None or not accessible(project.workspace_id):
         raise APIError(404, "NOT_FOUND", "프로젝트 접근 권한을 확인해 주세요.")
+    from .font_assets.service import owned_font,identity as font_identity
+    for frozen in snapshot.get('font_assets',[]):
+        font=owned_font(db,user.tenant_id,frozen['id'])
+        if font_identity(font)!=frozen:raise APIError(409,'FONT_SNAPSHOT_CHANGED','원본 글꼴의 불변 기록이 일치하지 않습니다.')
     for frozen in snapshot["editable_assets"]:
         statement = select(Asset).where(Asset.id == frozen["id"], Asset.tenant_id == user.tenant_id).execution_options(populate_existing=True)
         asset = db.scalar(statement.with_for_update() if lock else statement)
@@ -211,6 +231,12 @@ def _read_asset(storage, frozen):
     if len(raw) != frozen["byte_size"] or (frozen["sha256"] and digest != frozen["sha256"]):
         raise APIError(422, "EDITABLE_ASSET_CORRUPT", "원본 파일의 크기 또는 해시가 일치하지 않습니다.")
     try:
+        if frozen["content_type"]=="image/svg+xml":
+            from .svg_import import sanitize_svg
+            source=sanitize_svg(raw)
+            if frozen["source"]!="sanitized_svg" or frozen["role"]!="source" or source.raw!=raw or (source.width,source.height)!=(frozen["width_px"],frozen["height_px"]):
+                raise ValueError()
+            return raw,digest
         with Image.open(BytesIO(raw)) as image:
             if image.format != MIME_EXT[frozen["content_type"]][1] or image.size != (frozen["width_px"], frozen["height_px"]) or image.width * image.height > 40_000_000:
                 raise ValueError()
@@ -233,7 +259,7 @@ def build_editable_archive(snapshot, storage, output):
             files.append({"path": name, "byte_size": len(raw), "sha256": sha256(raw).hexdigest()})
 
         project = {key: deepcopy(value) for key, value in snapshot.items() if key not in {
-            "scene", "geometry", "structure_snapshot", "actor_id", "editable_assets", "editable_fonts", "rights_notice"}}
+            "scene", "geometry", "structure_snapshot", "actor_id", "editable_assets", "editable_fonts", "font_assets", "rights_notice"}}
         project.update({"scene_path": "scene.json", "geometry_path": "geometry.json", "asset_index_path": "assets.json", "review_only": True})
         if snapshot.get("structure_snapshot"):
             project["structure_path"] = "structure.json"
@@ -250,6 +276,18 @@ def build_editable_archive(snapshot, storage, output):
                 {"path": name, "sha256": digest, "integrity_baseline": "stored" if frozen["sha256"] else "computed_at_export"})
         write("assets.json", _json({"items": asset_manifest}))
         for font in snapshot["editable_fonts"]:
+            if font.get('font_asset_id'):
+                frozen=next((entry for entry in snapshot.get('font_assets',[]) if entry['id']==font['font_asset_id']),None)
+                if frozen is None or not frozen['redistribution_allowed'] or font['path']!=f"fonts/{str(UUID(frozen['id']))}.ttf":
+                    raise APIError(422,'EDITABLE_FONT_UNSUPPORTED','글꼴 전달 권한과 경로를 확인할 수 없습니다.')
+                validate_key(frozen['storage_key'])
+                raw=storage.get_limited(frozen['storage_key'],20*1024*1024)
+                if len(raw)!=frozen['byte_size'] or sha256(raw).hexdigest()!=font['sha256'] or font['sha256']!=frozen['sha256']:
+                    raise APIError(422,'EDITABLE_FONT_CHANGED','글꼴 원본 검사값이 일치하지 않습니다.')
+                write(font['path'],raw)
+                license_body=f"{frozen['license_name']}\n권리자: {frozen['rights_holder']}\n출처: {frozen['source_url']}\n권리 확인: 업로더 진술\n\n{frozen['license_text']}"
+                write(font['license_path'],license_body.encode('utf-8'))
+                continue
             expected = FONT_FILES.get(font["weight"])
             if expected is None or font["path"] != "fonts/" + expected[0] or font["sha256"] != expected[1]:
                 raise APIError(422, "EDITABLE_FONT_UNSUPPORTED", "허용된 글꼴 파일이 아닙니다.")
@@ -262,6 +300,7 @@ def build_editable_archive(snapshot, storage, output):
         write("README.ko.txt", ("Phoenix Packaging 편집용 프로젝트 자료\n\n" + RIGHTS_NOTICE +
             "\n\n선택한 저장본의 모든 면·숨김 객체·문구·crop·스타일을 scene.json에 보존했습니다. assets.json은 장면 asset_id와 원본 파일 경로를 연결합니다. "
             "파생 이미지의 참조·부모·최초 원본도 접근 가능한 범위에서 함께 보관합니다. 이미지 파일은 다시 압축하거나 잘라내지 않았습니다. "
+            "SVG 수입의 source 역할 파일은 서버 allowlist로 정화한 정적 벡터이며, 배치 이미지는 함께 제공한 PNG입니다. 업로드 전 위험 원본은 포함하지 않으며 SVG 텍스트·외부참조·스크립트 실행은 지원하지 않습니다. "
             "프로젝트 정보는 project.json, 도면은 geometry.json입니다. 실제 사용 글꼴과 라이선스는 fonts/에 있습니다.\n\n"
             "이 묶음은 제조용 PDF나 Illustrator/Photoshop 형식이 아닙니다. JSON을 지원하는 프로그램에서 복원하거나 후속 편집 연동에 사용할 수 있는 Phoenix 자료입니다. "
             "개인 작업의 전체 백업이나 전체 리비전 이력을 포함하지 않습니다. 현재 앱에는 ZIP 재가져오기 UI가 없습니다. "
@@ -319,6 +358,8 @@ def process_editable_jobs(sessions, storage, limit=1):
                 raw = output.read_bytes()
                 digest = sha256(raw).hexdigest()
                 key = f"{tenant_id}/exports/{identity}/{lease}.zip"
+                from .retention.storage_lifecycle import record_write_intent, mark_published
+                record_write_intent(sessions, tenant_id, identity, lease, key, raw)
                 storage.put(key, raw, "application/zip")
                 del raw
                 stored = storage.get_limited(key, MAX_BUNDLE_BYTES)
@@ -332,6 +373,7 @@ def process_editable_jobs(sessions, storage, limit=1):
                 won = db.execute(update(Job).where(Job.id == identity, Job.status == "running", Job.lease_id == lease)
                     .values(status="succeeded", result={**summary, "storage_key": key, "sha256": digest, "byte_size": byte_size}, error=None, updated_at=utcnow()).execution_options(synchronize_session=False))
                 if won.rowcount == 1:
+                    mark_published(db, key)
                     db.add(AuditEvent(tenant_id=tenant_id, actor_id=snapshot["actor_id"], action="editable_export_succeeded", entity_id=identity,
                         details={"revision_id": snapshot["revision_id"], "sha256": digest, "credits_charged": 0, "rights_notice": RIGHTS_NOTICE}))
                     db.commit()
@@ -347,21 +389,7 @@ def process_editable_jobs(sessions, storage, limit=1):
                     db.add(AuditEvent(tenant_id=tenant_id, actor_id=snapshot["actor_id"], action="editable_export_failed", entity_id=identity,
                         details={"code": error.code if isinstance(error, APIError) else "EDITABLE_EXPORT_FAILED"}))
                 db.commit()
-        finally:
-            # Delete only this lease's private object, never another worker's result.
-            if key and not published:
-                try:
-                    # A DB connection can fail after COMMIT actually succeeded.
-                    # Never remove an object a durable result references.
-                    with sessions() as db:
-                        current = db.get(Job, identity)
-                        referenced = bool(current and (current.result or {}).get("storage_key") == key)
-                    if not referenced:
-                        if hasattr(storage, "delete"):
-                            storage.delete(key)
-                        else:
-                            storage.path(key).unlink(missing_ok=True)
-                except Exception:
-                    pass  # Unreachable orphan; never falsely publish success.
+        # Unpublished lease keys are durable intents. The bounded GC applies
+        # backup pins, holds and the default-off execution flag before deletion.
         processed += 1
     return processed

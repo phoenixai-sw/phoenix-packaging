@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Worker } from "tesseract.js";
 import { api, ApiError, errorMessage } from "@/lib/api";
+import type { ApiSchema } from "@/lib/api-contract";
 import { useSession } from "./workspace";
 import { readToolDraft, writeToolDraft, toolDraftKey, pendingAfterStartFailure } from "@/lib/tool-draft";
 import { Feedback } from "./management";
@@ -16,30 +17,10 @@ import {
 } from "@editor/image-tools";
 import type { Scene, SceneObject } from "@editor/model";
 import type { ApplyPreparedScene } from "./image-quality-tools";
-type Quote = {
-  id: string;
-  credit_total: number;
-  balance_before: number;
-  balance_after: number;
-  expires_at: string;
-  provider_mode?: string;
-};
-type ResultAsset = {
-  id: string;
-  reference_asset_id?: string;
-  edit_mode?: string;
-  width_px?: number;
-  height_px?: number;
-};
-type Job = {
-  id: string;
-  status: string;
-  cancelable?: boolean;
-  credit_charged?: number;
-  credit_returned?: number;
-  error?: { message?: string } | string;
-  result?: { assets?: ResultAsset[] };
-};
+type Quote = ApiSchema<"QuoteData">;
+type ResultAsset = ApiSchema<"GeneratedAsset">;
+// A reopened local draft initially knows only the ID until the server is read.
+type Job = Pick<ApiSchema<"AIGenerationJob">, "id" | "status"> & Partial<ApiSchema<"AIGenerationJob">>;
 type TextDraft = {
   region: ImageRegion; sourceText: string; text: string; confirmed: boolean;
   fontSize: number; weight: 400 | 700; color: string; cover: string; confidence?: number;
@@ -699,7 +680,7 @@ export function ImageTextTools({
           {job.error && (
             <Feedback
               error={
-                typeof job.error === "string" ? job.error : job.error.message
+                job.error
               }
             />
           )}

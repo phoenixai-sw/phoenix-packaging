@@ -44,7 +44,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
       if (value) responseHeaders.set(name, value);
     }
     for (const cookie of upstream.headers.getSetCookie()) responseHeaders.append('set-cookie', cookie);
-    const startsExport = ['v1/exports', 'v1/jobs'].includes(path.join('/')) || (path[1] === 'jobs' && path[3] === 'retry');
+    const startsExport = ['v1/exports', 'v1/jobs', 'v1/print-engine/tests'].includes(path.join('/')) || (path[1] === 'jobs' && path[3] === 'retry');
     if (request.method === 'POST' && startsExport && upstream.ok && process.env.WORKER_SECRET) {
       after(async () => {
         try {

@@ -1,41 +1,18 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { api, errorMessage, type Session } from "./api";
+import type { ApiSchema } from "./api-contract";
 export type Role = "owner" | "editor" | "viewer";
 export function roleOf(session: Session | null): Role {
-  return session?.role || session?.user.role || "viewer";
+  return session?.user.role || "viewer";
 }
 export function canEdit(session: Session | null) {
   return ["owner", "editor"].includes(roleOf(session));
 }
-export type BrandData = {
-  id: string;
-  name: string;
-  colors: string[];
-  font_ids: string[];
-  logo_asset_id?: string | null;
-};
-export type VariantData = {
-  id: string;
-  name: string;
-  sku?: string;
-  barcode?: string;
-  net_weight?: string;
-  net_quantity?: number | null;
-  net_unit?: "g" | "kg" | "ml" | "l" | "ea" | null;
-  ingredients?: string;
-  allergens?: string;
-  storage?: string;
-  manufacturer?: string;
-};
-export type ProductData = {
-  id: string;
-  name: string;
-  brand_id?: string;
-  description?: string;
-  variants: VariantData[];
-};
-export type WorkspaceData = { id: string; name: string; description?: string };
+export type BrandData = ApiSchema<"BrandData">;
+export type VariantData = ApiSchema<"VariantData">;
+export type ProductData = ApiSchema<"ProductData">;
+export type WorkspaceData = ApiSchema<"WorkspaceData">;
 export function useApiData<T>(path: string) {
   const [data, setData] = useState<T>();
   const [error, setError] = useState("");

@@ -67,6 +67,8 @@ def _record_cancellation(db, order, result, summary, settings, now):
             raise APIError(409, "PAYMENT_TIMESTAMP_INVALID", "PG 승인 시각을 확인할 수 없습니다.") from None
         payment = Payment(tenant_id=order.tenant_id, order_id=order.id, provider_payment_key=result["paymentKey"], provider=settings.provider, amount=order.amount, currency=order.currency, status=summary["provider_status"], approved_at=approved, created_at=now)
         db.add(payment); db.flush()
+        from ..metrics.service import record_recovered_payment
+        record_recovered_payment(db,order,payment)
     if payment.provider_payment_key != result["paymentKey"] or payment.provider != settings.provider:
         raise APIError(409, "PAYMENT_KEY_MISMATCH", "기존 결제와 취소 식별자가 다릅니다.")
     recorded = db.scalar(select(func.coalesce(func.sum(PaymentEvent.amount), 0)).where(PaymentEvent.payment_id == payment.id, PaymentEvent.kind == "REFUND"))
@@ -109,10 +111,10 @@ def reversible_upgrade(db, order, now):
     if len(base) != 1 or base[0].status != "paid" or not upgrades:
         return None
     try:
-        upgrades.sort(key=lambda item: plan(item.plan_id)["monthly_inc_vat"])
+        upgrades.sort(key=lambda item: plan(item.plan_id,snapshot=item.pricing_snapshot)["monthly_inc_vat"])
         expected = base[0].plan_id
         for item in upgrades:
-            if item.source_plan_id != expected or plan(item.plan_id)["monthly_inc_vat"] <= plan(expected)["monthly_inc_vat"] or (item.id != order.id and item.status != "paid"):
+            if item.source_plan_id != expected or plan(item.plan_id,snapshot=item.pricing_snapshot)["monthly_inc_vat"] <= plan(expected,snapshot=item.source_pricing_snapshot or item.pricing_snapshot)["monthly_inc_vat"] or (item.id != order.id and item.status != "paid"):
                 return None
             expected = item.plan_id
         if upgrades[-1].id != order.id or expected != subscription.plan_id:
@@ -137,8 +139,10 @@ def _apply_cancellation(db, order, result, summary, settings, now):
     upgrade = reversible_upgrade(db, order, now) if order.kind == "upgrade" and summary["provider_status"] == "CANCELED" else None
     if upgrade:
         upgrade.plan_id = order.source_plan_id
-        if upgrade.next_plan_id and plan(upgrade.next_plan_id)["monthly_inc_vat"] >= plan(order.source_plan_id)["monthly_inc_vat"]:
+        upgrade.pricing_snapshot = order.source_pricing_snapshot or upgrade.pricing_snapshot
+        if upgrade.next_plan_id and plan(upgrade.next_plan_id,snapshot=upgrade.pricing_snapshot)["monthly_inc_vat"] >= plan(order.source_plan_id,snapshot=upgrade.pricing_snapshot)["monthly_inc_vat"]:
             upgrade.next_plan_id = None
+            upgrade.next_pricing_snapshot = None
     upgrade_safe = order.kind != "upgrade" or upgrade is not None or order.status == "refunded" or bucket is None
     if summary["provider_status"] == "CANCELED" and upgrade_safe and (bucket is None or fully_unused or order.status == "refunded"):
         if fully_unused:

@@ -2,6 +2,6 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "fastapi",
   "regions": ["icn1"],
-  "functions": {"api/index.py": {"maxDuration": 800, "includeFiles": "{fixtures/fonts/**,config/**}"}},
+  "functions": {"api/index.py": {"maxDuration": 800, "includeFiles": "{fixtures/fonts/**,fixtures/icc/**,config/**}"}},
   "crons": [{"path": "/v1/internal/jobs/process", "schedule": "* * * * *"}]
 }

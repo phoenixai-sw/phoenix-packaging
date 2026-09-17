@@ -1,4 +1,7 @@
 """Review-only registered structures. Geometry comes from the server registry, never the client."""
+from .contracts.base import Envelope, ERROR_RESPONSES
+from .contracts import core as C
+from .contracts import geometry as G
 from copy import deepcopy
 from uuid import UUID
 from fastapi import APIRouter, Depends, Request
@@ -66,9 +69,9 @@ def install_structure_routes(app,db_session,project_payload,snapshot_revision):
     router=APIRouter(prefix="/v1",tags=["registered-structures"])
     def result(request,data):return {"data":data,"request_id":request.state.request_id}
 
-    @router.post("/admin/structures/validate")
+    @router.post("/admin/structures/validate", response_model=Envelope[G.StructureValidation], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def validate_definition(body:ValidateBody,request:Request,db=Depends(db_session)):
-        user,_=require_auth(request,db,mutate=True)
+        user,_=require_auth(request,db,mutate=True,authorize_write=False,enforce_membership=False)
         if not user.is_admin:raise APIError(403,"ADMIN_REQUIRED","플랫폼 관리자 권한이 필요합니다.")
         from .geometry.definitions import parse_definition
         definition=parse_definition(body.structure_definition)
@@ -76,7 +79,7 @@ def install_structure_routes(app,db_session,project_payload,snapshot_revision):
         snapshot=compile_structure(definition,inputs,"registration-validation")
         return result(request,{"normalized_definition":definition,"geometry":snapshot["geometry"],"definition_hash":snapshot["definition_hash"],"review_only":True,"production_enabled":False})
 
-    @router.get("/structures")
+    @router.get("/structures", response_model=Envelope[C.Items[G.RegisteredStructure]], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def listing(request:Request,db=Depends(db_session)):
         require_auth(request,db)
         rows=db.scalars(select(RegistryVersion).where(RegistryVersion.kind=="template",RegistryVersion.status!="revoked").order_by(RegistryVersion.created_at.desc()))
@@ -89,7 +92,7 @@ def install_structure_routes(app,db_session,project_payload,snapshot_revision):
                           "review_only":True,"production_enabled":False})
         return result(request,{"items":items})
 
-    @router.post("/structures/preview")
+    @router.post("/structures/preview", response_model=Envelope[G.StructurePreview], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def preview(body:PreviewBody,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True,authorize_write=False)
         snapshot=_compile(_available(db,body.template_version_id),body.inputs.model_dump(exclude_none=True))
@@ -104,7 +107,7 @@ def install_structure_routes(app,db_session,project_payload,snapshot_revision):
         return result(request,{"geometry":snapshot["geometry"],"structure_ref":structure_ref(snapshot),"review_only":True,"production_enabled":False,
                                "layout_checked":body.project_id is not None,"layout_issues":issues,"can_apply":not issues if body.project_id else None})
 
-    @router.patch("/projects/{identity}/structure")
+    @router.patch("/projects/{identity}/structure", response_model=Envelope[C.ProjectData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def apply(identity:UUID,body:ApplyBody,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True)
         project=owned_record(db,Project,identity,user.tenant_id)

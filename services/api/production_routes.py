@@ -1,4 +1,6 @@
 """Production routes freeze revisions, load server registry evidence, then reserve credits."""
+from .contracts.base import Envelope, ERROR_RESPONSES
+from .contracts import printing as F, images as I
 from datetime import timedelta
 from hashlib import sha256
 from uuid import UUID,uuid4
@@ -26,8 +28,14 @@ class PreflightBody(BaseModel):
 
 
 def production_input_data(db,project,reviewed_face_ids):
-    return {"production_identity":canonical_production_identity(db,project),"reviewed_face_ids":sorted(set(reviewed_face_ids)),
+    data={"production_identity":canonical_production_identity(db,project),"reviewed_face_ids":sorted(set(reviewed_face_ids)),
             "template_version_id":project.template_version_id,"print_profile_version_id":project.print_profile_version_id,"material":project.material}
+    from .feature_models import RegistryVersion
+    row=db.get(RegistryVersion,project.print_profile_version_id)
+    if row and row.details.get("requirements",{}).get("adapter_id")=="icc-cmyk-outline-v1":
+        from .print_engine import freeze_print_output
+        data["print_output"]=freeze_print_output(db,row.id,test_mode=False)
+    return data
 
 
 def _project(db,user,identity,base_revision):
@@ -51,6 +59,14 @@ def _preflight(db,project,revision,reviewed,project_payload,storage,settings):
         return storage.get(asset.storage_key)
     resolver.metadata=lambda asset_id: owned_record(db,Asset,asset_id,project.tenant_id).metadata_json
     snapshot=_snapshot(project,revision,project_payload)
+    from .font_assets.service import freeze_fonts,attach_font_resolver
+    snapshot['font_assets']=freeze_fonts(db,project.tenant_id,snapshot['scene'])
+    attach_font_resolver(resolver,db,storage,project.tenant_id,snapshot)
+    if conditions.get("profile",{}).get("requirements",{}).get("adapter_id")=="icc-cmyk-outline-v1":
+        from .print_engine import freeze_print_output,resolve_print_icc,freeze_print_assets
+        snapshot["print_output"]=freeze_print_output(db,project.print_profile_version_id,test_mode=False)
+        resolve_print_icc(db,storage,snapshot["print_output"])
+        snapshot['print_assets']=freeze_print_assets(db,storage,project)
     report=preflight_project(snapshot,conditions,resolver)
     if not settings.enable_production_export:
         report["issues"].append({"code":"PRODUCTION_DISABLED","message":"제작용 출력은 운영 승인 후 활성화됩니다.","severity":"error","scope":"production"})
@@ -135,13 +151,15 @@ def create_production_export(db,user,body,request,project_payload,snapshot_revis
 def install_production_routes(app,db_session,owned,project_payload,snapshot_revision):
     router=APIRouter(prefix="/v1",tags=["production"])
     def result(request,data):return {"data":data,"request_id":request.state.request_id}
-    @router.post("/preflight")
+    @router.post("/preflight", response_model=Envelope[F.PreflightReport], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def preflight(body:PreflightBody,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True,authorize_write=False)
         project=_project(db,user,body.project_id,body.base_revision);revision=snapshot_revision(db,project,"preflight")
         _,_,report=_preflight(db,project,revision,body.reviewed_face_ids,project_payload,app.state.storage,app.state.settings)
+        from .metrics.service import record_preflight
+        record_preflight(db,project,revision,report,body.reviewed_face_ids,kind=body.kind)
         db.commit();return result(request,public_preflight(report,body.kind))
-    @router.post("/production/quotes",status_code=201)
+    @router.post("/production/quotes",status_code=201, response_model=Envelope[I.QuoteData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def production_quote(body:PreflightBody,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True)
         from .editor_sessions import enforce_edit_lease

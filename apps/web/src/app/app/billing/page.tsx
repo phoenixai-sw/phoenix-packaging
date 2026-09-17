@@ -38,6 +38,8 @@ type Order = {
   error?: string;
 };
 type Billing = {
+  current_pricing_version: string;
+  agreed_plan_pricing_version: string | null;
   policy: {
     version: string;
     plans: Array<{
@@ -224,6 +226,7 @@ export default function BillingPage() {
       }
     >
       <Feedback error={error || formError} notice={notice} />
+      {data?.agreed_plan_pricing_version && <Feedback notice={`요금제 금액은 기존 구독에서 동의한 조건(${data.agreed_plan_pricing_version})입니다. 추가 충전과 새 작업 견적은 현재 정책(${data.current_pricing_version})을 적용합니다.`} />}
       {loading && !data ? (
         <Loading />
       ) : (

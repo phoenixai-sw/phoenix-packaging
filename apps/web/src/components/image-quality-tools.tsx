@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { api, errorMessage } from "@/lib/api";
+import type { ApiSchema } from "@/lib/api-contract";
 import { Feedback } from "./management";
 import { updateObject, type Scene, type SceneObject } from "@editor/model";
 export type ApplyPreparedScene = (
@@ -8,33 +9,8 @@ export type ApplyPreparedScene = (
   expectedRevision: number,
   transform: (scene: Scene) => Scene,
 ) => Promise<void>;
-type Quality = {
-  source: { id: string; sha256: string; width_px: number; height_px: number };
-  base_revision: number;
-  face_id: string;
-  object_id: string;
-  effective_ppi: number;
-  original_effective_ppi: number;
-  bleed_missing_mm: {
-    left: number;
-    right: number;
-    top: number;
-    bottom: number;
-  } | null;
-  required_pixels: { width: number; height: number };
-  warnings: Array<string | { message: string }>;
-};
-type Preview = {
-  asset: { id: string; width_px: number; height_px: number; url: string };
-  patch: Pick<
-    SceneObject,
-    "asset_id" | "x_mm" | "y_mm" | "width_mm" | "height_mm" | "crop"
-  >;
-  quality: Quality;
-  base_revision: number;
-  face_id: string;
-  object_id: string;
-};
+type Quality = ApiSchema<"ImageInspection">;
+type Preview = ApiSchema<"ImageQualityPreview">;
 export function ImageQualityTools({
   projectId,
   scene,

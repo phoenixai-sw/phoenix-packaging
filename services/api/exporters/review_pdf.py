@@ -14,6 +14,7 @@ from io import BytesIO
 import json
 from pathlib import Path
 import threading
+import unicodedata
 from typing import Callable
 
 from PIL import Image, ImageOps
@@ -27,6 +28,7 @@ from reportlab.pdfgen.canvas import Canvas
 from ..geometry import DEMO_TEMPLATE_ID, GeometryValidationError, validate_scene, geometry_for_scene, holes_for_face, barcode_geometry
 from ..image_crop import normalized_crop
 from ..image_quality_metadata import resolver_quality_metrics
+from ..errors import APIError
 
 ROOT = Path(__file__).resolve().parents[3]
 FONT_PATH = ROOT / "fixtures" / "fonts" / "NotoSansKR-Regular.ttf"
@@ -54,18 +56,70 @@ def _font(weight: int = 400) -> TTFont:
     return pdfmetrics.getFont(font_id)
 
 
-def _text_font_id(obj: dict) -> str:
+def _font_source(obj: dict, resolver=None):
+    identity = obj.get("font_asset_id")
+    if not identity:
+        return None
+    accessor = getattr(resolver, "font", None)
+    if not callable(accessor):
+        raise ExportValidationError("FONT_ASSET_UNAVAILABLE", "선택한 브랜드 글꼴의 사용 권한과 원본 파일을 확인할 수 없습니다.", "font_asset_id")
+    try:
+        source = accessor(str(identity))
+    except APIError as exc:
+        # Surface authorized resolver failures as object-linked preflight
+        # blockers as well as refusing to render; never substitute a font.
+        raise ExportValidationError(exc.code, exc.message, f"objects.{obj['id']}.font_asset_id") from exc
+    if source.asset_id != str(identity) or source.weight != obj.get("font_weight", 400):
+        raise ExportValidationError("FONT_ASSET_MISMATCH", "저장된 글꼴 버전·실제 두께가 일치하지 않습니다.", "font_asset_id")
+    if not isinstance(source.data, bytes) or hashlib.sha256(source.data).hexdigest() != source.sha256:
+        raise ExportValidationError("FONT_HASH_MISMATCH", "브랜드 글꼴 원본 해시가 일치하지 않습니다.", "font_asset_id")
+    return source
+
+
+@lru_cache(maxsize=8)
+def _custom_font(sha256: str, data: bytes) -> TTFont:
+    font_id = "PhoenixFont_" + sha256
+    with FONT_LOCK:
+        if font_id not in pdfmetrics.getRegisteredFontNames():
+            try:
+                font = TTFont(font_id, BytesIO(data))
+                # registerFont deduplicates dynamic fonts by face.name, not
+                # fontName. Two uploaded files may share a PostScript name but
+                # have different glyphs/advances. Keep the parsed source and
+                # glyph bytes, giving only the PDF identity an immutable name.
+                font.face.name = font_id.encode("ascii")
+                pdfmetrics.registerFont(font)
+            except Exception as exc:
+                raise ExportValidationError("FONT_ASSET_INVALID", "브랜드 글꼴을 PDF에 등록할 수 없습니다.", "font_asset_id") from exc
+    return pdfmetrics.getFont(font_id)
+
+
+def _text_font_id(obj: dict, resolver=None) -> str:
+    source = _font_source(obj, resolver)
+    if source is not None:
+        return _custom_font(source.sha256, source.data).fontName
     weight = obj.get("font_weight", 400)
     _font(weight)
     return FONT_BOLD_ID if weight == 700 else FONT_ID
 
 
-def _font_manifest(scene: dict) -> list[dict]:
+def _font_manifest(scene: dict, resolver=None) -> list[dict]:
     weights = {400} | {obj.get("font_weight", 400) for face in scene["faces"] for obj in face["objects"]
-                       if obj["type"] == "text" and obj["visible"] and obj["print_enabled"]}
-    return [{"id": "NotoSansKR", "weight": weight, "embedded": True, "license": "OFL-1.1",
+                       if obj["type"] == "text" and obj["visible"] and obj["print_enabled"] and not obj.get("font_asset_id")}
+    result = [{"id": "NotoSansKR", "weight": weight, "embedded": True, "license": "OFL-1.1",
              "sha256": hashlib.sha256((FONT_BOLD_PATH if weight == 700 else FONT_PATH).read_bytes()).hexdigest()}
             for weight in sorted(weights)]
+    seen = set()
+    for face in scene["faces"]:
+        for obj in face["objects"]:
+            identity = obj.get("font_asset_id")
+            if obj["type"] != "text" or not obj["visible"] or not obj["print_enabled"] or not identity or identity in seen:
+                continue
+            source = _font_source(obj, resolver); seen.add(identity)
+            result.append({"id":"NotoSansKR", "font_asset_id":source.asset_id, "family":source.family,
+                           "weight":source.weight, "sha256":source.sha256, "embedded":True,
+                           "license":source.license_name, "license_name":source.license_name})
+    return result
 
 
 def _scene_from_project(project: dict) -> dict:
@@ -82,11 +136,13 @@ def _width(text: str, size: float, spacing: float, font_id: str = FONT_ID) -> fl
     return pdfmetrics.stringWidth(text, font_id, size) + max(0, len(text) - 1) * spacing
 
 
-def _layout_text(obj: dict) -> list[str]:
+def _layout_text(obj: dict, resolver=None) -> list[str]:
     """Character wrapping matching Konva wrap='char'; retain original in manifest."""
-    font = _font(obj.get("font_weight", 400))
-    font_id = _text_font_id(obj)
+    font_id = _text_font_id(obj, resolver)
+    font = pdfmetrics.getFont(font_id)
     text, size = obj["text"], obj["font_size_pt"]
+    if obj.get("font_asset_id") and any(unicodedata.combining(char) or 0x1100 <= ord(char) <= 0x11FF or 0x0590 <= ord(char) <= 0x08FF for char in text):
+        raise ExportValidationError("FONT_SHAPING_UNSUPPORTED", "조합 자모·복합 조형 문자는 검증된 브랜드 글꼴 배치 범위를 벗어납니다. 완성형 한글 등 지원 문자를 사용해 주세요.", f"objects.{obj['id']}.text")
     missing = sorted({ord(char) for char in text if char not in "\n\r\t" and ord(char) not in font.face.charToGlyph})
     if missing:
         codes = ", ".join(f"U+{point:04X}" for point in missing[:10])
@@ -114,7 +170,7 @@ def _layout_text(obj: dict) -> list[str]:
     return lines
 
 
-def validate_export(project: dict, *, production: bool = False) -> dict:
+def validate_export(project: dict, *, production: bool = False, asset_resolver=None) -> dict:
     if production or project.get("kind") == "production" or project.get("export_kind") == "production":
         raise ExportValidationError("PRODUCTION_EXPORT_DISABLED", "데모 구조는 검토용 출력만 가능합니다. 제작용 출력은 제조사 승인 후 지원합니다.", "kind")
     scene = validate_scene(_scene_from_project(project), structure_snapshot=project.get("structure_snapshot"))
@@ -131,7 +187,7 @@ def validate_export(project: dict, *, production: bool = False) -> dict:
     for face in scene["faces"]:
         for obj in face["objects"]:
             if obj["type"] == "text":
-                lines = _layout_text(obj) if obj["visible"] and obj["print_enabled"] else []
+                lines = _layout_text(obj, asset_resolver) if obj["visible"] and obj["print_enabled"] else []
                 texts.append({"object_id": obj["id"], "face_id": face["id"], "text": obj["text"], "rendered_lines": lines,
                               "visible": obj["visible"], "print_enabled": obj["print_enabled"]})
     return {"scene": scene, "warnings": warnings, "original_texts": texts}
@@ -165,7 +221,7 @@ def _resolve_image(asset_id: str, resolver: AssetResolver | None) -> tuple[Image
         raise ExportValidationError("ASSET_UNAVAILABLE", "이미지 자산을 읽을 수 없습니다. 업로드 상태와 파일 형식을 확인해 주세요.", "asset_id") from exc
 
 
-def _draw_object(canvas: Canvas, obj: dict, face_height: float, resolver: AssetResolver | None, warnings: list) -> None:
+def _draw_object(canvas: Canvas, obj: dict, face_height: float, resolver: AssetResolver | None, warnings: list, *, print_paint=None) -> None:
     if not obj["visible"] or not obj["print_enabled"]:
         return
     canvas.saveState()
@@ -177,20 +233,24 @@ def _draw_object(canvas: Canvas, obj: dict, face_height: float, resolver: AssetR
     kind = obj["type"]
     if kind == "text":
         size = obj["font_size_pt"]
-        font_id = _text_font_id(obj)
+        font_id = _text_font_id(obj, resolver)
         ascent, _ = pdfmetrics.getAscentDescent(font_id, size)
         canvas.setFillColor(HexColor(obj["color"]))
         canvas.setFillAlpha(obj["opacity"])
-        for index, line in enumerate(_layout_text(obj)):
+        for index, line in enumerate(_layout_text(obj, resolver)):
             line_width = _width(line, size, obj["letter_spacing"], font_id)
             x = (width - line_width) / 2 if obj["align"] == "center" else width - line_width if obj["align"] == "right" else 0
-            text = canvas.beginText(x, -ascent - index * size * obj["line_height"])
-            text.setFont(font_id, size)
-            text.setCharSpace(obj["letter_spacing"])
-            text.textOut(line)
-            canvas.drawText(text)
+            baseline = -ascent - index * size * obj["line_height"]
+            if print_paint is not None:
+                print_paint.line(canvas, line, x, baseline, size, obj.get("font_weight", 400), obj["letter_spacing"], font_source=_font_source(obj, resolver), font_id=font_id)
+            else:
+                text = canvas.beginText(x, baseline)
+                text.setFont(font_id, size)
+                text.setCharSpace(obj["letter_spacing"])
+                text.textOut(line)
+                canvas.drawText(text)
     elif kind == "image":
-        source, pixels = _resolve_image(obj["asset_id"], resolver)
+        source, pixels = print_paint.image(obj["asset_id"], resolver) if print_paint is not None else _resolve_image(obj["asset_id"], resolver)
         crop = normalized_crop(obj.get("crop"))
         clip = canvas.beginPath(); clip.rect(0, -height, width, height)
         canvas.clipPath(clip, stroke=0, fill=0)
@@ -210,11 +270,20 @@ def _draw_object(canvas: Canvas, obj: dict, face_height: float, resolver: AssetR
         canvas.setFillColor(HexColor("#000000"))
         for bar in barcode["bars"]:
             canvas.rect(bar["x_mm"] * mm, -barcode["bar_height_mm"] * mm, bar["width_mm"] * mm, barcode["bar_height_mm"] * mm, fill=1, stroke=0)
-        canvas.setFont(FONT_ID, 9 * obj["module_mm"] / 0.33)
-        canvas.drawCentredString(width/2, -(barcode["bar_height_mm"] + 3.8) * mm, barcode["value"])
+        barcode_size = 9 * obj["module_mm"] / 0.33
+        if print_paint is not None:
+            print_paint.line(canvas, barcode["value"], (width-_width(barcode["value"],barcode_size,0))/2,
+                             -(barcode["bar_height_mm"]+3.8)*mm,barcode_size,400,0)
+        else:
+            canvas.setFont(FONT_ID, barcode_size)
+            canvas.drawCentredString(width/2, -(barcode["bar_height_mm"] + 3.8) * mm, barcode["value"])
         if usage == "sample":
-            canvas.setFont(FONT_ID, 7)
-            canvas.drawCentredString(width/2, -(barcode["bar_height_mm"] + 8) * mm, "SAMPLE / 검토용")
+            if print_paint is not None:
+                label="SAMPLE / 검토용"
+                print_paint.line(canvas,label,(width-_width(label,7,0))/2,-(barcode["bar_height_mm"]+8)*mm,7,400,0)
+            else:
+                canvas.setFont(FONT_ID, 7)
+                canvas.drawCentredString(width/2, -(barcode["bar_height_mm"] + 8) * mm, "SAMPLE / 검토용")
     else:
         canvas.setFillColor(HexColor(obj.get("fill") or obj["color"]))
         canvas.setStrokeColor(HexColor(obj.get("stroke") or obj["color"]))
@@ -416,7 +485,7 @@ def _render(project: dict, resolver: AssetResolver | None, production: bool) -> 
         resolver = lru_cache(maxsize=2)(resolver) if resolver else None
         basic = inspect_basic_review(project, resolver)
     bleed_mm = 3 if basic else 0
-    validation = validate_export(project, production=production)
+    validation = validate_export(project, production=production, asset_resolver=resolver)
     scene, warnings = validation["scene"], validation["warnings"]
     if basic:
         warnings = [warning for warning in warnings if warning["code"] != "FINISHED_SIZE"]
@@ -465,7 +534,7 @@ def _render(project: dict, resolver: AssetResolver | None, production: bool) -> 
                 "structure_ref": scene.get("structure_ref"),
                 "generated_at": datetime.now(timezone.utc).isoformat(), "sha256": hashlib.sha256(data).hexdigest(),
                 "font": {"id": "NotoSansKR", "sha256": hashlib.sha256(FONT_PATH.read_bytes()).hexdigest(), "embedded": True, "license": "OFL-1.1"},
-                "font_weights": _font_manifest(scene),
+                "font_weights": _font_manifest(scene, resolver),
                 "review_structure": {"manufacturer_approved": False, "cut_out_clipping": True,
                     "pouch_features": geometry.get("pouch_features"),
                     "faces": [{"face_id": f["id"], "cut_contour": f["regions"].get("cut_contour"),

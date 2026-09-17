@@ -6,6 +6,8 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import type { Scene, Face } from "../../contracts/scene.generated";
 import { ean13Geometry } from "./barcode";
 import type { FaceStructure } from "../../editor/src/structure";
+import { drawEditableText, loadObjectFonts } from "../../editor/src/fonts";
+import type { SceneObject } from "../../editor/src/model";
 
 type StructuralFace = {
   id: string;
@@ -41,6 +43,7 @@ async function faceTexture(
   verification: boolean,
   structural?: StructuralFace,
 ) {
+  await loadObjectFonts(face.objects ?? []);
   const scale = Math.min(5, 1600 / Math.max(face.width_mm, face.height_mm));
   const canvas = document.createElement("canvas");
   canvas.width = Math.ceil(face.width_mm * scale);
@@ -60,42 +63,7 @@ async function faceTexture(
     ctx.rotate(((obj.rotation_deg ?? 0) * Math.PI) / 180);
     ctx.globalAlpha = obj.opacity ?? 1;
     if (obj.type === "text") {
-      const size = (obj.font_size_pt ?? 18) * pt,
-        spacing = (obj.letter_spacing ?? 0) * pt;
-      ctx.font = `${obj.font_weight ?? 400} ${size}px NotoSansKREditor`;
-      ctx.fillStyle = obj.color ?? "#172c28";
-      ctx.textBaseline = "alphabetic";
-      const width = (text: string) =>
-        ctx.measureText(text).width +
-        Math.max(0, [...text].length - 1) * spacing;
-      const lines: string[] = [];
-      for (const paragraph of (obj.text ?? "")
-        .replaceAll("\r\n", "\n")
-        .replaceAll("\r", "\n")
-        .replaceAll("\t", "    ")
-        .split("\n")) {
-        let line = "";
-        for (const char of paragraph) {
-          if (line && width(line + char) > obj.width_mm) {
-            lines.push(line);
-            line = char;
-          } else line += char;
-        }
-        lines.push(line);
-      }
-      lines.forEach((line, index) => {
-        let x =
-          obj.align === "center"
-            ? (obj.width_mm - width(line)) / 2
-            : obj.align === "right"
-              ? obj.width_mm - width(line)
-              : 0;
-        const y = 0.88 * size + index * size * (obj.line_height ?? 1.2);
-        for (const char of line) {
-          ctx.fillText(char, x, y);
-          x += ctx.measureText(char).width + spacing;
-        }
-      });
+      drawEditableText(ctx, obj as SceneObject, 1);
     } else if (obj.type === "image") {
       if (!obj.asset_id || !assetUrl)
         throw new Error("이미지 자산 연결을 확인해 주세요.");

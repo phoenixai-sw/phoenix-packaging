@@ -1,4 +1,10 @@
 """Versioned HTTP API for the first complete packaging workflow."""
+from .contracts import jobs as J
+from .contracts.base import Envelope, ERROR_RESPONSES, binary_responses
+from .contracts import core as C
+from .contracts import geometry as G
+from .contracts import images as I
+from .contracts import registry as R
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from hashlib import sha256
@@ -28,9 +34,16 @@ from .models import Asset, Job, LoginSession, Project, Revision, Tenant, User
 from .schemas import CreateProjectInput, DemoBackgroundInput, ExportInput, RevisionInput, SaveDraftInput
 from .storage import SupabaseStorage, build_storage
 from . import feature_models
+from .service_orders import models as service_order_models
+from .operations import models as operation_models
+from .metrics import models as metric_models
+from .retention import models as retention_models
+from .font_assets.routes import install_font_routes
+from .font_assets.service import freeze_fonts, validate_scene_fonts
 from .billing import models as billing_models
 from .business import enforce_item_access, validate_project_links
 from .editor_sessions import enforce_edit_lease, install_editor_routes
+from .retention.deletion import available_asset_clause
 
 logger = logging.getLogger("phoenix.api")
 
@@ -52,15 +65,16 @@ def asset_payload(asset):
     return {"id": asset.id, "name": asset.original_name, "content_type": asset.content_type, "byte_size": asset.byte_size, "width_px": asset.width_px, "height_px": asset.height_px, "source": asset.source, "url": f"/v1/assets/{asset.id}/content", **public_image}
 
 
-def job_payload(job):
-    result = {key: value for key, value in job.result.items() if key != "storage_key"} if job.result else None
+def job_payload(job, *, current_approval=None):
+    result = {key: value for key, value in job.result.items() if key not in {"storage_key", "_retention"}} if job.result else None
     # History exposes the frozen request settings, never the full snapshot,
     # prompt, confirmed OCR text, actor IDs or private storage references.
     image_settings = {}
     if job.kind == "ai_generation":
         from .image_provider import image_settings_payload
         image_settings = {"image_settings": image_settings_payload(job.snapshot or {})}
-    return {"id": job.id, "project_id": job.project_id, "kind": job.kind, "status": job.status, "created_at": job.created_at.isoformat(), "updated_at": job.updated_at.isoformat(), "result": result, "error": job.error, "download_url": f"/v1/exports/{job.id}/download" if job.status == "succeeded" and job.kind.endswith("_export") else None, **{key:(result or {}).get(key,0) for key in ("credit_reserved","credit_charged","credit_returned")},"cancelable":job.kind=="ai_generation" and any(u.get("status")=="queued" for u in (result or {}).get("units",[])), **image_settings}
+    approval = {"current_approval": current_approval} if job.kind == "production_export" and current_approval is not None else {}
+    return {"id": job.id, "project_id": job.project_id, "kind": job.kind, "status": job.status, "created_at": job.created_at.isoformat(), "updated_at": job.updated_at.isoformat(), "result": result, "error": job.error, "download_url": f"/v1/exports/{job.id}/download" if job.status == "succeeded" and job.kind.endswith("_export") and not (job.result or {}).get("_retention") else None, **{key:(result or {}).get(key,0) for key in ("credit_reserved","credit_charged","credit_returned")},"cancelable":job.kind=="ai_generation" and any(u.get("status")=="queued" for u in (result or {}).get("units",[])), **image_settings, **approval}
 
 
 def owned(db, model, item_id, tenant_id):
@@ -85,7 +99,7 @@ def snapshot_revision(db, project, reason):
     return revision
 
 
-def normalize_draft_scene(db, user, project, body_scene, *, links=None):
+def normalize_draft_scene(db, user, project, body_scene, *, links=None, restoring=False):
     scene = body_scene.model_dump(mode="json", exclude_none=True)
     scene["template_version_id"] = project.template_version_id or project.template_id+"-demo-v1"
     scene["template_kind"] = project.template_id
@@ -111,7 +125,10 @@ def normalize_draft_scene(db, user, project, body_scene, *, links=None):
             raise APIError(422, "FACE_DIMENSIONS_MISMATCH", "포장 규격과 편집 면의 크기가 다릅니다.")
         for obj in face["objects"]:
             if obj.get("asset_id"):
-                owned(db, Asset, obj["asset_id"], user.tenant_id)
+                asset=owned(db, Asset, obj["asset_id"], user.tenant_id)
+                if asset.content_type=="image/svg+xml":
+                    raise APIError(422,"SVG_SOURCE_NOT_PLACEABLE","정화 SVG 원본은 기록용입니다. 함께 생성된 PNG 이미지를 배치해 주세요.")
+    validate_scene_fonts(db,user,scene,project.scene,enforce_brand=not restoring)
     return scene
 
 
@@ -193,6 +210,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(APIError)
     async def domain_error(request, exc):
+        if exc.code == "INSUFFICIENT_CREDITS" and getattr(request.state, "metric_tenant_id", None):
+            from starlette.concurrency import run_in_threadpool
+            from .metrics.service import record_credit_failure
+            await run_in_threadpool(record_credit_failure, request.app.state.session_factory,
+                request.state.metric_tenant_id, request.state.request_id, exc.field_errors)
         return JSONResponse(status_code=exc.status, content={"code": exc.code, "message": exc.message, "field_errors": exc.field_errors, "retryable": exc.retryable, "request_id": request.state.request_id})
 
     @app.exception_handler(RequestValidationError)
@@ -214,7 +236,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         logger.error("request_failed request_id=%s error_type=%s", request.state.request_id, type(exc).__name__)
         return JSONResponse(status_code=500, content={"code": "INTERNAL_ERROR", "message": "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.", "field_errors": {}, "retryable": True, "request_id": request.state.request_id})
 
-    @app.get("/v1/health")
+    @app.get("/v1/health", response_model=Envelope[C.HealthData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def health(request: Request, db=Depends(db_session)):
         try:
             db.execute(text("SELECT 1"))
@@ -222,14 +244,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise APIError(503, "DATABASE_UNAVAILABLE", "데이터 저장소에 연결할 수 없습니다.", retryable=True)
         return envelope(request, {"status": "ok", "database": "connected", "environment": settings.environment})
 
-    @app.get("/v1/config")
+    @app.get("/v1/config", response_model=Envelope[I.PublicConfig], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def config(request: Request):
         from .image_provider import get_capabilities
-        return envelope(request, {"demo_mode": settings.demo_mode, "ai_provider": settings.ai_provider,"ai_capabilities":get_capabilities(settings), "billing_provider":app.state.billing_settings.provider, "production_export_enabled":settings.enable_production_export, "review_export_credits": 0,"direct_upload":isinstance(storage,SupabaseStorage), "upload_max_bytes":20*1024*1024 if isinstance(storage,SupabaseStorage) else settings.upload_limit, "supported_upload_types": ["image/png", "image/jpeg", "image/webp"], "auth_provider": "google", "google_login_enabled": bool(settings.google_client_id), "google_client_id": settings.google_client_id or None})
+        return envelope(request, {"demo_mode": settings.demo_mode, "ai_provider": settings.ai_provider,"ai_capabilities":get_capabilities(settings), "billing_provider":app.state.billing_settings.provider, "production_export_enabled":settings.enable_production_export, "review_export_credits": 0,"direct_upload":isinstance(storage,SupabaseStorage), "upload_max_bytes":20*1024*1024 if isinstance(storage,SupabaseStorage) else settings.upload_limit, "supported_upload_types": ["image/png", "image/jpeg", "image/webp", "image/svg+xml"], "auth_provider": "google", "google_login_enabled": bool(settings.google_client_id), "google_client_id": settings.google_client_id or None})
 
     install_google_auth(app, db_session)
 
-    @app.post("/v1/auth/logout")
+    @app.post("/v1/auth/logout", response_model=Envelope[C.LogoutData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def logout(request: Request, response: Response, db=Depends(db_session)):
         _, session = require_auth(request, db, mutate=True, authorize_write=False,enforce_membership=False)
         db.delete(session)
@@ -237,24 +259,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.delete_cookie(COOKIE_NAME, path="/", httponly=True, secure=settings.cookie_secure, samesite="lax")
         return envelope(request, {"logged_out": True})
 
-    @app.get("/v1/me")
+    @app.get("/v1/me", response_model=Envelope[C.SessionData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def me(request: Request, db=Depends(db_session)):
         user, session = require_auth(request, db)
         return envelope(request, auth_payload(db, user, session))
 
-    @app.get("/v1/templates")
+    @app.get("/v1/templates", response_model=Envelope[C.Items[R.DemoTemplate | R.RegistryVersionData]], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def templates(request: Request, db=Depends(db_session)):
         from .registry import registry_payload
         rows=[{"id":identity,"name":name,"version":"demo-1","status":"demo","approval_status":"demo_unapproved","review_only":True,"description":"제조사 미승인 데모 구조","faces":faces,"default_width_mm":160,"default_height_mm":230,"min_width_mm":60,"max_width_mm":600,"min_height_mm":80,"max_height_mm":800,"seal_mm":10,"safe_mm":5,"bleed_mm":3} for identity,name,faces in [("three-side-seal","3면 실링 봉투",["front","back"]),("stand-up-pouch","스탠드 파우치",["front","back","bottom"]),("folding-box","접이식 박스",["front","back","left","right","top","bottom"])]]
         rows += [registry_payload(row) for row in db.scalars(select(feature_models.RegistryVersion).where(feature_models.RegistryVersion.kind=="template",feature_models.RegistryVersion.status=="approved",feature_models.RegistryVersion.is_demo.is_(False)))]
         return envelope(request,{"items":rows})
 
-    @app.post("/v1/geometry/validate")
+    @app.post("/v1/geometry/validate", response_model=Envelope[G.Geometry], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def validate_geometry(body:dict, request:Request):
         if set(body)-{"template_id","width_mm","height_mm","bottom_mm","depth_mm","unit","holes","pouch_features"}: raise APIError(422,"GEOMETRY_FIELDS_INVALID","규격 입력 항목을 확인해 주세요.")
         return envelope(request,build_geometry(body.get("template_id","three-side-seal"),body.get("width_mm"),body.get("height_mm"),body.get("unit","mm"),bottom_mm=body.get("bottom_mm"),depth_mm=body.get("depth_mm"),holes=body.get("holes",[]),pouch_features=body.get("pouch_features")))
 
-    @app.post("/v1/geometry/barcode")
+    @app.post("/v1/geometry/barcode", response_model=Envelope[G.BarcodeGeometry], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def barcode(body:dict, request:Request, db=Depends(db_session)):
         from .geometry import barcode_geometry
         from .geometry.barcodes import sample_ean13
@@ -283,7 +305,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             result["placement"]=place_barcode(scene,body.get("face_id"),result,x_mm=body.get("x_mm"),y_mm=body.get("y_mm"),structure_snapshot=structure_snapshot)
         return envelope(request,result)
 
-    @app.get("/v1/projects")
+    @app.get("/v1/projects", response_model=Envelope[C.Items[C.ProjectData]], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def projects(request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db)
         query = select(Project).where(Project.tenant_id == user.tenant_id)
@@ -293,7 +315,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         rows = db.scalars(query.order_by(Project.updated_at.desc()).limit(100)).all()
         return envelope(request, {"items": [project_payload(row) for row in rows]})
 
-    @app.post("/v1/projects", status_code=201)
+    @app.post("/v1/projects", status_code=201, response_model=Envelope[C.ProjectData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def create_project(body: CreateProjectInput, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
         validate_project_links(db,user,body.model_dump())
@@ -302,20 +324,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.add(project)
         db.flush()
         snapshot_revision(db, project, "created")
+        from .metrics.service import record_project_created
+        record_project_created(db, project)
         db.commit()
         return envelope(request, project_payload(project))
 
-    @app.get("/v1/projects/{project_id}")
+    @app.get("/v1/projects/{project_id}", response_model=Envelope[C.ProjectData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def get_project(project_id: UUID, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db)
         return envelope(request, project_payload(owned(db, Project, project_id, user.tenant_id)))
 
-    @app.patch("/v1/projects/{project_id}/draft")
+    @app.patch("/v1/projects/{project_id}/draft", response_model=Envelope[C.ProjectData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def save_draft(project_id: UUID, body: SaveDraftInput, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
         project = owned(db, Project, project_id, user.tenant_id)
         enforce_edit_lease(db, project, request)
         ensure_revision(project, body.base_revision)
+        previous_scene = project.scene
         scene = normalize_draft_scene(db, user, project, body.scene)
         values = {"scene": scene, "base_revision": body.base_revision + 1, "updated_at": utcnow()}
         if body.name is not None:
@@ -332,11 +357,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # atomically, including a previously unsnapshotted legacy draft.
         snapshot_revision(db, project, "before_autosave")
         db.refresh(project)
-        snapshot_revision(db, project, "autosave")
+        revision = snapshot_revision(db, project, "autosave")
+        from .metrics.service import record_revision
+        record_revision(db, project, revision, previous_scene)
         db.commit()
         return envelope(request, project_payload(project))
 
-    @app.post("/v1/projects/{project_id}/revisions", status_code=201)
+    @app.post("/v1/projects/{project_id}/revisions", status_code=201, response_model=Envelope[C.RevisionData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def create_revision(project_id: UUID, body: RevisionInput, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
         project = owned(db, Project, project_id, user.tenant_id)
@@ -350,46 +377,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             revision = db.scalar(select(Revision).where(Revision.project_id == project.id, Revision.number == body.base_revision))
         return envelope(request, {"id": revision.id, "project_id": revision.project_id, "number": revision.number, "scene": revision.scene, "created_at": revision.created_at.isoformat()})
 
-    @app.post("/v1/assets", status_code=201)
+    @app.post("/v1/assets", status_code=201, response_model=Envelope[C.AssetData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def upload_asset(request: Request, file: UploadFile = File(...), project_id: str | None=Form(default=None), db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
         project=owned(db,Project,project_id,user.tenant_id) if project_id else None
         body = file.file.read(settings.upload_limit + 1)
         if len(body) > settings.upload_limit:
             raise APIError(413, "ASSET_TOO_LARGE", f"파일은 {settings.upload_limit // (1024 * 1024)}MiB 이하로 올려 주세요.")
-        if file.content_type not in {"image/png", "image/jpeg", "image/webp"}:
-            raise APIError(422, "ASSET_TYPE_UNSUPPORTED", "PNG, JPEG, WebP 이미지만 지원합니다.")
-        try:
-            with Image.open(BytesIO(body)) as image:
-                actual_type = Image.MIME.get(image.format)
-                width, height = image.size
-                if actual_type != file.content_type or width * height > 40_000_000 or width < 1 or height < 1:
-                    raise ValueError("Image type or dimensions invalid")
-                image.verify()
-        except (UnidentifiedImageError, ValueError, OSError, Image.DecompressionBombError):
-            raise APIError(422, "ASSET_INVALID", "파일 형식 또는 이미지 크기를 확인해 주세요.")
-        total_size = db.scalar(select(func.coalesce(func.sum(Asset.byte_size), 0)).where(Asset.tenant_id == user.tenant_id))
-        if total_size + len(body) > 200 * 1024 * 1024:
-            raise APIError(422, "ASSET_QUOTA_EXCEEDED", "개발 데모의 저장 한도 200MiB를 초과했습니다.")
-        asset_id = str(uuid4())
-        key = f"{user.tenant_id}/assets/{asset_id}"
-        storage.put(key, body, file.content_type)
-        asset = Asset(id=asset_id, tenant_id=user.tenant_id,workspace_id=project.workspace_id if project else None, storage_key=key, original_name=Path(file.filename or "image").name[:160], content_type=file.content_type, byte_size=len(body), width_px=width, height_px=height)
-        db.add(asset)
+        from .svg_import import prepare_image_upload, store_prepared_image
+        prepared=prepare_image_upload(body,file.content_type)
+        asset=store_prepared_image(db,storage,user,project,file.filename or "image",prepared)
         db.commit()
         return envelope(request, asset_payload(asset))
 
-    @app.get("/v1/assets/{asset_id}/content")
+    @app.get("/v1/assets/{asset_id}/content", response_class=Response, responses=binary_responses("image/png", "image/jpeg", "image/webp", "application/octet-stream"))
     def asset_content(asset_id: UUID, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db)
         asset = owned(db, Asset, asset_id, user.tenant_id)
         from .asset_reconciliation import ensure_asset_available
         ensure_asset_available(asset)
+        from .svg_import import SVG_SOURCE
+        if asset.source==SVG_SOURCE:
+            if isinstance(storage,SupabaseStorage):
+                return RedirectResponse(storage.signed_url(asset.storage_key,ttl=60,download_name="sanitized-source.svg"),status_code=307)
+            return Response(content=storage.get(asset.storage_key),media_type="application/octet-stream",headers={"Content-Disposition":'attachment; filename="sanitized-source.svg"',"X-Content-Type-Options":"nosniff"})
         if isinstance(storage, SupabaseStorage):
             return RedirectResponse(storage.signed_url(asset.storage_key, ttl=60), status_code=307)
         return Response(content=storage.get(asset.storage_key), media_type=asset.content_type, headers={"Content-Disposition": "inline"})
 
-    @app.post("/v1/projects/{project_id}/demo-background", status_code=201)
+    @app.post("/v1/projects/{project_id}/demo-background", status_code=201, response_model=Envelope[C.AssetData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def demo_background(project_id: UUID, body: DemoBackgroundInput, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
         project=owned(db, Project, project_id, user.tenant_id)
@@ -413,7 +429,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.commit()
         return envelope(request, {**asset_payload(asset), "demo": True, "label": "자체 제작 데모 이미지 · AI 생성 아님", "credits_charged": 0})
 
-    @app.post("/v1/exports", status_code=202)
+    @app.post("/v1/exports", status_code=202, response_model=Envelope[J.JobData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def create_export(body: ExportInput, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
         project = owned(db, Project, body.project_id, user.tenant_id)
@@ -423,7 +439,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         enforce_edit_lease(db, project, request)
         if body.kind=="production":
             from .production_routes import create_production_export
-            return envelope(request,job_payload(create_production_export(db,user,body,request,project_payload,snapshot_revision)))
+            from .export_approvals import current_export_approvals
+            job = create_production_export(db,user,body,request,project_payload,snapshot_revision)
+            return envelope(request,job_payload(job,current_approval=current_export_approvals(db,[job]).get(job.id)))
         ensure_revision(project, body.base_revision)
         from .exporters.public_profiles import BASIC_REVIEW_PROFILE_ID
         operation_key = request.headers.get("idempotency-key", f"review:{project.id}:{body.base_revision}:{BASIC_REVIEW_PROFILE_ID}")
@@ -440,7 +458,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise APIError(429, "EXPORT_RATE_LIMIT", "검토 파일 요청이 많습니다. 잠시 후 다시 시도해 주세요.", retryable=True)
         try:
             revision = snapshot_revision(db, project, "review_export")
-            job = Job(tenant_id=user.tenant_id, project_id=project.id, revision_id=revision.id, operation_key=operation_key, request_hash=request_hash, snapshot={**project_payload(project), "revision_id": revision.id, "review_profile_id": BASIC_REVIEW_PROFILE_ID})
+            job = Job(tenant_id=user.tenant_id, project_id=project.id, revision_id=revision.id, operation_key=operation_key, request_hash=request_hash, snapshot={**project_payload(project), "revision_id": revision.id, "review_profile_id": BASIC_REVIEW_PROFILE_ID, "font_assets":freeze_fonts(db,user.tenant_id,project.scene)})
             db.add(job)
             db.commit()
         except IntegrityError:
@@ -452,12 +470,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # A durable worker consumes this row; no long-running PDF work in web requests.
         return envelope(request, job_payload(job))
 
-    @app.get("/v1/jobs/{job_id}")
+    @app.get("/v1/jobs/{job_id}", response_model=Envelope[J.JobData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def get_job(job_id: UUID, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db)
-        return envelope(request, job_payload(owned(db, Job, job_id, user.tenant_id)))
+        job = owned(db, Job, job_id, user.tenant_id)
+        from .export_approvals import current_export_approvals
+        return envelope(request, job_payload(job, current_approval=current_export_approvals(db, [job]).get(job.id)))
 
-    @app.post("/v1/jobs/{job_id}/retry", status_code=202)
+    @app.post("/v1/jobs/{job_id}/retry", status_code=202, response_model=Envelope[J.JobData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def retry_job(job_id: UUID, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
         job = owned(db, Job, job_id, user.tenant_id)
@@ -470,6 +490,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             check_archive_access(db, user, job.snapshot, creating=True)
             retry_values["snapshot"] = {**job.snapshot, "actor_id": user.id}
             db.add(feature_models.AuditEvent(tenant_id=user.tenant_id, actor_id=user.id, action="editable_export_retried", entity_id=job.id, details={"revision_id": job.revision_id}))
+        elif job.snapshot.get("print_output"):
+            from .print_engine import check_test_access
+            enforce_edit_lease(db, owned(db, Project, job.project_id, user.tenant_id), request)
+            candidate = {**job.snapshot, "actor_id": user.id}
+            check_test_access(db, user.tenant_id, candidate)
+            retry_values["snapshot"] = candidate
         changed = db.execute(update(Job).where(Job.id == job.id, Job.status == "failed").values(**retry_values).execution_options(synchronize_session=False))
         if changed.rowcount != 1:
             raise APIError(409, "JOB_NOT_RETRYABLE", "다른 요청에서 이미 재시도했습니다.")
@@ -477,17 +503,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.refresh(job)
         return envelope(request, job_payload(job))
 
-    @app.get("/v1/projects/{project_id}/exports")
+    @app.get("/v1/projects/{project_id}/exports", response_model=Envelope[C.Items[J.JobData]], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def exports(project_id: UUID, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db)
         owned(db, Project, project_id, user.tenant_id)
         rows = db.scalars(select(Job).where(Job.tenant_id == user.tenant_id, Job.project_id == str(project_id),Job.kind.in_(["review_export","production_export","editable_export"])).order_by(Job.created_at.desc()).limit(100)).all()
-        return envelope(request, {"items": [job_payload(row) for row in rows]})
+        from .export_approvals import current_export_approvals
+        approvals = current_export_approvals(db, rows)
+        return envelope(request, {"items": [job_payload(row, current_approval=approvals.get(row.id)) for row in rows]})
 
-    @app.get("/v1/exports/{job_id}/download")
+    @app.get("/v1/exports/{job_id}/download", response_class=Response, responses=binary_responses("application/pdf", "application/zip"))
     def download(job_id: UUID, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db)
         job = owned(db, Job, job_id, user.tenant_id)
+        from .retention.deletion import ensure_object_available
+        ensure_object_available(job)
         if job.kind not in {"review_export", "production_export", "editable_export"}:
             raise APIError(404, "NOT_FOUND", "요청한 출력 파일을 찾을 수 없습니다.")
         if job.status != "succeeded" or not job.result or not job.result.get("storage_key"):
@@ -495,15 +525,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if job.kind == "editable_export":
             from .editable_exports import check_archive_access
             check_archive_access(db, user, job.snapshot)
-        extension="zip" if job.kind in {"production_export", "editable_export"} else "pdf"
+        engine_test = job.result.get("format") == "print_engine_zip"
+        extension="zip" if job.kind in {"production_export", "editable_export"} or engine_test else "pdf"
         name=f"phoenix-{job.kind}-{job.id}.{extension}"
+        if engine_test:
+            from .print_engine import check_test_access
+            check_test_access(db, user.tenant_id, {**job.snapshot, "actor_id": user.id})
+            name=f"phoenix-print-engine-test-{job.id}.zip"
         if isinstance(storage, SupabaseStorage):
             return RedirectResponse(storage.signed_url(job.result["storage_key"], ttl=60, download_name=name), status_code=307)
         content = storage.get(job.result["storage_key"])
         return Response(content=content, media_type="application/zip" if extension=="zip" else "application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
-    @app.get("/v1/internal/jobs/process")
-    @app.post("/v1/internal/jobs/process")
+    @app.get("/v1/internal/jobs/process", response_model=Envelope[C.WorkerResult], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
+    @app.post("/v1/internal/jobs/process", response_model=Envelope[C.WorkerResult], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def process_jobs(request: Request):
         supplied = request.headers.get("authorization", "")
         if not settings.worker_secret or not hmac.compare_digest(supplied, f"Bearer {settings.worker_secret}"):
@@ -512,7 +547,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         breakdown=process_all_jobs(session_factory,storage,settings)
         if any(value=="retry_pending" for value in breakdown.values()):
             raise APIError(503,"WORKER_RETRY_PENDING","일부 백그라운드 작업을 다음 실행에서 다시 확인합니다.",{"breakdown":breakdown},retryable=True)
-        return envelope(request, {"processed":sum(v for v in breakdown.values() if isinstance(v,int)),"breakdown":breakdown})
+        maintenance = {"retention_checked", "orphan_candidates_checked", "orphan_files_deleted", "deletion_requests_checked", "requested_files_deleted", "font_uploads_cleaned"}
+        return envelope(request, {"processed":sum(v for k,v in breakdown.items() if isinstance(v,int) and k not in maintenance),"breakdown":breakdown})
 
     from .billing.routes import install_billing_routes
     from .business import install_business_routes
@@ -530,6 +566,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.prepare_quote=prepare_quote
     install_billing_routes(app,db_session)
     install_business_routes(app,db_session,project_payload,snapshot_revision)
+    from .operations.routes import install_operation_routes
+    install_operation_routes(app,db_session)
+    from .metrics.routes import install_metrics_routes
+    install_metrics_routes(app,db_session)
+    # Specific admin endpoints must precede the registry's /admin/{collection} route.
+    from .retention.routes import install_retention_routes
+    install_retention_routes(app,db_session)
+    from .service_orders.routes import install_service_order_routes
+    install_service_order_routes(app,db_session)
+    from .print_engine import install_print_engine_routes
+    install_print_engine_routes(app,db_session,project_payload,snapshot_revision)
     install_registry_routes(app,db_session,project_payload,snapshot_revision)
     from .structure_routes import install_structure_routes
     install_structure_routes(app,db_session,project_payload,snapshot_revision)
@@ -542,6 +589,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from .image_quality import install_image_quality_routes
     install_image_quality_routes(app,db_session,asset_payload)
     install_editor_routes(app,db_session,project_payload,snapshot_revision,normalize_draft_scene)
+    install_font_routes(app,db_session)
     from .workspace_views import install_workspace_views
     install_workspace_views(app,db_session,asset_payload)
 

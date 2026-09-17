@@ -105,7 +105,7 @@ def inspect_basic_review(project, asset_resolver=None):
                 if edge_shortfall:
                     warn("BASIC_ARTWORK_BLEED", "재단선에 닿는 이미지·도형이 3mm 도련 끝까지 이어지지 않습니다. 바탕색만 자동 연장됩니다.")
             if obj["type"] == "text":
-                _layout_text(obj)
+                _layout_text(obj,asset_resolver)
                 if obj["font_size_pt"] < profile["recommended_font_pt"]:
                     warn("BASIC_SMALL_TEXT", "기본 검토 권장 글자 크기 7pt 미만입니다.", actual_pt=obj["font_size_pt"])
             if obj["type"] in {"text", "barcode"}:

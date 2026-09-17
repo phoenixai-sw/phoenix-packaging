@@ -36,8 +36,24 @@ def process_all_jobs(sessions,storage,settings):
         logging.getLogger("phoenix.worker").error("quarantine_cleanup_failed error_type=%s",type(exc).__name__)
         counts["uploads_cleaned"]="retry_pending"
     from .asset_reconciliation import reconcile_ai_assets
+    from .font_assets.routes import cleanup_font_quarantine
+    try: counts['font_uploads_cleaned']=cleanup_font_quarantine(sessions,storage)
+    except Exception:
+        counts['font_uploads_cleaned']='retry_pending'
     try: counts["assets_checked"]=reconcile_ai_assets(sessions,storage)
     except Exception as exc:
         logging.getLogger("phoenix.worker").error("asset_integrity_check_failed error_type=%s",type(exc).__name__)
         counts["assets_checked"]="retry_pending"
+    from .retention.service import refresh_notices
+    from .retention.storage_lifecycle import process_known_orphans
+    from .retention.deletion import process_deletion_requests
+    try:
+        counts["retention_checked"] = refresh_notices(sessions, limit=20)
+        gc = process_known_orphans(sessions, storage, settings)
+        counts["orphan_candidates_checked"], counts["orphan_files_deleted"] = gc["checked"], gc["deleted"]
+        requested = process_deletion_requests(sessions, storage, settings)
+        counts["deletion_requests_checked"], counts["requested_files_deleted"] = requested["checked"], requested["deleted"]
+    except Exception as exc:
+        logging.getLogger("phoenix.worker").error("retention_dispatch_failed error_type=%s", type(exc).__name__)
+        counts["retention_checked"] = "retry_pending"
     return counts

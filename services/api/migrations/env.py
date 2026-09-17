@@ -7,6 +7,11 @@ from services.api.database import Base, build_database
 from services.api import models  # noqa: F401 — registers metadata
 from services.api import feature_models  # noqa: F401
 from services.api.billing import models as billing_models  # noqa: F401
+from services.api.service_orders import models as service_order_models  # noqa: F401
+from services.api.operations import models as operation_models
+from services.api.metrics import models as metric_models
+from services.api.retention import models as retention_models  # noqa: F401
+from services.api.font_assets import models as font_models  # noqa: F401
 
 config = context.config
 if config.config_file_name:

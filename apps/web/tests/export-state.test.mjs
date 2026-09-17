@@ -7,6 +7,7 @@ import {
   exportKindLabel,
   editableExportBody,
   isExportInProgress,
+  exportApprovalNotice,
 } from "../src/lib/export-state.ts";
 
 test("only failed review exports expose the existing retry operation", () => {
@@ -29,6 +30,40 @@ test("only failed review exports expose the existing retry operation", () => {
       false,
     );
   }
+});
+
+test("approval withdrawal is separate from file success and uses only the public reason", () => {
+  const job = {
+    kind: "production_export", status: "succeeded", download_url: "/v1/exports/old/download",
+    current_approval: {
+      status: "revoked", checked_at: "2026-09-18T12:00:00Z",
+      versions: [{ kind: "template", id: "frozen-version", name: "원래 도면", status: "revoked",
+        revoked_at: "2026-09-18T11:00:00Z", public_reason: "실링 조건이 변경되어 재확인이 필요합니다.",
+        reason: "Internal audit note must never be used" }],
+    },
+  };
+  const notice = exportApprovalNotice(job);
+  assert.equal(notice.title, "해당 조건 승인 철회");
+  assert.equal(notice.reasons[0].reason, job.current_approval.versions[0].public_reason);
+  assert.ok(!JSON.stringify(notice).includes("Internal audit"));
+  assert.equal(job.status, "succeeded");
+  assert.equal(job.download_url, "/v1/exports/old/download");
+  job.current_approval.versions[0].public_reason = null;
+  assert.ok(!JSON.stringify(exportApprovalNotice(job)).includes("Internal audit"));
+});
+
+test("missing approval does not imply approval and review files never get a manufacturing status", () => {
+  assert.equal(exportApprovalNotice({ kind: "production_export" }).warning, true);
+  for (const kind of ["review_export", "editable_export", "ai_generation"])
+    assert.equal(exportApprovalNotice({ kind, current_approval: { status: "approved", versions: [] } }), null);
+  assert.equal(exportApprovalNotice({ kind: "production_export", current_approval: { status: "approved", versions: [] } }).warning, false);
+});
+
+test("completed CMYK engine test files are labeled ZIP without relabeling review PDFs or approved production", () => {
+  assert.equal(exportKindLabel("review_export", "print_engine_zip"), "CMYK 출력 시험 ZIP");
+  assert.equal(exportKindLabel("review_export"), "검토용 PDF");
+  assert.equal(exportKindLabel("production_export", "print_engine_zip"), "제작용 번들");
+  assert.equal(exportKindLabel("editable_export", "phoenix-editable"), "편집용 프로젝트 ZIP");
 });
 
 test("terminal or unknown export states never display an active spinner or poll", () => {

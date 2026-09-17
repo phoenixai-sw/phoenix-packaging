@@ -71,6 +71,7 @@ export function compareScenes(before: Scene, after: Scene) {
                   height_mm: "높이",
                   crop: "자르기",
                   font_weight: "굵기",
+                  font_asset_id: "브랜드 글꼴",
                   font_size_pt: "글자 크기",
                   letter_spacing: "자간",
                   line_height: "행간",

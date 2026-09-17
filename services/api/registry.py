@@ -1,4 +1,7 @@
 """Evidence-backed print conditions. Client-supplied approval flags are never trusted."""
+from .contracts.base import Envelope, ERROR_RESPONSES, binary_responses
+from .contracts import core as C
+from .contracts import registry as R
 from copy import deepcopy
 from hashlib import sha256
 from io import BytesIO
@@ -58,6 +61,10 @@ def canonical_production_identity(db,project):
     identity={"brand_id":project.brand_id,"product_variant_id":variant.id,"billing_family_key":version.details["billing_family_key"],"content_amount":variant.details.get("net_quantity"),"content_unit":variant.details.get("net_unit"),"barcode":{"symbology":"EAN13","data":barcode} if barcode else {},"width_mm":project.width_mm,"height_mm":project.height_mm,"bottom_mm":project.bottom_mm or 0,"depth_mm":project.depth_mm or 0,"holes":holes}
     if project.scene.get("pouch_features") is not None:
         identity["pouch_features"]=geometry_for_scene(project.scene)["pouch_features"]
+    if getattr(project,"structure_snapshot",None):
+        from .geometry.snapshots import validate_snapshot
+        validate_snapshot(project.structure_snapshot)
+        identity["structure_geometry_hash"]=project.structure_snapshot["physical_geometry_hash"]
     return identity
 
 
@@ -88,6 +95,11 @@ class ApprovalBody(Body):
 
 class RevokeBody(Body):
     reason: str=Field(min_length=3,max_length=4000)
+    public_reason: str | None=Field(default=None,min_length=5,max_length=1000)
+
+
+class ReviewBody(Body):
+    reason: str=Field(min_length=5,max_length=1000)
 
 
 class SettingsBody(Body):
@@ -122,7 +134,7 @@ def install_registry_routes(app,db_session,project_payload,snapshot_revision):
     settings=app.state.settings
     def result(request,data): return {"data":data,"request_id":request.state.request_id}
     def admin(request,db,mutate=False):
-        user,_=require_auth(request,db,mutate=mutate)
+        user,_=require_auth(request,db,mutate=mutate,authorize_write=False,enforce_membership=False)
         if not user.is_admin: raise APIError(403,"ADMIN_REQUIRED","플랫폼 관리자 권한이 필요합니다.")
         return user
     def kind_for(collection):
@@ -134,13 +146,13 @@ def install_registry_routes(app,db_session,project_payload,snapshot_revision):
         return row
     def audit(db,user,action,identity,details=None): db.add(AuditEvent(tenant_id=user.tenant_id,actor_id=user.id,action=action,entity_id=identity,details=details or {}))
 
-    @router.get("/print-profiles")
+    @router.get("/print-profiles", response_model=Envelope[C.Items[R.RegistryVersionData]], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def profiles(request:Request,db=Depends(db_session)):
         require_auth(request,db)
         rows=db.scalars(select(RegistryVersion).where(RegistryVersion.kind=="profile",RegistryVersion.status=="approved",RegistryVersion.is_demo.is_(False)))
         return result(request,{"items":[registry_payload(r) for r in rows]})
 
-    @router.patch("/projects/{identity}/settings")
+    @router.patch("/projects/{identity}/settings", response_model=Envelope[C.ProjectData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def project_settings(identity:UUID,body:SettingsBody,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True);project=owned_record(db,Project,identity,user.tenant_id)
         from .editor_sessions import enforce_edit_lease
@@ -162,7 +174,7 @@ def install_registry_routes(app,db_session,project_payload,snapshot_revision):
         if won.rowcount!=1: raise APIError(409,"REVISION_CONFLICT","프로젝트가 변경되었습니다. 최신 내용을 확인해 주세요.")
         db.refresh(project);snapshot_revision(db,project,"print_settings");db.commit();return result(request,project_payload(project))
 
-    @router.get("/admin/overview")
+    @router.get("/admin/overview", response_model=Envelope[R.AdminOverview], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def overview(request:Request,db=Depends(db_session)):
         admin(request,db)
         versions=list(db.scalars(select(RegistryVersion)))
@@ -171,11 +183,12 @@ def install_registry_routes(app,db_session,project_payload,snapshot_revision):
         events=list(db.scalars(select(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(100)))
         costs=db.execute(select(ProviderAttempt.provider,ProviderAttempt.model,func.count(),func.sum(ProviderAttempt.cost_usd)).group_by(ProviderAttempt.provider,ProviderAttempt.model)).all()
         from .provider_budget import budget_summary
-        provider_budget=budget_summary(db,settings)
+        from .operations.service import image_settings
+        provider_budget=budget_summary(db,image_settings(db,settings))
         intake=db.execute(select(IntakeRecord.status,IntakeRecord.category,func.count()).group_by(IntakeRecord.status,IntakeRecord.category)).all()
         return result(request,{"readiness":readiness,"counts":{"users":db.scalar(select(func.count()).select_from(User)),"projects":db.scalar(select(func.count()).select_from(Project)),"jobs":db.scalar(select(func.count()).select_from(Job))},"audit":[{"id":e.id,"action":e.action,"entity_id":e.entity_id,"details":e.details,"created_at":e.created_at.isoformat()} for e in events],"provider_costs":[{"provider":p,"model":m,"attempts":n,"cost_usd":c,"estimated":True} for p,m,n,c in costs],"provider_budget":provider_budget,"intake_stats":[{"status":s,"category":c,"count":n} for s,c,n in intake],"intake_metrics":intake_metrics(db)})
 
-    @router.post("/admin/evidence",status_code=201)
+    @router.post("/admin/evidence",status_code=201, response_model=Envelope[R.EvidenceData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def evidence(request:Request,file:UploadFile=File(...),db=Depends(db_session)):
         user=admin(request,db,True);content=file.file.read(settings.upload_limit+1)
         if not content or len(content)>settings.upload_limit: raise APIError(413,"EVIDENCE_SIZE","증빙 파일 크기를 확인해 주세요.")
@@ -198,17 +211,17 @@ def install_registry_routes(app,db_session,project_payload,snapshot_revision):
         row=Evidence(id=identity,tenant_id=user.tenant_id,uploaded_by=user.id,storage_key=key,name=Path(file.filename or "evidence").name[:180],sha256=sha256(content).hexdigest(),content_type=file.content_type,byte_size=len(content));db.add(row);audit(db,user,"evidence_uploaded",identity);db.commit()
         return result(request,{"id":identity,"name":row.name,"sha256":row.sha256})
 
-    @router.get("/admin/evidence/{identity}/content")
+    @router.get("/admin/evidence/{identity}/content", response_class=Response, responses=binary_responses("application/octet-stream", redirect=False))
     def evidence_content(identity:UUID,request:Request,db=Depends(db_session)):
         admin(request,db);row=db.get(Evidence,str(identity))
         if not row: raise APIError(404,"NOT_FOUND","증빙을 찾을 수 없습니다.")
         return Response(app.state.storage.get(row.storage_key),media_type="application/octet-stream",headers={"Content-Disposition":f'attachment; filename="evidence-{row.id}"'})
 
-    @router.get("/admin/{collection}")
+    @router.get("/admin/{collection}", response_model=Envelope[C.Items[R.RegistryVersionData]], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def versions(collection:str,request:Request,db=Depends(db_session)):
         admin(request,db);kind=kind_for(collection)
         return result(request,{"items":[registry_payload(r) for r in db.scalars(select(RegistryVersion).where(RegistryVersion.kind==kind).order_by(RegistryVersion.created_at.desc()))]})
-    @router.post("/admin/{collection}",status_code=201)
+    @router.post("/admin/{collection}",status_code=201, response_model=Envelope[R.RegistryVersionData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def create_version(collection:str,body:VersionBody,request:Request,db=Depends(db_session)):
         user=admin(request,db,True);kind=kind_for(collection)
         if kind=="template" and (not body.geometry_template_id or not body.billing_family_key): raise APIError(422,"TEMPLATE_FIELDS_REQUIRED","구조 종류와 과금 구조 식별자가 필요합니다.")
@@ -226,13 +239,23 @@ def install_registry_routes(app,db_session,project_payload,snapshot_revision):
         elif body.review_available:
             raise APIError(422,"STRUCTURE_DEFINITION_REQUIRED","검토 공개에는 검증 가능한 구조 정의가 필요합니다.")
         row=RegistryVersion(kind=kind,name=body.name,manufacturer=body.manufacturer,is_demo=body.is_demo,created_by=user.id,details=details);db.add(row);db.flush();audit(db,user,"registry_created",row.id);db.commit();return result(request,registry_payload(row))
-    @router.post("/admin/{collection}/{identity}/approve")
+    @router.post("/admin/{collection}/{identity}/review", response_model=Envelope[R.RegistryVersionData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
+    def submit_review(collection:str,identity:str,body:ReviewBody,request:Request,db=Depends(db_session)):
+        user=admin(request,db,True)
+        row=db.scalar(select(RegistryVersion).where(RegistryVersion.id==identity,RegistryVersion.kind==kind_for(collection)).with_for_update().execution_options(populate_existing=True))
+        if not row:raise APIError(404,"NOT_FOUND","버전을 찾을 수 없습니다.")
+        if row.is_demo:raise APIError(422,"DEMO_NOT_APPROVABLE","데모를 승인 단계로 올릴 수 없습니다. 제조사 자료를 별도 버전으로 등록해 주세요.")
+        changed=db.execute(update(RegistryVersion).where(RegistryVersion.id==row.id,RegistryVersion.status=="draft").values(status="review",updated_at=utcnow()).execution_options(synchronize_session=False))
+        if changed.rowcount!=1:raise APIError(409,"VERSION_IMMUTABLE","초안만 검토 요청할 수 있습니다. 현재 상태를 다시 확인해 주세요.")
+        db.refresh(row);audit(db,user,"registry_review_requested",row.id,{"reason":body.reason});db.commit();return result(request,registry_payload(row))
+
+    @router.post("/admin/{collection}/{identity}/approve", response_model=Envelope[R.RegistryVersionData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def approve(collection:str,identity:str,body:ApprovalBody,request:Request,db=Depends(db_session)):
         user=admin(request,db,True)
         row=db.scalar(select(RegistryVersion).where(RegistryVersion.id==identity,RegistryVersion.kind==kind_for(collection)).with_for_update().execution_options(populate_existing=True))
         if not row: raise APIError(404,"NOT_FOUND","버전을 찾을 수 없습니다.")
         if row.is_demo: raise APIError(422,"DEMO_NOT_APPROVABLE","데모 구조는 제작용으로 승인할 수 없습니다. 제조사 도면의 별도 버전을 등록해 주세요.")
-        if row.status!="draft": raise APIError(409,"VERSION_IMMUTABLE","승인·폐기한 버전은 수정할 수 없습니다. 새 버전을 등록해 주세요.")
+        if row.status!="review": raise APIError(409,"REVIEW_REQUIRED" if row.status=="draft" else "VERSION_IMMUTABLE","검토 요청한 버전만 승인할 수 있습니다. 승인·철회한 버전은 새 버전으로 등록해 주세요.")
         if not row.details.get("material"): raise APIError(422,"MATERIAL_REQUIRED","제조사가 승인한 재질을 기록해 주세요.")
         if row.kind=="template":
             from .geometry import build_geometry
@@ -248,17 +271,19 @@ def install_registry_routes(app,db_session,project_payload,snapshot_revision):
         approval={"evidence_asset_id":evidence.id,"evidence_sha256":evidence.sha256,"approved_by":user.id,"approved_by_name":body.approved_by_name,"approved_at":utcnow().isoformat(),"source":row.details["source"],"license":row.details["license"],"notes":body.notes}
         if row.details.get("structure_definition_hash"):
             approval["structure_definition_hash"]=row.details["structure_definition_hash"]
-        changed=db.execute(update(RegistryVersion).where(RegistryVersion.id==row.id,RegistryVersion.status=="draft").values(status="approved",approval=approval,updated_at=utcnow()).execution_options(synchronize_session=False))
+        changed=db.execute(update(RegistryVersion).where(RegistryVersion.id==row.id,RegistryVersion.status=="review").values(status="approved",approval=approval,updated_at=utcnow()).execution_options(synchronize_session=False))
         if changed.rowcount!=1: raise APIError(409,"VERSION_IMMUTABLE","승인 중 도면 상태가 변경되었습니다. 새 버전을 등록해 주세요.")
         db.refresh(row);audit(db,user,"registry_approved",row.id,{"evidence_asset_id":evidence.id});db.commit();return result(request,registry_payload(row))
-    @router.post("/admin/{collection}/{identity}/revoke")
+    @router.post("/admin/{collection}/{identity}/revoke", response_model=Envelope[R.RegistryVersionData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def revoke(collection:str,identity:str,body:RevokeBody,request:Request,db=Depends(db_session)):
         user=admin(request,db,True)
-        row=db.scalar(select(RegistryVersion).where(RegistryVersion.id==identity,RegistryVersion.kind==kind_for(collection)).with_for_update())
+        row=db.scalar(select(RegistryVersion).where(RegistryVersion.id==identity,RegistryVersion.kind==kind_for(collection)).with_for_update().execution_options(populate_existing=True))
         if not row: raise APIError(404,"NOT_FOUND","버전을 찾을 수 없습니다.")
-        row.status="revoked";row.updated_at=utcnow();audit(db,user,"registry_revoked",identity,{"reason":body.reason});db.commit();return result(request,registry_payload(row))
+        changed=db.execute(update(RegistryVersion).where(RegistryVersion.id==row.id,RegistryVersion.status=="approved").values(status="revoked",updated_at=utcnow()).execution_options(synchronize_session=False))
+        if changed.rowcount!=1:raise APIError(409,"VERSION_IMMUTABLE","현재 승인된 버전만 철회할 수 있습니다. 최초 철회 기록은 유지됩니다.")
+        db.refresh(row);audit(db,user,"registry_revoked",identity,{"reason":body.reason,"public_reason":body.public_reason});db.commit();return result(request,registry_payload(row))
 
-    @router.post("/printer-intakes",status_code=201)
+    @router.post("/printer-intakes",status_code=201, response_model=Envelope[R.PrinterIntakeData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def intake(body:IntakeBody,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True);owned_record(db,Project,body.project_id,user.tenant_id)
         job=None
@@ -267,6 +292,9 @@ def install_registry_routes(app,db_session,project_payload,snapshot_revision):
             if job.project_id!=str(body.project_id): raise APIError(422,"JOB_PROJECT_MISMATCH","프로젝트의 출력 작업을 선택해 주세요.")
         if body.evidence_id: owned_record(db,Evidence,body.evidence_id,user.tenant_id)
         metadata=intake_metadata(body,job,settings)
-        row=IntakeRecord(tenant_id=user.tenant_id,**body.model_dump(mode="json",exclude={"record_source","rejection_kind"}));db.add(row);db.flush();audit(db,user,"printer_intake_recorded",row.id,metadata);db.commit()
+        row=IntakeRecord(tenant_id=user.tenant_id,**body.model_dump(mode="json",exclude={"record_source","rejection_kind"}));db.add(row);db.flush();audit(db,user,"printer_intake_recorded",row.id,metadata)
+        from .metrics.service import record_intake
+        record_intake(db,row,metadata,job)
+        db.commit()
         return result(request,{"id":row.id,"status":row.status,"record_source":body.record_source,"rejection_kind":body.rejection_kind,"verification":metadata["verification"]})
     app.include_router(router)

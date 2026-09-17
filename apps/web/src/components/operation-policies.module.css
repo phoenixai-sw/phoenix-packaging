@@ -1,0 +1,20 @@
+.card { display: grid; gap: 16px; min-width: 0; }
+.card p { margin: 0; line-height: 1.7; overflow-wrap: anywhere; }
+.card label { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; font-size: 13px; font-weight: 500; }
+.card input:not([type="checkbox"]), .card select, .card textarea { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid #d9ddd5; border-radius: 9px; background: #fff; font: inherit; box-sizing: border-box; }
+.card input:disabled { color: #737c71; background: #f2f4ee; }
+.card textarea { min-height: 88px; resize: vertical; line-height: 1.65; }
+.card label:has(input[type="checkbox"]) { flex-direction: row; align-items: center; font-weight: 400; line-height: 1.6; }
+.card input[type="checkbox"] { flex: 0 0 auto; accent-color: #d35f38; }
+.card fieldset { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; padding: 20px; border: 1px solid #e2e6dd; border-radius: 12px; margin: 0; }
+.card legend { padding: 0 8px; font-size: 13px; font-weight: 600; }
+.card :global(.form-grid) { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; padding: 16px 0; border-bottom: 1px solid #edf0e8; align-items: end; }
+.card :global(.form-grid) > strong { grid-column: 1 / -1; }
+.card button { justify-self: start; }
+.card table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.card th, .card td { text-align: left; padding: 12px; border-bottom: 1px solid #e4e8de; overflow-wrap: anywhere; }
+.card th { background: #f4f6ef; font-weight: 600; }
+.card details { border-bottom: 1px solid #e4e8de; padding: 8px 0 16px; }
+.card details > *:not(summary) { margin-top: 16px; }
+.card summary { cursor: pointer; line-height: 1.7; overflow-wrap: anywhere; }
+@media(max-width:700px) { .card fieldset,.card :global(.form-grid) { grid-template-columns: minmax(0,1fr); } .card th,.card td { padding: 8px 4px; font-size: 12px; } }

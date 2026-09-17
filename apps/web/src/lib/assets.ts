@@ -46,7 +46,9 @@ export async function uploadAsset(
       `이미지는 ${(config.upload_max_bytes / 1024 / 1024).toLocaleString("ko-KR")} MiB 이하로 올려 주세요.`,
     );
   if (!config.supported_upload_types.includes(file.type))
-    throw new Error("PNG · JPG · WebP 이미지를 선택해 주세요.");
+    throw new Error("PNG · JPG · WebP 또는 정적 윤곽선 SVG를 선택해 주세요.");
+  if (file.type === "image/svg+xml" && file.size > 1024 * 1024)
+    throw new Error("SVG 원본은 1MiB 이하로 올려 주세요.");
   if (config.direct_upload) {
     const upload = await api<{
       id: string;

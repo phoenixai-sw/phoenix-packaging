@@ -1,14 +1,16 @@
 from pathlib import Path
+from datetime import timedelta
 from types import SimpleNamespace
 from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 import pytest
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import MetaData, Table, create_engine, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
@@ -55,16 +57,45 @@ def test_financial_history_is_append_only_in_real_migrated_database(tmp_path, mo
     engine = create_engine(url)
     factory = sessionmaker(engine, expire_on_commit=False)
     now = utcnow()
-    with factory.begin() as db:
-        tenant = Tenant(name="원장 검수", created_at=now)
-        db.add(tenant)
-        db.flush()
-        ensure_trial(db, tenant.id, now=now)
-    for statement in ["UPDATE credit_ledger SET amount=999", "DELETE FROM credit_ledger"]:
-        with pytest.raises(IntegrityError):
-            with engine.begin() as connection:
-                connection.execute(text(statement))
-    with engine.connect() as connection:
-        assert connection.execute(text("SELECT amount FROM credit_ledger")).scalar_one() == 30
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0004_billing"
-    engine.dispose()
+    try:
+        # The historical migration test must not call today's policy-aware
+        # service against a schema which predates policy tables. Insert valid
+        # history through the actual 0004 columns, without creating new tables.
+        metadata = MetaData()
+        tables = {name: Table(name, metadata, autoload_with=engine) for name in
+                  ('tenants', 'credit_wallets', 'credit_buckets', 'credit_ledger')}
+        tenant_id, bucket_id, entry_id = (str(uuid4()) for _ in range(3))
+        with engine.begin() as connection:
+            connection.execute(tables['tenants'].insert().values(id=tenant_id, name='Historical ledger fixture', created_at=now))
+            connection.execute(tables['credit_wallets'].insert().values(tenant_id=tenant_id, lock_version=0, ever_paid=False, created_at=now))
+            connection.execute(tables['credit_buckets'].insert().values(id=bucket_id, tenant_id=tenant_id,
+                kind='trial', scope='standard_only', grant_key='signup-trial', granted=30, available=30,
+                reserved=0, consumed=0, expired=0, expires_at=now+timedelta(days=14), created_at=now))
+            connection.execute(tables['credit_ledger'].insert().values(id=entry_id, tenant_id=tenant_id,
+                bucket_id=bucket_id, event_key='historical-trial', event='GRANT', amount=30,
+                reason='Historical trial fixture', created_at=now))
+            original = dict(connection.execute(select(tables['credit_ledger'])).mappings().one())
+
+        def check_immutable(revision, expected_rows):
+            for statement in ['UPDATE credit_ledger SET amount=999', 'DELETE FROM credit_ledger']:
+                with pytest.raises(IntegrityError):
+                    with engine.begin() as connection:
+                        connection.execute(text(statement))
+            with engine.connect() as connection:
+                assert list(connection.scalars(text('SELECT amount FROM credit_ledger'))) == [30]*expected_rows
+                assert connection.scalar(text('SELECT version_num FROM alembic_version')) == revision
+                assert dict(connection.execute(select(tables['credit_ledger']).where(tables['credit_ledger'].c.id==entry_id)).mappings().one()) == original
+                assert not list(connection.exec_driver_sql('PRAGMA foreign_key_check'))
+
+        check_immutable('0004_billing', 1)
+        command.upgrade(cfg, 'head')
+        # Also exercise the real current service on fully migrated tables and
+        # verify that both historical and newly appended entries stay protected.
+        with factory.begin() as db:
+            tenant = Tenant(name='Current ledger fixture', created_at=now)
+            db.add(tenant); db.flush()
+            ensure_trial(db, tenant.id, now=now)
+            ensure_trial(db, tenant.id, now=now)
+        check_immutable(ScriptDirectory.from_config(cfg).get_current_head(), 2)
+    finally:
+        engine.dispose()

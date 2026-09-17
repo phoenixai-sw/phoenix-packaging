@@ -12,6 +12,7 @@ import httpx
 from sqlalchemy import select, exists, or_
 
 from ..database import new_id, utcnow
+from ..metrics import models as metric_models  # register transaction-linked payment events
 from ..errors import APIError
 from .models import BillingAccount, BillingOutbox, CreditBucket, Invoice, Payment, PaymentEvent, PaymentOrder, Subscription, WebhookEvent
 from .policy import SEOUL, add_months, aware, plan, pricing, prorate
@@ -225,7 +226,7 @@ def entitlements(db, tenant_id, now=None):
     wallet = ensure_trial(db, tenant_id, now=now)
     subscription = db.scalar(select(Subscription).where(Subscription.tenant_id == tenant_id))
     active = bool(subscription and subscription.paid_until and aware(subscription.paid_until) > aware(now))
-    seats = plan(subscription.plan_id)["seats"] if active else 1
+    seats = plan(subscription.plan_id,snapshot=subscription.pricing_snapshot)["seats"] if active else 1
     bought = db.scalars(select(CreditBucket).where(CreditBucket.tenant_id == tenant_id, CreditBucket.kind == "purchase")).all()
     keep_until = [aware(bucket.expires_at) for bucket in bought]
     if subscription and subscription.paid_until:
@@ -253,8 +254,9 @@ def create_order(db, tenant_id, kind, operation_key, *, plan_id=None, credits=No
     billing_account(db, tenant_id, settings)
     subscription = db.scalar(select(Subscription).where(Subscription.tenant_id == tenant_id))
     invoice = None
+    agreed_pricing = pricing(db)
     if kind == "subscription":
-        selected = plan(plan_id)
+        selected = plan(plan_id,snapshot=agreed_pricing)
         if subscription and subscription.paid_until and aware(subscription.paid_until) > aware(now):
             raise APIError(409, "SUBSCRIPTION_ALREADY_ACTIVE", "활성 구독은 요금제 변경으로 조정해 주세요.")
         if subscription and subscription.status == "pending":
@@ -269,6 +271,7 @@ def create_order(db, tenant_id, kind, operation_key, *, plan_id=None, credits=No
             subscription.anchor_day, subscription.billing_anchor = aware(now).astimezone(SEOUL).day, now
             subscription.cancel_at_period_end, subscription.next_plan_id = False, None
         amount, grant = selected["monthly_inc_vat"], selected["credits"]
+        subscription.pricing_snapshot = agreed_pricing
         expires = subscription.current_period_end
         invoice = Invoice(tenant_id=tenant_id, subscription_id=subscription.id, period_start=now, period_end=expires, plan_id=plan_id, amount=amount, credits=grant, created_at=now)
         db.add(invoice)
@@ -276,14 +279,14 @@ def create_order(db, tenant_id, kind, operation_key, *, plan_id=None, credits=No
     elif kind == "topup":
         if not subscription or not subscription.paid_until or aware(subscription.paid_until) <= aware(now):
             raise APIError(403, "ACTIVE_SUBSCRIPTION_REQUIRED", "추가 충전은 활성 구독 계정에서 구매할 수 있습니다.")
-        selected = next((item for item in pricing()["topups"] if item["credits"] == credits), None)
+        selected = next((item for item in agreed_pricing["topups"] if item["credits"] == credits), None)
         if selected is None:
             raise APIError(422, "UNKNOWN_TOPUP", "충전 상품을 확인해 주세요.")
         amount, grant = selected["inc_vat"], selected["credits"]
         expires = add_months(now, selected["expires_months"])
     else:
         raise APIError(422, "UNKNOWN_ORDER_KIND", "주문 종류를 확인해 주세요.")
-    order = PaymentOrder(tenant_id=tenant_id, order_id="pp_" + new_id().replace("-", ""), operation_key=operation_key, request_hash=digest, kind=kind, plan_id=plan_id if kind == "subscription" else None, amount=amount, credits=grant, pricing_version=pricing()["version"], invoice_id=invoice.id if invoice else None, subscription_id=subscription.id if kind == "subscription" else None, period_start=invoice.period_start if invoice else None, period_end=invoice.period_end if invoice else None, credits_expires_at=expires, created_at=now)
+    order = PaymentOrder(tenant_id=tenant_id, order_id="pp_" + new_id().replace("-", ""), operation_key=operation_key, request_hash=digest, kind=kind, plan_id=plan_id if kind == "subscription" else None, amount=amount, credits=grant, pricing_version=agreed_pricing["version"],pricing_snapshot=agreed_pricing, invoice_id=invoice.id if invoice else None, subscription_id=subscription.id if kind == "subscription" else None, period_start=invoice.period_start if invoice else None, period_end=invoice.period_end if invoice else None, credits_expires_at=expires, created_at=now)
     db.add(order)
     db.flush()
     return order
@@ -350,9 +353,11 @@ def _apply_paid(db, order, result, settings, now):
         invoice.period_start, invoice.period_end = approved_at, subscription.current_period_end
     if order.kind in {"subscription", "renewal"}:
         subscription.status, subscription.plan_id = "active", order.plan_id
+        subscription.pricing_snapshot = order.pricing_snapshot or subscription.pricing_snapshot
         subscription.current_period_start, subscription.current_period_end = order.period_start, order.period_end
         subscription.paid_until = order.period_end
         subscription.next_plan_id = None
+        subscription.next_pricing_snapshot = None
         invoice = db.get(Invoice, order.invoice_id)
         invoice.status, invoice.retry_at = "paid", None
         account = db.get(BillingAccount, order.tenant_id)
@@ -360,11 +365,14 @@ def _apply_paid(db, order, result, settings, now):
             subscription.cancel_at_period_end = True
     elif order.kind == "upgrade":
         subscription.plan_id = order.plan_id
+        subscription.pricing_snapshot = order.pricing_snapshot or subscription.pricing_snapshot
         subscription.next_plan_id = None
     kind = "purchase" if order.kind == "topup" else "monthly"
     grant_credits(db, order.tenant_id, order.credits, kind=kind, scope="paid", expires_at=order.credits_expires_at, grant_key="order:" + order.id, reason="추가 충전 결제" if kind == "purchase" else "구독 결제 크레딧", invoice_id=order.invoice_id, now=now)
     db.add(BillingOutbox(tenant_id=order.tenant_id, event_key=f"payment-paid:{order.id}", kind="payment.paid", payload={"order_id": order.order_id, "credits": order.credits}, created_at=now))
     db.flush()
+    from ..metrics.service import record_payment_paid
+    record_payment_paid(db,order,payment)
     return order
 
 
@@ -447,15 +455,18 @@ def change_plan(db, tenant_id, new_plan_id, operation_key, *, settings, now=None
     now = now or utcnow()
     settings.validate()
     lock_wallet(db, tenant_id, now)
-    selected = plan(new_plan_id)
     subscription = db.scalar(select(Subscription).where(Subscription.tenant_id == tenant_id))
     if not subscription or not subscription.paid_until or aware(subscription.paid_until) <= aware(now):
         raise APIError(409, "ACTIVE_SUBSCRIPTION_REQUIRED", "활성 구독을 먼저 확인해 주세요.")
-    old = plan(subscription.plan_id)
+    # Existing subscriptions keep the price table they agreed to, including plan changes.
+    agreed_pricing = subscription.pricing_snapshot or pricing()
+    selected = plan(new_plan_id,snapshot=agreed_pricing)
+    old = plan(subscription.plan_id,snapshot=agreed_pricing)
     if new_plan_id == subscription.plan_id:
         return {"subscription": subscription_payload(subscription), "change": "unchanged"}
     if selected["monthly_inc_vat"] < old["monthly_inc_vat"]:
         subscription.next_plan_id = new_plan_id
+        subscription.next_pricing_snapshot = agreed_pricing
         db.flush()
         return {"subscription": subscription_payload(subscription), "change": "scheduled", "effective_at": aware(subscription.current_period_end).isoformat()}
     digest = canonical_hash({"kind": "upgrade", "plan_id": new_plan_id, "period_start": aware(subscription.current_period_start).isoformat()})
@@ -467,7 +478,7 @@ def change_plan(db, tenant_id, new_plan_id, operation_key, *, settings, now=None
     amount, credits = prorate(old, selected, subscription.current_period_start, subscription.current_period_end, now)
     if amount == 0:
         raise APIError(409, "PERIOD_RENEWING", "갱신 직전입니다. 새 결제 주기가 시작되면 요금제를 변경해 주세요.")
-    order = PaymentOrder(tenant_id=tenant_id, order_id="pp_" + new_id().replace("-", ""), operation_key=operation_key, request_hash=digest, kind="upgrade", plan_id=new_plan_id, source_plan_id=subscription.plan_id, amount=amount, credits=credits, pricing_version=pricing()["version"], subscription_id=subscription.id, period_start=subscription.current_period_start, period_end=subscription.current_period_end, credits_expires_at=subscription.current_period_end, created_at=now)
+    order = PaymentOrder(tenant_id=tenant_id, order_id="pp_" + new_id().replace("-", ""), operation_key=operation_key, request_hash=digest, kind="upgrade", plan_id=new_plan_id, source_plan_id=subscription.plan_id, amount=amount, credits=credits, pricing_version=agreed_pricing["version"],pricing_snapshot=agreed_pricing,source_pricing_snapshot=agreed_pricing, subscription_id=subscription.id, period_start=subscription.current_period_start, period_end=subscription.current_period_end, credits_expires_at=subscription.current_period_end, created_at=now)
     db.add(order)
     db.flush()
     return {"change": "payment_required", "order": order_payload(order, billing_account(db, tenant_id, settings), settings)}
@@ -481,21 +492,23 @@ def cancel_renewal(db, tenant_id, *, now=None):
         raise APIError(404, "SUBSCRIPTION_NOT_FOUND", "해지할 구독이 없습니다.")
     subscription.cancel_at_period_end = True
     subscription.next_plan_id = None
+    subscription.next_pricing_snapshot = None
     db.flush()
     return subscription
 
 
 def _renewal_order(db, subscription, now):
     start = subscription.current_period_end
+    agreed_pricing = (subscription.next_pricing_snapshot if subscription.next_plan_id else None) or subscription.pricing_snapshot or pricing()
     invoice = db.scalar(select(Invoice).where(Invoice.subscription_id == subscription.id, Invoice.period_start == start))
     if invoice is None:
-        selected = plan(subscription.next_plan_id or subscription.plan_id)
+        selected = plan(subscription.next_plan_id or subscription.plan_id,snapshot=agreed_pricing)
         invoice = Invoice(tenant_id=subscription.tenant_id, subscription_id=subscription.id, period_start=start, period_end=add_months(start, anchor_day=subscription.anchor_day), plan_id=selected["id"], amount=selected["monthly_inc_vat"], credits=selected["credits"], created_at=now)
         db.add(invoice)
         db.flush()
     order = db.scalar(select(PaymentOrder).where(PaymentOrder.invoice_id == invoice.id))
     if order is None:
-        order = PaymentOrder(tenant_id=subscription.tenant_id, order_id="pp_" + invoice.id.replace("-", ""), operation_key="invoice:" + invoice.id, request_hash=canonical_hash({"invoice_id": invoice.id}), kind="renewal", plan_id=invoice.plan_id, amount=invoice.amount, credits=invoice.credits, pricing_version=pricing()["version"], invoice_id=invoice.id, subscription_id=subscription.id, period_start=invoice.period_start, period_end=invoice.period_end, credits_expires_at=invoice.period_end, created_at=now)
+        order = PaymentOrder(tenant_id=subscription.tenant_id, order_id="pp_" + invoice.id.replace("-", ""), operation_key="invoice:" + invoice.id, request_hash=canonical_hash({"invoice_id": invoice.id}), kind="renewal", plan_id=invoice.plan_id, amount=invoice.amount, credits=invoice.credits, pricing_version=agreed_pricing["version"],pricing_snapshot=agreed_pricing, invoice_id=invoice.id, subscription_id=subscription.id, period_start=invoice.period_start, period_end=invoice.period_end, credits_expires_at=invoice.period_end, created_at=now)
         db.add(order)
         db.flush()
     return invoice, order

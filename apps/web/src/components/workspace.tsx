@@ -1,4 +1,5 @@
 "use client";
+import { apiRequest } from "@/lib/api-contract";
 import { createContext, useContext, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -33,7 +34,7 @@ export function Workspace({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let active = true;
     setError("");
-    api<Session>("/me")
+    apiRequest("get", "/v1/me", {})
       .then((s) => {
         if (active) setSession(s);
       })
@@ -51,7 +52,7 @@ export function Workspace({ children }: { children: React.ReactNode }) {
   }, [router, retry, pathname]);
   async function logout() {
     try {
-      await api("/auth/logout", { method: "POST" });
+      await apiRequest("post", "/v1/auth/logout", {});
       router.replace("/");
     } catch (e) {
       setError(errorMessage(e));
@@ -62,9 +63,8 @@ export function Workspace({ children }: { children: React.ReactNode }) {
     setSwitching(true);
     setError("");
     try {
-      await api<Session>("/team/switch", {
-        method: "POST",
-        body: JSON.stringify({ tenant_id }),
+      await apiRequest("post", "/v1/team/switch", {
+        body: { tenant_id },
       });
       window.location.assign("/app");
     } catch (e) {
@@ -168,6 +168,10 @@ export function Workspace({ children }: { children: React.ReactNode }) {
                 {item.label}
               </Link>
             ))}
+            {session.user.role === "owner" && <>
+              <Link href="/app/services" className={pathname.startsWith("/app/services") ? "active" : ""}><Users size={18} /> 별도 서비스 신청</Link>
+              <Link href="/app/retention" className={pathname.startsWith("/app/retention") ? "active" : ""}><FolderOpen size={18} /> 보관과 다운로드</Link>
+            </>}
             {session.user.is_admin && (
               <Link
                 href="/admin"
@@ -176,6 +180,12 @@ export function Workspace({ children }: { children: React.ReactNode }) {
                 <ShieldCheck size={18} /> 운영 관리
               </Link>
             )}
+            {session.user.is_admin && <>
+              <Link href="/admin/services" className={pathname.startsWith("/admin/services") ? "active" : ""}><Users size={18} /> 서비스 견적 관리</Link>
+              <Link href="/admin/operations" className={pathname.startsWith("/admin/operations") ? "active" : ""}><ShieldCheck size={18} /> 보관·지원 관리</Link>
+              <Link href="/admin/policies" className={pathname.startsWith("/admin/policies") ? "active" : ""}><Wallet size={18} /> 요금·모델 정책</Link>
+              <Link href="/admin/metrics" className={pathname.startsWith("/admin/metrics") ? "active" : ""}><LayoutGrid size={18} /> 성과·원가 확인</Link>
+            </>}
             <Link href="/pricing">
               <ArrowUpRight size={18} /> 요금 안내
             </Link>

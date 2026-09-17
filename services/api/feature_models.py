@@ -41,6 +41,7 @@ class Brand(Base):
     name: Mapped[str] = mapped_column(String(120))
     colors: Mapped[list] = mapped_column(JSON, default=list)
     font_ids: Mapped[list] = mapped_column(JSON, default=lambda:["NotoSansKR"])
+    font_asset_ids: Mapped[list] = mapped_column(JSON, default=list)
     logo_asset_id: Mapped[str | None] = mapped_column(ForeignKey("assets.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
