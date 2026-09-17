@@ -104,7 +104,7 @@ export function RegistryConditionFields({
               onChange={(e) => writeRule("color_space", e.target.value)}
             >
               <option value="RGB">RGB</option>
-              <option value="CMYK">CMYK · 현재 제작 출력 미지원</option>
+              <option value="CMYK">CMYK · ICC 출력 조건 등록 필요</option>
             </select>
           </label>
           <label className="field">
@@ -125,15 +125,17 @@ export function RegistryConditionFields({
               onChange={(e) => writeRule("font_mode", e.target.value)}
             >
               <option value="embedded">글꼴 포함(임베드)</option>
-              <option value="outlined">윤곽선 변환 · 현재 미지원</option>
+              <option value="outlined">윤곽선 변환 · ICC 출력 조건 등록 필요</option>
             </select>
           </label>
         </div>
         <p className="field-hint">
-          제조사의 실제 요구사항을 기록하세요. 미지원 조건을 입력해도 지원
-          기능으로 바뀌지 않습니다. 제작 출력기는 현재 RGB·일반 PDF·글꼴
-          임베드·면별 페이지·도련 0mm 조합만 지원하며, 기본 검토용 PDF의 3mm
-          도련과 구분됩니다.
+          제조사의 실제 요구사항을 기록하세요. CMYK·글꼴 윤곽선·프로필별 도련은
+          ‘ICC · CMYK 출력 조건 등록’에서 ICC와 함께 등록한 인쇄 프로필을
+          프로젝트에 연결해야 합니다. 일반 RGB 제작 경로는 글꼴 포함·면별
+          페이지·도련 0mm이며, 기본 검토용 PDF의 3mm 도련과는 별개입니다.
+          PDF/X는 지원하지 않습니다. 조건 등록이나 시험 성공은 제조사 승인을
+          대신하지 않으며 별도 증빙 검토가 필요합니다.
         </p>
       </fieldset>
       {(!dims || !rules) && (
