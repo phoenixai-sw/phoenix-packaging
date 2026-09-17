@@ -144,6 +144,9 @@ def install_production_routes(app,db_session,owned,project_payload,snapshot_revi
     @router.post("/production/quotes",status_code=201)
     def production_quote(body:PreflightBody,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True)
+        from .editor_sessions import enforce_edit_lease
+        project=owned_record(db,Project,body.project_id,user.tenant_id)
+        enforce_edit_lease(db,project,request)
         values=prepare_production_quote(db,user,body.model_dump(mode="json"),app.state.settings,project_payload,snapshot_revision,app.state.storage)
         quote=create_quote(db,user.tenant_id,**values);db.commit();return result(request,quote_payload(quote))
     app.include_router(router)

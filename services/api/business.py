@@ -330,6 +330,8 @@ def install_business_routes(app, db_session, project_payload, snapshot_revision)
     @router.post("/projects/{identity}/bindings/apply")
     def apply_bindings(identity:UUID,body:BindingBody,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True);project=owned_record(db,Project,identity,user.tenant_id);variant=owned_record(db,Variant,body.product_variant_id,user.tenant_id)
+        from .editor_sessions import enforce_edit_lease
+        enforce_edit_lease(db,project,request)
         if body.base_revision!=project.base_revision: raise APIError(409,"REVISION_CONFLICT","문서가 변경되었습니다. 변경 내용을 다시 확인해 주세요.")
         scene=deepcopy(project.scene);changes={c["object_id"]:c for c in binding_changes(db,project,variant)}
         for face in scene["faces"]:

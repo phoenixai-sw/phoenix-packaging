@@ -75,6 +75,21 @@ test("source pixel region maps through clockwise rotation to shared scene mm", (
   assert.equal(p.height_mm, 80);
   assert.equal(p.rotation_deg, 90);
 });
+test("OCR source ROI maps into cropped and rotated image without moving the source", () => {
+  const cropped = { ...source, crop: { x: 0.2, y: 0.1, width: 0.5, height: 0.8 } };
+  const p = regionPlacement(cropped, { x: 0.3, y: 0.3, width: 0.2, height: 0.2 });
+  assert.ok(Math.abs(p.x_mm + 40) < 1e-8);
+  assert.ok(Math.abs(p.y_mm - 40) < 1e-8);
+  assert.equal(p.width_mm, 40);
+  assert.equal(p.height_mm, 50);
+  assert.throws(() => regionPlacement(cropped, region), /잘라서/);
+});
+test("image text replacement refuses a locked source", () => {
+  const locked = { ...scene, faces: [{ ...scene.faces[0], objects: [{ ...source, locked: true }] }] };
+  assert.throws(() => applyImageText(locked, "source", region,
+    { text: "수정", font_size_pt: 18, font_weight: 400, color: "#000000" },
+    { assetId: "new" }, { text: "text", cover: "cover" }), /잠긴/);
+});
 test("cleanup and replacement text are one immutable edit; original source and undo snapshot remain intact", () => {
   const before = JSON.stringify(scene);
   const next = applyImageText(

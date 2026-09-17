@@ -165,6 +165,14 @@ def validate_scene(scene: dict, *, check_safe_area: bool = True) -> dict:
             kind = obj.get("type")
             if kind not in ("text", "image", "shape", "barcode") or obj.get("face_id") != face["id"]:
                 raise GeometryValidationError("INVALID_OBJECT_TYPE", "객체 유형과 면을 확인해 주세요.", field)
+            if obj.get("crop") is not None:
+                if kind != "image":
+                    raise GeometryValidationError("IMAGE_CROP_ONLY", "자르기는 이미지 객체에서만 사용할 수 있습니다.", f"{field}.crop")
+                from ..image_crop import normalized_crop
+                try:
+                    obj["crop"] = normalized_crop(obj["crop"])
+                except ValueError as exc:
+                    raise GeometryValidationError("INVALID_IMAGE_CROP", str(exc), f"{field}.crop") from None
             if any(key in obj for key in ("url", "src", "asset_url", "image_url")):
                 raise GeometryValidationError("EXTERNAL_ASSET_FORBIDDEN", "외부 이미지 주소 대신 업로드된 자산을 사용해 주세요.", field)
             for key in ("x_mm", "y_mm"):

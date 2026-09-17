@@ -57,7 +57,7 @@ export function ExportTools({
   saveCurrent: () => Promise<number>;
   onServerProject: (p: Project) => void;
   onCommit: (s: Scene, confirmationOnly?: boolean) => void;
-  onFaceSelect: (id: string) => void;
+  onFaceSelect: (id: string, objectId?: string) => void;
   readOnly: boolean;
 }) {
   const templates = useApiData<{ items: Version[] }>("/templates");
@@ -447,9 +447,11 @@ export function ExportTools({
                     {issue.face_id && (
                       <button
                         className="text-link"
-                        onClick={() => onFaceSelect(issue.face_id!)}
+                        onClick={() =>
+                          onFaceSelect(issue.face_id!, issue.object_id)
+                        }
                       >
-                        해당 면 확인
+                        해당 레이어·면 확인
                       </button>
                     )}
                   </div>
@@ -489,9 +491,11 @@ export function ExportTools({
                         {issue.face_id && (
                           <button
                             className="text-link"
-                            onClick={() => onFaceSelect(issue.face_id!)}
+                            onClick={() =>
+                              onFaceSelect(issue.face_id!, issue.object_id)
+                            }
                           >
-                            해당 면 확인
+                            해당 레이어·면 확인
                           </button>
                         )}
                       </div>
@@ -569,7 +573,8 @@ export function ExportTools({
             )}
             {job.status === "failed" && job.kind === "production_export" && (
               <p className="field-hint">
-                제작 출력은 현재 디자인을 다시 검수하고 새 견적을 확인한 뒤 요청해 주세요.
+                제작 출력은 현재 디자인을 다시 검수하고 새 견적을 확인한 뒤
+                요청해 주세요.
               </p>
             )}
             <Link

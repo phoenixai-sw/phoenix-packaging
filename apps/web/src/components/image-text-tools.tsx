@@ -1,7 +1,9 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Worker } from "tesseract.js";
-import { api, errorMessage } from "@/lib/api";
+import { api, ApiError, errorMessage } from "@/lib/api";
+import { useSession } from "./workspace";
+import { readToolDraft, writeToolDraft, toolDraftKey, pendingAfterStartFailure } from "@/lib/tool-draft";
 import { Feedback } from "./management";
 import {
   applyImageText,
@@ -9,6 +11,7 @@ import {
   validateImageRegion,
   imageRegionPixels,
   textRemovalInputKey,
+  regionPlacement,
   type ImageRegion,
 } from "@editor/image-tools";
 import type { Scene, SceneObject } from "@editor/model";
@@ -36,6 +39,12 @@ type Job = {
   credit_returned?: number;
   error?: { message?: string } | string;
   result?: { assets?: ResultAsset[] };
+};
+type TextDraft = {
+  region: ImageRegion; sourceText: string; text: string; confirmed: boolean;
+  fontSize: number; weight: 400 | 700; color: string; cover: string; confidence?: number;
+  snapshot: string; baseRevision: number; preparedInput: string;
+  jobId?: string; quote?: Quote; jobKey: string; pendingStart: boolean;
 };
 const terminal = [
   "succeeded",
@@ -70,11 +79,17 @@ export function ImageTextTools({
   onApply: ApplyPreparedScene;
   readOnly: boolean;
 }) {
+  const session = useSession();
+  const draftKey = toolDraftKey(session!.user.id, session!.tenant.id, projectId, object.id, object.asset_id!);
+  const [draftReady, setDraftReady] = useState(false), [resumeNotice, setResumeNotice] = useState("");
+  const [pendingStart, setPendingStart] = useState(false), [draftWarning, setDraftWarning] = useState("");
+  const [draftReload, setDraftReload] = useState(0);
+  const hydrated = useRef(false);
   const [region, setRegion] = useState<ImageRegion>({
-    x: 0.1,
-    y: 0.1,
-    width: 0.8,
-    height: 0.2,
+    x: (object.crop?.x || 0) + (object.crop?.width || 1) * 0.1,
+    y: (object.crop?.y || 0) + (object.crop?.height || 1) * 0.1,
+    width: (object.crop?.width || 1) * 0.8,
+    height: (object.crop?.height || 1) * 0.2,
   });
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [sourceText, setSourceText] = useState(""),
@@ -102,7 +117,63 @@ export function ImageTextTools({
     ocrAttempt = useRef(0),
     startPoint = useRef<{ x: number; y: number } | null>(null),
     jobKey = useRef("");
-  const working = !!job && !terminal.includes(job.status);
+  const working = pendingStart || (!!job && !terminal.includes(job.status));
+  const draft = useMemo<TextDraft>(() => ({ region, sourceText, text, confirmed, fontSize, weight, color, cover,
+    confidence, snapshot, baseRevision, preparedInput, jobId: job?.id, quote, jobKey: jobKey.current, pendingStart }),
+    [region, sourceText, text, confirmed, fontSize, weight, color, cover, confidence, snapshot, baseRevision, preparedInput, job?.id, quote, pendingStart]);
+  const latestDraft = useRef(draft);
+  const completedDraft = useRef(false);
+  latestDraft.current = draft;
+  useEffect(() => {
+    if (readOnly && hydrated.current) return;
+    hydrated.current = false;
+    setDraftReady(false);
+    startPoint.current = null;
+    ocrAttempt.current++;
+    void worker.current?.terminate();
+    worker.current = null;
+    setOcrBusy(false);
+    let stopped = false;
+    void readToolDraft<TextDraft>(draftKey).then((saved) => {
+      if (stopped) return;
+      try {
+        const value = saved?.value;
+        // Rehydration replaces optional fields too; a completed/deleted draft must not resurrect.
+        setJob(undefined); setQuote(undefined); setPendingStart(false); setReviewed(false);
+        completedDraft.current = false;
+        setResumeNotice(""); setOcrStatus(""); setConfidence(undefined);
+        setRegion({ x: (object.crop?.x || 0) + (object.crop?.width || 1) * 0.1,
+          y: (object.crop?.y || 0) + (object.crop?.height || 1) * 0.1,
+          width: (object.crop?.width || 1) * 0.8, height: (object.crop?.height || 1) * 0.2 });
+        setSourceText(""); setText(""); setConfirmed(false); setFontSize(18); setWeight(400);
+        setColor("#172d26"); setCover("#fff3de"); setSnapshot(""); setBaseRevision(0); setPreparedInput("");
+        jobKey.current = crypto.randomUUID();
+        if (value && typeof value.sourceText === "string" && typeof value.text === "string" && typeof value.snapshot === "string") {
+          validateImageRegion(value.region);
+          setRegion(value.region); setSourceText(value.sourceText); setText(value.text);
+          setConfirmed(!!value.confirmed); setFontSize(value.fontSize); setWeight(value.weight);
+          setColor(value.color); setCover(value.cover); setConfidence(value.confidence);
+          setSnapshot(value.snapshot); setBaseRevision(value.baseRevision); setPreparedInput(value.preparedInput);
+          jobKey.current = value.jobKey || crypto.randomUUID();
+          // Fetch the authoritative job, including completed jobs. Never start a paid request on reopening.
+          if (value.jobId) setJob({ id: value.jobId, status: "queued" });
+          if (value.pendingStart && value.quote && value.jobKey) {
+            setPendingStart(true); setQuote(value.quote);
+          }
+          setResumeNotice(`이 기기에 보관한 ${new Date(saved!.updatedAt).toLocaleString("ko-KR")} 작업을 이어갑니다. 제거 결과는 다시 확인해야 합니다.`);
+        }
+      } catch { setDraftWarning("이전 중간 작업을 읽지 못했습니다. 서버 디자인과 AI 작업 이력은 보존됩니다."); }
+      hydrated.current = true;
+      setDraftReady(true);
+    });
+    return () => { stopped = true; };
+  }, [draftKey, readOnly, draftReload]);
+  useEffect(() => {
+    if (!draftReady || !hydrated.current || readOnly || object.locked || completedDraft.current) return;
+    void writeToolDraft(draftKey, draft).then((ok) => {
+      if (active.current && !ok) setDraftWarning("중간 작업을 보관하지 못했습니다. 다른 창의 변경 또는 저장소 오류입니다. 현재 문구를 따로 보관한 뒤 최신 중간 작업을 다시 불러오세요.");
+    });
+  }, [draftKey, draftReady, draft, readOnly, object.locked]);
   const inputKey = textRemovalInputKey({
     assetId: object.asset_id!,
     region,
@@ -148,6 +219,7 @@ export function ImageTextTools({
     };
   }, [job?.id, job?.status]);
   function invalidate() {
+    completedDraft.current = false;
     setQuote(undefined);
     setConfirmed(false);
     setReviewed(false);
@@ -245,11 +317,13 @@ export function ImageTextTools({
     setOcrStatus("자동 인식을 중단했습니다. 직접 입력할 수 있습니다.");
   }
   async function getQuote() {
+    if (readOnly || object.locked || !draftReady || working) return;
     setBusy(true);
     setError("");
     setNotice("");
     try {
       validateImageRegion(region);
+      regionPlacement(object, region);
       if (!confirmed || !sourceText.trim())
         throw new Error("지울 원문을 입력하고 확인해 주세요.");
       const expected = JSON.stringify(scene),
@@ -286,25 +360,40 @@ export function ImageTextTools({
     }
   }
   async function start() {
-    if (!quote || stale || !confirmed) return;
+    if (!quote || readOnly || object.locked || (!pendingStart && (stale || !confirmed))) return;
     setBusy(true);
     setError("");
+    const submitted = { ...latestDraft.current, pendingStart: true, quote, jobKey: jobKey.current };
+    let sent = false;
     try {
-      setJob(
-        await api<Job>("/jobs", {
+      setPendingStart(true);
+      if (!await writeToolDraft(draftKey, submitted))
+        throw new Error("요청 번호를 보관하지 못해 유료 작업을 시작하지 않았습니다. 문구를 보관하고 중간 작업을 다시 불러오거나 브라우저 저장소를 확인하세요.");
+      sent = true;
+      const created = await api<Job>("/jobs", {
           method: "POST",
           headers: { "Idempotency-Key": jobKey.current },
           body: JSON.stringify({ quote_id: quote.id }),
-        }),
-      );
+        });
+      // Persist even if the modal closed while the request was in flight.
+      await writeToolDraft(draftKey, { ...submitted, pendingStart: false, quote: undefined, jobId: created.id });
+      setJob(created);
+      setPendingStart(false);
       setQuote(undefined);
     } catch (e) {
+      const remainsPending = pendingAfterStartFailure(pendingStart, sent, e instanceof ApiError ? e.code : undefined);
+      setPendingStart(remainsPending);
+      if (sent && !remainsPending) {
+        setPendingStart(false); setQuote(undefined);
+        await writeToolDraft(draftKey, { ...submitted, pendingStart: false, quote: undefined });
+      }
       setError(errorMessage(e));
     } finally {
       setBusy(false);
     }
   }
   async function apply(useCover: boolean) {
+    if (readOnly || object.locked || !draftReady || working) return;
     setBusy(true);
     setError("");
     try {
@@ -326,9 +415,12 @@ export function ImageTextTools({
           { text: crypto.randomUUID(), cover: crypto.randomUUID() },
         ),
       );
+      completedDraft.current = true;
       setJob(undefined);
       setQuote(undefined);
       setSnapshot("");
+      await writeToolDraft(draftKey, null);
+      setResumeNotice("");
       setNotice(
         useCover
           ? "단색 덮개와 편집 가능한 문구를 한 번에 저장했습니다. 원본 픽셀은 그대로이며 덮개 레이어를 삭제하면 다시 보입니다."
@@ -348,9 +440,17 @@ export function ImageTextTools({
         정확성은 직접 확인해야 합니다.
       </div>
       <Feedback error={error} notice={notice} />
+      <Feedback notice={resumeNotice} error={draftWarning} />
+      {draftWarning && <button className="button button-light" disabled={busy || working} onClick={() => { setDraftWarning(""); setDraftReload(n => n + 1); }}>보관된 최신 중간 작업 불러오기</button>}
+      <p className="field-hint">영역·OCR 교정·새 문구·작업 번호는 이 기기에 30일간 보관됩니다. 다른 기기에는 자동으로 옮겨지지 않습니다.</p>
+      {object.crop && <p className="field-hint">잘라낸 이미지입니다. 아래는 원본 좌표이며, 현재 자르기 영역 안의 글자만 선택하세요.</p>}
+      {pendingStart && <div className="alert alert-info" role="status">이전 시작 요청의 응답을 확인하지 못했습니다. 같은 요청 번호로 상태를 확인하면 중복 생성·중복 차감하지 않습니다.
+        <button className="button button-light" disabled={busy || readOnly || !draftReady} onClick={() => void start()}>이전 요청 이어서 확인</button>
+      </div>}
       {stale && (
         <Feedback error="디자인 또는 입력이 변경되어 이전 견적·결과는 적용할 수 없습니다. 현재 상태에서 새 견적을 확인하세요." />
       )}
+      <fieldset disabled={!draftReady || readOnly || !!object.locked} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <div className="image-tools-columns">
         <div>
           <h3>1. 지울 글자 영역 선택</h3>
@@ -361,16 +461,18 @@ export function ImageTextTools({
           <div
             className="image-region-selector"
             onPointerDown={(e) => {
-              if (working || busy || ocrBusy) return;
+              if (readOnly || object.locked || !draftReady || working || busy || ocrBusy) return;
               e.currentTarget.setPointerCapture(e.pointerId);
               startPoint.current = point(e);
               invalidate();
             }}
             onPointerMove={(e) => {
+              if (readOnly || object.locked || !draftReady) { startPoint.current = null; return; }
               if (startPoint.current)
                 setRegion(regionFromPoints(startPoint.current, point(e)));
             }}
             onPointerUp={(e) => {
+              if (readOnly || object.locked || !draftReady) { startPoint.current = null; return; }
               if (startPoint.current) {
                 const next = regionFromPoints(startPoint.current, point(e));
                 if (next.width > 0.001 && next.height > 0.001) setRegion(next);
@@ -535,7 +637,7 @@ export function ImageTextTools({
           >
             AI 글자 제거 크레딧 견적
           </button>
-          {quote && (
+          {quote && !pendingStart && (
             <div className="quote-confirmation">
               <strong>{quote.credit_total} 크레딧 · 글자 제거 1장</strong>
               <p>
@@ -675,6 +777,7 @@ export function ImageTextTools({
           </p>
         </>
       )}
+      </fieldset>
     </div>
   );
 }

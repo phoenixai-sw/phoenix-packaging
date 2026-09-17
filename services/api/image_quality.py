@@ -17,8 +17,10 @@ from .auth import require_auth
 from .business import owned_record
 from .database import utcnow
 from .errors import APIError
+from .editor_sessions import enforce_edit_lease
 from .geometry import validate_scene
 from .image_quality_metadata import image_quality_metrics
+from .image_crop import crop_pixels
 from .models import Asset, Project, Tenant
 from .feature_models import UploadSession
 from .schemas import Scene, FaceId, Identifier
@@ -65,7 +67,7 @@ def inspect_image(face, obj, asset, raw, target_ppi):
             if image.size != (asset.width_px, asset.height_px):
                 raise ValueError()
             image.load()
-            pixels = image.size
+            pixels = ImageOps.exif_transpose(image).size
     except Exception:
         raise APIError(422, "ASSET_INVALID", "원본 이미지의 크기와 파일 상태를 확인해 주세요.") from None
     metrics = image_quality_metrics(pixels, obj, asset.metadata_json)
@@ -82,6 +84,7 @@ def inspect_image(face, obj, asset, raw, target_ppi):
     return {"source": {"id": asset.id, "sha256": digest, "width_px": pixels[0], "height_px": pixels[1]},
             "placed_mm": {key: obj[key] for key in ("x_mm", "y_mm", "width_mm", "height_mm")},
             "effective_ppi": metrics["effective_ppi"], "original_effective_ppi": metrics["original_effective_ppi"],
+            "crop": obj.get("crop"), "visible_pixels": metrics["visible_pixels"],
             "resampled": metrics["resampled"], "extended": metrics["extended"],
             "bleed_missing_mm": missing, "target_ppi": target_ppi,
             "required_pixels": {"width": ceil(obj["width_mm"] * target_ppi / 25.4), "height": ceil(obj["height_mm"] * target_ppi / 25.4)},
@@ -130,9 +133,10 @@ def make_derivative(raw, face, obj, metadata, *, target_ppi=300, resample=True, 
         if source.getexif().get(274, 1) != 1:
             raise APIError(422, "IMAGE_ORIENTATION_REQUIRED", "회전 메타데이터가 없는 이미지로 저장해 다시 업로드해 주세요.")
         source.load()
-        width, height = source.size
-        target_w = max(width, ceil(obj["width_mm"]*target_ppi/25.4)) if resample else width
-        target_h = max(height, ceil(obj["height_mm"]*target_ppi/25.4)) if resample else height
+        source_pixels = source.size
+        crop_x, crop_y, width, height = crop_pixels(source_pixels, obj)
+        target_w = max(ceil(width), ceil(obj["width_mm"]*target_ppi/25.4)) if resample else ceil(width)
+        target_h = max(ceil(height), ceil(obj["height_mm"]*target_ppi/25.4)) if resample else ceil(height)
         padding = {key: ceil(value * (target_w/obj["width_mm"] if key in {"left", "right"} else target_h/obj["height_mm"])) for key, value in pads.items()}
         total_w, total_h = target_w+padding["left"]+padding["right"], target_h+padding["top"]+padding["bottom"]
         if total_w * total_h > MAX_PIXELS or max(total_w, total_h) > 40_000:
@@ -140,8 +144,11 @@ def make_derivative(raw, face, obj, metadata, *, target_ppi=300, resample=True, 
         if target_w == width and target_h == height and not any(padding.values()):
             raise APIError(422, "IMAGE_QUALITY_NO_CHANGE", "이미 목표 픽셀 크기와 선택한 도련 조건을 충족합니다.")
         image = source.convert("RGBA" if source.mode in {"RGBA", "LA", "P"} else "RGB")
-        if image.size != (target_w, target_h):
-            image = image.resize((target_w, target_h), Image.Resampling.LANCZOS)
+        source_box = (crop_x, crop_y, crop_x+width, crop_y+height)
+        if (target_w, target_h) == (width, height) and all(value == int(value) for value in source_box):
+            image = image.crop(tuple(int(value) for value in source_box))
+        else:
+            image = image.resize((target_w, target_h), Image.Resampling.LANCZOS, box=source_box)
         image = _pad_axis(image, padding["left"], padding["right"], True, bleed_mode)
         image = _pad_axis(image, padding["top"], padding["bottom"], False, bleed_mode)
         output = BytesIO()
@@ -150,14 +157,18 @@ def make_derivative(raw, face, obj, metadata, *, target_ppi=300, resample=True, 
     if len(result) > MAX_BYTES:
         raise APIError(422, "IMAGE_BYTE_LIMIT", "보완 이미지가 20MiB 한도를 초과합니다. 목표 ppi를 낮춰 주세요.")
     previous = (metadata or {}).get("image_quality") or {}
-    native = previous.get("native_equivalent_pixels", [width, height])
-    source_quality = image_quality_metrics([width, height], obj, metadata)
-    root_rect = previous.get("original_content_rect_px", [0, 0, width, height])
+    native = crop_pixels(previous.get("native_equivalent_pixels", source_pixels), obj)[2:]
+    source_quality = image_quality_metrics(source_pixels, obj, metadata)
+    root_rect = previous.get("original_content_rect_px", [0, 0, *source_pixels])
+    left, top = max(crop_x, root_rect[0]), max(crop_y, root_rect[1])
+    right, bottom = min(crop_x+width, root_rect[0]+root_rect[2]), min(crop_y+height, root_rect[1]+root_rect[3])
+    root_rect = [max(0, left-crop_x), max(0, top-crop_y), max(0, right-left), max(0, bottom-top)]
     provenance = {"version": 1, "algorithm": "pillow-lanczos-edge-symmetric-v1", "detail_recovery_claimed": False,
                   "resampled": bool(previous.get("resampled")) or (target_w, target_h) != (width, height),
                   "extended": bool(previous.get("extended")) or any(padding.values()),
                   "native_equivalent_pixels": [native[0]*patch["width_mm"]/obj["width_mm"], native[1]*patch["height_mm"]/obj["height_mm"]],
-                  "parent_pixels": [width, height], "output_pixels": [total_w, total_h],
+                  "parent_pixels": list(source_pixels), "output_pixels": [total_w, total_h],
+                  "source_crop": obj.get("crop"), "source_visible_pixels": [width, height],
                   "source_effective_ppi": source_quality["effective_ppi"],
                   "source_original_effective_ppi": source_quality["original_effective_ppi"],
                   "target_ppi": target_ppi, "bleed_mode": bleed_mode, "extended_mm": pads,
@@ -166,9 +177,12 @@ def make_derivative(raw, face, obj, metadata, *, target_ppi=300, resample=True, 
                       padding["top"]+root_rect[1]*target_h/height, root_rect[2]*target_w/width, root_rect[3]*target_h/height],
                   "root_source_asset_id": previous.get("root_source_asset_id", obj["asset_id"]),
                   "root_source_sha256": previous.get("root_source_sha256", sha256(raw).hexdigest()),
-                  "original_source_pixels": previous.get("original_source_pixels", [width, height]),
+                  "original_source_pixels": previous.get("original_source_pixels", list(source_pixels)),
                   "parent_asset_id": obj["asset_id"], "parent_sha256": sha256(raw).hexdigest(),
                   "parent_placed_mm": {key: obj[key] for key in patch}, "output_placed_mm": patch}
+    if obj.get("crop") is not None:
+        # The derivative contains this visible region; applying the old crop again would crop twice.
+        patch = {**patch, "crop": None}
     return result, patch, provenance
 
 
@@ -214,6 +228,8 @@ def install_image_quality_routes(app, db_session, asset_payload):
         user, _ = require_auth(request, db, mutate=True)
         # Serializes idempotency, quota and processing load for this tenant on SQLite and PostgreSQL.
         db.execute(update(Tenant).where(Tenant.id==user.tenant_id).values(name=Tenant.name).execution_options(synchronize_session=False))
+        project = owned_record(db, Project, body.project_id, user.tenant_id)
+        enforce_edit_lease(db, project, request)
         project, scene, face, obj, source = context(body, db, user, lock=True)
         derivative_id = str(uuid5(NAMESPACE_URL, "phoenix:image-quality:"+user.tenant_id+":"+body.operation_key))
         request_hash = sha256(json.dumps(body.model_dump(mode="json"), sort_keys=True).encode()).hexdigest()

@@ -97,7 +97,7 @@ export function ImagePreparationTools({
           object={object}
           saveCurrent={saveCurrent}
           onApply={apply}
-          readOnly={readOnly}
+          readOnly={readOnly || !!object.locked}
         />
       ) : (
         <ImageTextTools
@@ -107,7 +107,7 @@ export function ImagePreparationTools({
           object={object}
           saveCurrent={saveCurrent}
           onApply={apply}
-          readOnly={readOnly}
+          readOnly={readOnly || !!object.locked}
         />
       )}
     </div>

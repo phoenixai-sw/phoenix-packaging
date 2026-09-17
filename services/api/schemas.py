@@ -14,6 +14,21 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=False)
 
 
+class ImageCrop(StrictModel):
+    """Normalized EXIF-oriented source coordinates; placement bbox stays unchanged."""
+    x: float = Field(ge=0, lt=1, allow_inf_nan=False, strict=True)
+    y: float = Field(ge=0, lt=1, allow_inf_nan=False, strict=True)
+    width: float = Field(ge=0.000001, le=1, allow_inf_nan=False, strict=True)
+    height: float = Field(ge=0.000001, le=1, allow_inf_nan=False, strict=True)
+
+    @model_validator(mode="after")
+    def within_source(self):
+        from .image_crop import normalized_crop
+        result = normalized_crop(self.model_dump())
+        self.width, self.height = result["width"], result["height"]
+        return self
+
+
 class SceneObject(StrictModel):
     id: Identifier
     type: Literal["text", "image", "shape", "barcode"]
@@ -31,6 +46,7 @@ class SceneObject(StrictModel):
     color: Color | None = None
     align: Literal["left", "center", "right"] | None = None
     asset_id: UUID | None = None
+    crop: ImageCrop | None = None
     visible: bool = True
     print_enabled: bool = True
     locked: bool = False
@@ -56,6 +72,8 @@ class SceneObject(StrictModel):
 
     @model_validator(mode="after")
     def validate_kind(self):
+        if self.crop is not None and self.type != "image":
+            raise ValueError("자르기는 이미지 객체에서만 사용할 수 있습니다.")
         if self.type == "text" and (self.text is None or self.font_size_pt is None or self.font_id is None):
             raise ValueError("텍스트 객체에는 문구, 글꼴과 글자 크기가 필요합니다.")
         if self.type == "image" and self.asset_id is None:

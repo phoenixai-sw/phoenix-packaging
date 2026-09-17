@@ -18,6 +18,13 @@ export type Hole = {
   diameter_mm: number;
 };
 
+export type ImageCrop = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 export type PouchFeatures = {
   header_height_mm?: number;
   zipper_enabled?: boolean;
@@ -47,6 +54,7 @@ export type SceneObject = {
   color?: string | null;
   align?: "left" | "center" | "right" | null;
   asset_id?: string | null;
+  crop?: ImageCrop | null;
   visible?: boolean;
   print_enabled?: boolean;
   locked?: boolean;

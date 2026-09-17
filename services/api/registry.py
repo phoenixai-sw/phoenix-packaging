@@ -141,6 +141,8 @@ def install_registry_routes(app,db_session,project_payload,snapshot_revision):
     @router.patch("/projects/{identity}/settings")
     def project_settings(identity:UUID,body:SettingsBody,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True);project=owned_record(db,Project,identity,user.tenant_id)
+        from .editor_sessions import enforce_edit_lease
+        enforce_edit_lease(db,project,request)
         values=body.model_dump(exclude_unset=True,exclude={"base_revision"});scene=deepcopy(project.scene)
         for field,kind in (("template_version_id","template"),("print_profile_version_id","profile")):
             if field in values and values[field]:

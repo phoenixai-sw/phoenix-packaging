@@ -15,6 +15,7 @@ export type SceneObject = {
   color?: string;
   align?: "left" | "center" | "right";
   asset_id?: string;
+  crop?: { x: number; y: number; width: number; height: number } | null;
   visible?: boolean;
   print_enabled?: boolean;
   line_height?: number;
@@ -89,20 +90,49 @@ export type Project = {
   updated_at: string;
 };
 export const roundMM = (value: number) => Math.round(value * 10000) / 10000;
-export type PlacementRegion = Pick<SceneObject, "x_mm" | "y_mm" | "width_mm" | "height_mm">;
+export type PlacementRegion = Pick<
+  SceneObject,
+  "x_mm" | "y_mm" | "width_mm" | "height_mm"
+>;
 
-export function faceSafeRegion(scene: Scene, face: Face, supplied?: PlacementRegion): PlacementRegion {
+export function faceSafeRegion(
+  scene: Scene,
+  face: Face,
+  supplied?: PlacementRegion,
+): PlacementRegion {
   if (supplied) return supplied;
-  const margin = scene.template_kind === "folding-box" ? 5 : face.id === "bottom" ? 10 : 15;
-  return { x_mm: margin, y_mm: margin, width_mm: face.width_mm - margin * 2, height_mm: face.height_mm - margin * 2 };
+  const margin =
+    scene.template_kind === "folding-box" ? 5 : face.id === "bottom" ? 10 : 15;
+  return {
+    x_mm: margin,
+    y_mm: margin,
+    width_mm: face.width_mm - margin * 2,
+    height_mm: face.height_mm - margin * 2,
+  };
 }
 
 /** Store only ordinary mm geometry, so canvas, PDF and 3D use the same result. */
-export function containImage(region: PlacementRegion, pixelWidth: number, pixelHeight: number) {
-  if (![region.x_mm, region.y_mm, region.width_mm, region.height_mm, pixelWidth, pixelHeight].every(Number.isFinite)
-      || Math.min(region.width_mm, region.height_mm, pixelWidth, pixelHeight) <= 0)
+export function containImage(
+  region: PlacementRegion,
+  pixelWidth: number,
+  pixelHeight: number,
+) {
+  if (
+    ![
+      region.x_mm,
+      region.y_mm,
+      region.width_mm,
+      region.height_mm,
+      pixelWidth,
+      pixelHeight,
+    ].every(Number.isFinite) ||
+    Math.min(region.width_mm, region.height_mm, pixelWidth, pixelHeight) <= 0
+  )
     throw new Error("이미지 크기와 배치할 면의 크기를 확인해 주세요.");
-  const scale = Math.min(region.width_mm / pixelWidth, region.height_mm / pixelHeight);
+  const scale = Math.min(
+    region.width_mm / pixelWidth,
+    region.height_mm / pixelHeight,
+  );
   const width_mm = roundMM(pixelWidth * scale);
   const height_mm = roundMM(pixelHeight * scale);
   if (Math.min(width_mm, height_mm) < 0.1)
@@ -110,30 +140,73 @@ export function containImage(region: PlacementRegion, pixelWidth: number, pixelH
   return {
     x_mm: roundMM(region.x_mm + (region.width_mm - width_mm) / 2),
     y_mm: roundMM(region.y_mm + (region.height_mm - height_mm) / 2),
-    width_mm, height_mm, rotation_deg: 0,
+    width_mm,
+    height_mm,
+    rotation_deg: 0,
   };
 }
 
-export function initialImagePlacement(region: PlacementRegion, pixelWidth: number, pixelHeight: number) {
+export function initialImagePlacement(
+  region: PlacementRegion,
+  pixelWidth: number,
+  pixelHeight: number,
+) {
   const width_mm = Math.min(90, region.width_mm);
-  return containImage({ ...region, x_mm: region.x_mm + (region.width_mm - width_mm) / 2, width_mm }, pixelWidth, pixelHeight);
+  return containImage(
+    {
+      ...region,
+      x_mm: region.x_mm + (region.width_mm - width_mm) / 2,
+      width_mm,
+    },
+    pixelWidth,
+    pixelHeight,
+  );
 }
 
-export function applyImageBackground(scene: Scene, faceId: string, asset: { id: string; width_px: number; height_px: number }): Scene {
+export function applyImageBackground(
+  scene: Scene,
+  faceId: string,
+  asset: { id: string; width_px: number; height_px: number },
+): Scene {
   return {
     ...scene,
     faces: scene.faces.map((face) => {
       if (face.id !== faceId) return face;
       const id = `ai-background-${faceId}`;
-      const retained = face.objects.filter((object) => object.id !== id && !(
-        object.type === "image" && object.locked && object.x_mm === 0 && object.y_mm === 0 &&
-        object.width_mm === face.width_mm && object.height_mm === face.height_mm
-      ));
+      const retained = face.objects.filter(
+        (object) =>
+          object.id !== id &&
+          !(
+            object.type === "image" &&
+            object.locked &&
+            object.x_mm === 0 &&
+            object.y_mm === 0 &&
+            object.width_mm === face.width_mm &&
+            object.height_mm === face.height_mm
+          ),
+      );
       const layer: SceneObject = {
-        id, type: "image", face_id: faceId, asset_id: asset.id,
-        ...containImage({ x_mm: 0, y_mm: 0, width_mm: face.width_mm, height_mm: face.height_mm }, asset.width_px, asset.height_px),
-        z_index: Math.max(-10000, Math.min(0, ...retained.map((object) => object.z_index)) - 1),
-        visible: true, print_enabled: true, locked: true,
+        id,
+        type: "image",
+        face_id: faceId,
+        asset_id: asset.id,
+        ...containImage(
+          {
+            x_mm: 0,
+            y_mm: 0,
+            width_mm: face.width_mm,
+            height_mm: face.height_mm,
+          },
+          asset.width_px,
+          asset.height_px,
+        ),
+        z_index: Math.max(
+          -10000,
+          Math.min(0, ...retained.map((object) => object.z_index)) - 1,
+        ),
+        visible: true,
+        print_enabled: true,
+        locked: true,
       };
       return { ...face, objects: [layer, ...retained] };
     }),
@@ -176,8 +249,16 @@ export function addText(
   const width = roundMM(safe.width_mm - insetX * 2);
   const height = roundMM(Math.min(25, safe.height_mm - insetY * 2));
   // Bundled NotoSansKR: this fixed starter text measures 4.824 × font size.
-  const fontSize = Math.floor(Math.min(24, width * 72 / 25.4 / 4.824 * 0.95, height * 72 / 25.4 / 1.2 * 0.95) * 2) / 2;
-  if (fontSize < 4) throw new Error("이 면의 안전영역에는 기본 문구를 놓을 공간이 부족합니다.");
+  const fontSize =
+    Math.floor(
+      Math.min(
+        24,
+        ((width * 72) / 25.4 / 4.824) * 0.95,
+        ((height * 72) / 25.4 / 1.2) * 0.95,
+      ) * 2,
+    ) / 2;
+  if (fontSize < 4)
+    throw new Error("이 면의 안전영역에는 기본 문구를 놓을 공간이 부족합니다.");
   const object: SceneObject = {
     id,
     type: "text",
@@ -187,7 +268,10 @@ export function addText(
     width_mm: width,
     height_mm: height,
     rotation_deg: 0,
-    z_index: Math.min(10000, Math.max(0, ...face.objects.map((o) => o.z_index)) + 1),
+    z_index: Math.min(
+      10000,
+      Math.max(0, ...face.objects.map((o) => o.z_index)) + 1,
+    ),
     text: "새로운 문구",
     font_size_pt: fontSize,
     font_id: "NotoSansKR",
@@ -207,15 +291,44 @@ export function addText(
     },
   };
 }
+function reorderWithoutChangingLocked(objects: SceneObject[]): SceneObject[] {
+  const anchors = objects.map((o, i) => ({ o, i })).filter(({ o }) => o.locked);
+  if (!anchors.length) return objects.map((o, z_index) => ({ ...o, z_index }));
+  const result = [...objects];
+  let start = -1,
+    lower = -10001;
+  for (const anchor of [
+    ...anchors,
+    { i: objects.length, o: { z_index: 10001 } as SceneObject },
+  ]) {
+    const count = anchor.i - start - 1,
+      upper = anchor.o.z_index;
+    if (upper - lower - 1 < count)
+      throw new Error(
+        "잠긴 레이어 사이에 순서를 바꿀 공간이 없습니다. 인접 레이어의 잠금을 먼저 해제해 주세요.",
+      );
+    const first = start === -1 ? upper - count : lower + 1;
+    for (let offset = 0; offset < count; offset++) {
+      const index = start + 1 + offset;
+      result[index] = { ...objects[index], z_index: first + offset };
+    }
+    start = anchor.i;
+    lower = upper;
+  }
+  return result;
+}
 export function sendLayerToBack(scene: Scene, id: string): Scene {
   return {
     ...scene,
     faces: scene.faces.map((face) => {
       const sorted = [...face.objects].sort((a, b) => a.z_index - b.z_index);
-      const index = sorted.findIndex((object) => object.id === id);
-      if (index <= 0) return face;
+      const index = sorted.findIndex((o) => o.id === id);
+      if (index <= 0 || sorted[index].locked) return face;
       const [target] = sorted.splice(index, 1);
-      return { ...face, objects: [target, ...sorted].map((object, z_index) => ({ ...object, z_index })) };
+      return {
+        ...face,
+        objects: reorderWithoutChangingLocked([target, ...sorted]),
+      };
     }),
   };
 }
@@ -224,18 +337,17 @@ export function moveLayer(scene: Scene, id: string, direction: -1 | 1): Scene {
     ...scene,
     faces: scene.faces.map((face) => {
       const sorted = [...face.objects].sort((a, b) => a.z_index - b.z_index);
-      const index = sorted.findIndex((o) => o.id === id);
+      const index = sorted.findIndex((o) => o.id === id),
+        other = index + direction;
       if (
         index < 0 ||
-        index + direction < 0 ||
-        index + direction >= sorted.length
+        other < 0 ||
+        other >= sorted.length ||
+        sorted[index].locked
       )
         return face;
-      [sorted[index], sorted[index + direction]] = [
-        sorted[index + direction],
-        sorted[index],
-      ];
-      return { ...face, objects: sorted.map((o, i) => ({ ...o, z_index: i })) };
+      [sorted[index], sorted[other]] = [sorted[other], sorted[index]];
+      return { ...face, objects: reorderWithoutChangingLocked(sorted) };
     }),
   };
 }

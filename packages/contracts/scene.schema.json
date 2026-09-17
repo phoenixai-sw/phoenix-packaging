@@ -106,6 +106,44 @@
       "title": "Hole",
       "type": "object"
     },
+    "ImageCrop": {
+      "additionalProperties": false,
+      "description": "Normalized EXIF-oriented source coordinates; placement bbox stays unchanged.",
+      "properties": {
+        "x": {
+          "exclusiveMaximum": 1,
+          "minimum": 0,
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "exclusiveMaximum": 1,
+          "minimum": 0,
+          "title": "Y",
+          "type": "number"
+        },
+        "width": {
+          "maximum": 1,
+          "minimum": 1e-06,
+          "title": "Width",
+          "type": "number"
+        },
+        "height": {
+          "maximum": 1,
+          "minimum": 1e-06,
+          "title": "Height",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "title": "ImageCrop",
+      "type": "object"
+    },
     "PouchFeatures": {
       "additionalProperties": false,
       "description": "Optional physical pouch finishing, measured down from the top cut edge.",
@@ -334,6 +372,17 @@
           ],
           "default": null,
           "title": "Asset Id"
+        },
+        "crop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageCrop"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "visible": {
           "default": true,

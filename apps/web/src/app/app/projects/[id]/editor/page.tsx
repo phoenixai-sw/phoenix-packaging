@@ -33,6 +33,9 @@ import {
   Barcode,
   Link2,
   History,
+  Lock,
+  Unlock,
+  Crop,
 } from "lucide-react";
 import { api, ApiError, errorMessage } from "@/lib/api";
 import { useSession } from "@/components/workspace";
@@ -43,6 +46,20 @@ import { AIStudio } from "@/components/ai-studio";
 import { StructureTools } from "@/components/structure-tools";
 import { BindingTools } from "@/components/binding-tools";
 import { ExportTools } from "@/components/export-tools";
+import { ImageCropTools } from "@/components/image-crop-tools";
+import { RevisionTools } from "@/components/revision-tools";
+import { EditorActivity } from "@/components/editor-activity";
+import { AssetLibrary, type LibraryAsset } from "@/components/asset-library";
+import { useEditorLease } from "@/lib/use-editor-lease";
+import {
+  assertLockedObjectsUnchanged,
+  alignObjects,
+  distributeObjects,
+  patchObjects,
+  deleteObjects,
+  setObjectsLocked,
+  type Alignment,
+} from "@editor/layout";
 import { TextHistory } from "@/components/text-history";
 import { PrintPreparationTools } from "@/components/print-preparation-tools";
 import { assertImageSnapshot } from "@editor/image-tools";
@@ -76,7 +93,13 @@ const Canvas = dynamic(() => import("@editor/canvas"), {
 const PackagingPreview = dynamic(() => import("@preview3d/PackagingPreview"), {
   ssr: false,
 });
-const ImagePreparationTools = dynamic(() => import("@/components/image-preparation-tools").then((module) => module.ImagePreparationTools), { ssr: false });
+const ImagePreparationTools = dynamic(
+  () =>
+    import("@/components/image-preparation-tools").then(
+      (module) => module.ImagePreparationTools,
+    ),
+  { ssr: false },
+);
 type SaveStatus = "saved" | "dirty" | "saving" | "error" | "conflict";
 export default function EditorPage({
   params,
@@ -85,16 +108,58 @@ export default function EditorPage({
 }) {
   const { id } = use(params);
   const session = useSession();
-  const readOnly = !canEdit(session);
+  const roleCanEdit = canEdit(session);
   const uploadConfig = useApiData<{ upload_max_bytes: number }>("/config");
   const [panel, setPanel] = useState<
-    "ai" | "structure" | "bindings" | "exports" | "3d" | "history" | "preparation" | "images" | "image-text" | null
+    | "ai"
+    | "structure"
+    | "bindings"
+    | "exports"
+    | "3d"
+    | "history"
+    | "preparation"
+    | "images"
+    | "image-text"
+    | "crop"
+    | "revisions"
+    | "library"
+    | null
   >(null);
   const [project, setProject] = useState<Project | null>(null);
   const [barcodePreset, setBarcodePreset] = useState("");
   const [scene, setScene] = useState<Scene | null>(null);
   const [error, setError] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setPrimarySelected] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [alignToFace, setAlignToFace] = useState(false);
+  const [snapping, setSnapping] = useState(true),
+    [rulers, setRulers] = useState(true);
+  const lease = useEditorLease(id, roleCanEdit, !!project);
+  const [leaseSynced, setLeaseSynced] = useState(false),
+    [leaseSyncTick, setLeaseSyncTick] = useState(0);
+  const readOnly = !roleCanEdit || !lease.owned || !leaseSynced;
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
+  const loseLeaseRef = useRef(lease.lose);
+  loseLeaseRef.current = lease.lose;
+  function selectMany(ids: string[]) {
+    setSelectedIds(ids);
+    setPrimarySelected(ids.at(-1) || null);
+  }
+  function setSelected(value: string | null, additive = false) {
+    if (!value) {
+      selectMany([]);
+      return;
+    }
+    selectMany(
+      additive
+        ? selectedIds.includes(value)
+          ? selectedIds.filter((id) => id !== value)
+          : [...selectedIds, value]
+        : [value],
+    );
+  }
+
   const [mobilePane, setMobilePane] = useState<
     "canvas" | "tools" | "properties"
   >("canvas");
@@ -163,13 +228,56 @@ export default function EditorPage({
       active = false;
     };
   }, [id, retry, recoveryKey]);
-  function commit(next: Scene, confirmationOnly = false) {
-    if (readOnly) return;
+  useEffect(() => {
+    if (!lease.owned) {
+      setLeaseSynced(false);
+      return;
+    }
+    let active = true;
+    setLeaseSynced(false);
+    api<Project>(`/projects/${id}`)
+      .then((latest) => {
+        if (!active) return;
+        const dirty = JSON.stringify(current.current) !== savedJSON.current;
+        if (dirty && latest.base_revision !== revision.current) {
+          conflict.current = true;
+          setStatus("conflict");
+          setSaveError(
+            "편집 권한을 다시 얻었지만 서버 저장본이 바뀌었습니다. 내 복구본을 내려받거나 서버 버전을 열어 주세요.",
+          );
+        } else if (!dirty) onServerProject(latest, true);
+        setLeaseSynced(true);
+      })
+      .catch((e) => {
+        if (active)
+          setSaveError(`최신 저장본 확인에 실패했습니다. ${errorMessage(e)}`);
+      });
+    return () => {
+      active = false;
+    };
+  }, [lease.owned, id, leaseSyncTick]);
+  function commit(
+    next: Scene,
+    confirmationOnly = false,
+    allowLockOnly = false,
+  ) {
+    if (readOnlyRef.current) {
+      setSaveError(
+        "현재 창은 읽기 전용입니다. 편집 권한을 먼저 확보해 주세요.",
+      );
+      return false;
+    }
     if (
       !current.current ||
       JSON.stringify(next) === JSON.stringify(current.current)
     )
-      return;
+      return true;
+    try {
+      assertLockedObjectsUnchanged(current.current, next, allowLockOnly);
+    } catch (e) {
+      setSaveError(errorMessage(e));
+      return false;
+    }
     if (!confirmationOnly)
       next = { ...next, reviewed_face_ids: [], confirmed_fields: [] };
     past.current = [...past.current.slice(-79), current.current];
@@ -186,8 +294,15 @@ export default function EditorPage({
   }
   function undo() {
     if (readOnly) return;
-    const previous = past.current.pop();
+    const previous = past.current.at(-1);
     if (!previous || !current.current) return;
+    try {
+      assertLockedObjectsUnchanged(current.current, previous, true);
+    } catch (e) {
+      setSaveError(errorMessage(e));
+      return;
+    }
+    past.current.pop();
     future.current.push(current.current);
     current.current = previous;
     setScene(previous);
@@ -204,8 +319,15 @@ export default function EditorPage({
   }
   function redo() {
     if (readOnly) return;
-    const next = future.current.pop();
+    const next = future.current.at(-1);
     if (!next || !current.current) return;
+    try {
+      assertLockedObjectsUnchanged(current.current, next, true);
+    } catch (e) {
+      setSaveError(errorMessage(e));
+      return;
+    }
+    future.current.pop();
     past.current.push(current.current);
     current.current = next;
     setScene(next);
@@ -225,7 +347,8 @@ export default function EditorPage({
       await saving.current;
       if (conflict.current) return null;
     }
-    if (!current.current || conflict.current) return null;
+    if (!current.current || conflict.current || readOnlyRef.current)
+      return null;
     const snapshot = current.current;
     const json = JSON.stringify(snapshot);
     if (json === savedJSON.current) return null;
@@ -258,6 +381,7 @@ export default function EditorPage({
             "다른 창에서 이 프로젝트를 수정했습니다. 내 편집 내용은 이 브라우저에 보관되어 있습니다.",
           );
         } else {
+          if (e instanceof ApiError && e.status === 423) loseLeaseRef.current();
           setStatus("error");
           setSaveError(errorMessage(e));
         }
@@ -270,6 +394,10 @@ export default function EditorPage({
     return task;
   }, [id, recoveryKey]);
   async function saveCurrent(): Promise<number> {
+    if (readOnlyRef.current)
+      throw new Error(
+        "현재 창은 읽기 전용입니다. 편집 권한을 먼저 확보해 주세요.",
+      );
     if (editing) throw new Error("텍스트 편집을 마친 뒤 다시 시도해 주세요.");
     await saveNow();
     if (
@@ -281,13 +409,26 @@ export default function EditorPage({
       );
     return revision.current;
   }
-  async function applyPreparedScene(expectedScene: string, expectedRevision: number, transform: (scene: Scene) => Scene) {
-    if (readOnly || !current.current || conflict.current) throw new Error("편집 권한과 저장 상태를 확인해 주세요.");
-    assertImageSnapshot(current.current, expectedScene, revision.current, expectedRevision);
-    commit(transform(current.current));
+  async function applyPreparedScene(
+    expectedScene: string,
+    expectedRevision: number,
+    transform: (scene: Scene) => Scene,
+  ) {
+    if (readOnly || !current.current || conflict.current)
+      throw new Error("편집 권한과 저장 상태를 확인해 주세요.");
+    assertImageSnapshot(
+      current.current,
+      expectedScene,
+      revision.current,
+      expectedRevision,
+    );
+    const next = transform(current.current);
+    assertLockedObjectsUnchanged(current.current, next);
+    commit(next);
     await saveCurrent();
   }
-  function onServerProject(p: Project) {
+  function onServerProject(p: Project, preserveRecovery = false) {
+    conflict.current = false;
     current.current = p.scene;
     revision.current = p.base_revision;
     savedJSON.current = JSON.stringify(p.scene);
@@ -299,21 +440,39 @@ export default function EditorPage({
     past.current = [];
     future.current = [];
     setHistoryCount({ past: 0, future: 0 });
-    void writeRecovery(recoveryKey, null);
+    if (!preserveRecovery) void writeRecovery(recoveryKey, null);
   }
-  async function useGeneratedAsset(asset: { id: string; width_px?: number; height_px?: number }) {
+  async function useGeneratedAsset(asset: {
+    id: string;
+    width_px?: number;
+    height_px?: number;
+  }) {
     if (!current.current || readOnly) return;
     const targetFaceId = faceId;
-    const dimensions = asset.width_px && asset.height_px
-      ? { width_px: asset.width_px, height_px: asset.height_px }
-      : await assetImageDimensions(asset.id);
-    if (!mounted.current || activeProjectId.current !== id || !current.current || !current.current.faces.some((f) => f.id === targetFaceId)) return;
+    const dimensions =
+      asset.width_px && asset.height_px
+        ? { width_px: asset.width_px, height_px: asset.height_px }
+        : await assetImageDimensions(asset.id);
+    if (
+      !mounted.current ||
+      activeProjectId.current !== id ||
+      !current.current ||
+      !current.current.faces.some((f) => f.id === targetFaceId)
+    )
+      return;
     // Preserve intervening edits; only the target face's previous AI background is replaced.
-    commit(applyImageBackground(current.current, targetFaceId, { id: asset.id, ...dimensions }));
+    const next = applyImageBackground(current.current, targetFaceId, {
+      id: asset.id,
+      ...dimensions,
+    });
+    assertLockedObjectsUnchanged(current.current, next);
+    if (readOnlyRef.current) throw new Error("편집 권한을 다시 확인해 주세요.");
+    commit(next);
   }
   useEffect(() => {
     if (
       !scene ||
+      readOnly ||
       editing ||
       conflict.current ||
       JSON.stringify(scene) === savedJSON.current
@@ -323,7 +482,7 @@ export default function EditorPage({
       void saveNow();
     }, 1100);
     return () => clearTimeout(timer);
-  }, [scene, editing, saveNow, saveTick]);
+  }, [scene, editing, readOnly, saveNow, saveTick]);
   useEffect(() => {
     const reconnect = () => {
       if (!conflict.current) void saveNow();
@@ -346,7 +505,7 @@ export default function EditorPage({
   }, [saveNow]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (e.isComposing || editing) return;
+      if (e.isComposing || editing || panel) return;
       const target = e.target as HTMLElement;
       if (
         ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) ||
@@ -367,8 +526,45 @@ export default function EditorPage({
         current.current
       ) {
         e.preventDefault();
-        commit(removeObject(current.current, selected));
+        commit(deleteObjects(current.current, selectedIds));
         setSelected(null);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+        e.preventDefault();
+        selectMany(
+          current.current?.faces
+            .find((f) => f.id === faceId)
+            ?.objects.filter((o) => o.visible !== false)
+            .map((o) => o.id) || [],
+        );
+      }
+      if (
+        ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key) &&
+        selectedIds.length &&
+        current.current
+      ) {
+        e.preventDefault();
+        const amount = e.shiftKey ? 10 : 1;
+        const dx =
+            e.key === "ArrowLeft"
+              ? -amount
+              : e.key === "ArrowRight"
+                ? amount
+                : 0,
+          dy =
+            e.key === "ArrowUp" ? -amount : e.key === "ArrowDown" ? amount : 0;
+        commit(
+          patchObjects(
+            current.current,
+            current.current.faces
+              .flatMap((f) => f.objects)
+              .filter((o) => selectedIds.includes(o.id))
+              .map((o) => ({
+                id: o.id,
+                patch: { x_mm: o.x_mm + dx, y_mm: o.y_mm + dy },
+              })),
+          ),
+        );
       }
       if (e.key === "Escape") setSelected(null);
     };
@@ -384,10 +580,26 @@ export default function EditorPage({
       patch = { ...patch, binding_key: undefined };
     if (current.current) commit(updateObject(current.current, id, patch));
   }
+  function reorderLayer(objectId: string, direction: -1 | 1 | "back") {
+    if (!current.current) return;
+    try {
+      commit(
+        direction === "back"
+          ? sendLayerToBack(current.current, objectId)
+          : moveLayer(current.current, objectId, direction),
+      );
+    } catch (e) {
+      setSaveError(errorMessage(e));
+    }
+  }
   function addTextLayer() {
     if (!current.current) return;
     try {
-      const result = addText(current.current, faceId, geometryFace?.regions?.safe);
+      const result = addText(
+        current.current,
+        faceId,
+        geometryFace?.regions?.safe,
+      );
       commit(result.scene);
       setSelected(result.id);
       setMobilePane("properties");
@@ -398,21 +610,74 @@ export default function EditorPage({
   async function fitImageLayer(objectId: string) {
     if (!current.current || readOnly || fittingImage) return;
     const targetFaceId = faceId;
-    const original = current.current.faces.find((face) => face.id === targetFaceId)?.objects.find((object) => object.id === objectId);
-    if (original?.type !== "image" || !original.asset_id) return;
+    const original = current.current.faces
+      .find((face) => face.id === targetFaceId)
+      ?.objects.find((object) => object.id === objectId);
+    if (original?.type !== "image" || !original.asset_id || original.locked)
+      return;
     setFittingImage(objectId);
     setSaveError("");
     try {
       const dimensions = await assetImageDimensions(original.asset_id);
-      const target = current.current?.faces.find((face) => face.id === targetFaceId);
+      const target = current.current?.faces.find(
+        (face) => face.id === targetFaceId,
+      );
       const latest = target?.objects.find((object) => object.id === objectId);
-      if (!mounted.current || activeProjectId.current !== id || !target || !latest || latest.asset_id !== original.asset_id) return;
-      change(objectId, containImage({ x_mm: 0, y_mm: 0, width_mm: target.width_mm, height_mm: target.height_mm }, dimensions.width_px, dimensions.height_px));
+      if (
+        !mounted.current ||
+        activeProjectId.current !== id ||
+        !target ||
+        !latest ||
+        latest.asset_id !== original.asset_id
+      )
+        return;
+      change(
+        objectId,
+        containImage(
+          {
+            x_mm: 0,
+            y_mm: 0,
+            width_mm: target.width_mm,
+            height_mm: target.height_mm,
+          },
+          dimensions.width_px * (latest.crop?.width ?? 1),
+          dimensions.height_px * (latest.crop?.height ?? 1),
+        ),
+      );
     } catch (e) {
       if (mounted.current) setSaveError(errorMessage(e));
     } finally {
       if (mounted.current) setFittingImage(null);
     }
+  }
+  function addLibraryAsset(asset: LibraryAsset) {
+    if (readOnlyRef.current || !current.current) return;
+    const face = current.current.faces.find((f) => f.id === faceId);
+    if (!face) return;
+    const placement = initialImagePlacement(
+      faceSafeRegion(current.current, face, geometryFace?.regions?.safe),
+      asset.width_px,
+      asset.height_px,
+    );
+    const object: SceneObject = {
+      id: crypto.randomUUID(),
+      type: "image",
+      face_id: face.id,
+      asset_id: asset.id,
+      ...placement,
+      rotation_deg: 0,
+      z_index: Math.max(0, ...face.objects.map((o) => o.z_index)) + 1,
+      visible: true,
+      print_enabled: true,
+    };
+    commit({
+      ...current.current,
+      faces: current.current.faces.map((f) =>
+        f.id === face.id ? { ...f, objects: [...f.objects, object] } : f,
+      ),
+    });
+    setSelected(object.id);
+    setMobilePane("properties");
   }
   function addShape() {
     if (!current.current) return;
@@ -492,17 +757,30 @@ export default function EditorPage({
     setSaveError("");
     try {
       const asset = await uploadAsset(file, id);
-      const dimensions = asset.width_px && asset.height_px
-        ? { width_px: asset.width_px, height_px: asset.height_px }
-        : await assetImageDimensions(asset.id);
-      if (!mounted.current || activeProjectId.current !== id || !current.current) return;
+      const dimensions =
+        asset.width_px && asset.height_px
+          ? { width_px: asset.width_px, height_px: asset.height_px }
+          : await assetImageDimensions(asset.id);
+      if (
+        !mounted.current ||
+        activeProjectId.current !== id ||
+        !current.current
+      )
+        return;
       const face = current.current.faces.find((f) => f.id === faceId)!;
       const object: SceneObject = {
         id: crypto.randomUUID(),
         type: "image",
         face_id: faceId,
-        ...initialImagePlacement(faceSafeRegion(current.current, face, geometryFace?.regions?.safe), dimensions.width_px, dimensions.height_px),
-        z_index: Math.min(10000, Math.max(0, ...face.objects.map((o) => o.z_index)) + 1),
+        ...initialImagePlacement(
+          faceSafeRegion(current.current, face, geometryFace?.regions?.safe),
+          dimensions.width_px,
+          dimensions.height_px,
+        ),
+        z_index: Math.min(
+          10000,
+          Math.max(0, ...face.objects.map((o) => o.z_index)) + 1,
+        ),
         asset_id: asset.id,
         visible: true,
         print_enabled: true,
@@ -610,7 +888,7 @@ export default function EditorPage({
   function restoreDraft() {
     if (!recovery || !current.current) return;
     const changedServer = recovery.base_revision !== revision.current;
-    commit(recovery.scene);
+    if (commit(recovery.scene) === false) return;
     setRecovery(undefined);
     if (changedServer) {
       conflict.current = true;
@@ -644,9 +922,10 @@ export default function EditorPage({
     );
   const face = scene.faces.find((f) => f.id === faceId) || scene.faces[0];
   const geometry = project.geometry as unknown as
-    | PackagingPreviewProps["geometry"]
-    | undefined;
-  const geometryFace = (project.geometry?.faces as FaceStructure[] | undefined)?.find((f) => f.id === face.id);
+    PackagingPreviewProps["geometry"] | undefined;
+  const geometryFace = (
+    project.geometry?.faces as FaceStructure[] | undefined
+  )?.find((f) => f.id === face.id);
   const object = face.objects.find((o) => o.id === selected);
   const warnings = safeWarnings(face, geometryFace?.regions?.safe);
   const saveLabel = {
@@ -734,6 +1013,44 @@ export default function EditorPage({
           </button>
         </div>
       </header>
+      <EditorActivity projectId={id} onAI={() => setPanel("ai")} />
+      <div
+        className={`editor-lease-bar ${readOnly ? "readonly" : ""}`}
+        role="status"
+      >
+        <span>
+          {lease.busy
+            ? "편집 권한 확인 중…"
+            : !roleCanEdit
+              ? "열람 권한 · 변경할 수 없습니다."
+              : lease.owned
+                ? leaseSynced
+                  ? "이 창에서 편집 중 · 다른 창은 읽기 전용입니다."
+                  : "최신 저장본을 확인하는 동안 읽기 전용입니다."
+                : lease.lease?.holder
+                  ? `${lease.lease.holder.name} 님이 다른 창에서 편집 중입니다. 읽기 전용으로 열었습니다.`
+                  : "읽기 전용 · 편집 이어가기로 권한을 확인하세요."}
+          {lease.error && ` ${lease.error}`}
+        </span>
+        {roleCanEdit && lease.owned && !leaseSynced && (
+          <button onClick={() => setLeaseSyncTick((n) => n + 1)}>
+            편집본 다시 확인
+          </button>
+        )}
+        {roleCanEdit &&
+          (lease.owned ? (
+            <button
+              disabled={lease.busy || status !== "saved" || editing}
+              onClick={() => void lease.release()}
+            >
+              편집 권한 반납
+            </button>
+          ) : (
+            <button disabled={lease.busy} onClick={() => void lease.acquire()}>
+              편집 이어가기
+            </button>
+          ))}
+      </div>
       <div className="editor-disclaimer">
         <Info size={14} />
         <span>
@@ -752,7 +1069,9 @@ export default function EditorPage({
         <div className="recovery-bar">
           <RotateCcw size={17} />
           <span>이 브라우저에서 저장되지 않은 편집 내용을 찾았습니다.</span>
-          <button onClick={restoreDraft}>복구본 열기</button>
+          <button disabled={readOnly} onClick={restoreDraft}>
+            복구본 열기
+          </button>
           <button
             onClick={() => {
               setRecovery(undefined);
@@ -900,9 +1219,15 @@ export default function EditorPage({
               <button onClick={() => setPanel("structure")}>
                 <Barcode size={17} /> 바코드와 가공
               </button>
-              <button onClick={() => setPanel("preparation")}><ShieldCheck size={17} /> 인쇄 준비·상품 바코드</button>
-              <button onClick={() => setPanel("images")}><ImagePlus size={17} /> 해상도·도련 보완</button>
-              <button onClick={() => setPanel("image-text")}><Type size={17} /> 이미지 속 글자 편집</button>
+              <button onClick={() => setPanel("preparation")}>
+                <ShieldCheck size={17} /> 인쇄 준비·상품 바코드
+              </button>
+              <button onClick={() => setPanel("images")}>
+                <ImagePlus size={17} /> 해상도·도련 보완
+              </button>
+              <button onClick={() => setPanel("image-text")}>
+                <Type size={17} /> 이미지 속 글자 편집
+              </button>
               <button onClick={() => setPanel("bindings")}>
                 <Link2 size={17} /> 상품 연결·복제
               </button>
@@ -923,13 +1248,22 @@ export default function EditorPage({
                 .sort((a, b) => b.z_index - a.z_index)
                 .map((layer) => (
                   <div
-                    className={`layer-row ${layer.id === selected ? "selected" : ""}`}
+                    className={`layer-row ${selectedIds.includes(layer.id) ? "selected" : ""}`}
                     key={layer.id}
                   >
+                    <input
+                      type="checkbox"
+                      aria-label={`여러 레이어 선택: ${layer.text || layer.type}`}
+                      checked={selectedIds.includes(layer.id)}
+                      onChange={() => setSelected(layer.id, true)}
+                    />
                     <button
                       className="layer-main"
-                      onClick={() => {
-                        setSelected(layer.id);
+                      onClick={(event) => {
+                        setSelected(
+                          layer.id,
+                          event.shiftKey || event.ctrlKey || event.metaKey,
+                        );
                         setMobilePane("properties");
                       }}
                     >
@@ -940,6 +1274,7 @@ export default function EditorPage({
                       ) : (
                         <Square size={15} />
                       )}
+                      {layer.locked && <Lock size={12} />}
                       <span>
                         {layer.type === "text"
                           ? layer.text || "빈 텍스트"
@@ -952,7 +1287,7 @@ export default function EditorPage({
                     </button>
                     <button
                       className="layer-visible"
-                      disabled={readOnly}
+                      disabled={readOnly || !!layer.locked}
                       aria-label={`${layer.visible === false ? "표시" : "숨기기"}: ${layer.text || layer.type}`}
                       onClick={() =>
                         change(layer.id, { visible: layer.visible === false })
@@ -970,6 +1305,20 @@ export default function EditorPage({
                 <p className="panel-hint">텍스트와 이미지를 추가해 보세요.</p>
               )}
             </div>
+          </div>
+          <div className="panel-section">
+            <button className="tool-button" onClick={() => setPanel("library")}>
+              <ImagePlus size={17} /> 이미지 보관함
+            </button>
+            <button
+              className="tool-button"
+              onClick={() => setPanel("revisions")}
+            >
+              <History size={17} /> 저장본 탐색·복원
+            </button>
+            <Link href="/app/help#editor" target="_blank" className="text-link">
+              편집기 사용 도움말
+            </Link>
           </div>
           <div className="editor-left-bottom">
             <ShieldCheck size={16} />
@@ -1005,7 +1354,7 @@ export default function EditorPage({
                 className="icon-button"
                 title="실행 취소"
                 aria-label="실행 취소"
-                disabled={!historyCount.past || editing}
+                disabled={readOnly || !historyCount.past || editing}
                 onClick={undo}
               >
                 <Undo2 size={18} />
@@ -1014,7 +1363,7 @@ export default function EditorPage({
                 className="icon-button"
                 title="다시 실행"
                 aria-label="다시 실행"
-                disabled={!historyCount.future || editing}
+                disabled={readOnly || !historyCount.future || editing}
                 onClick={redo}
               >
                 <Redo2 size={18} />
@@ -1037,12 +1386,39 @@ export default function EditorPage({
             geometryFace={geometryFace}
             readOnly={readOnly}
             selected={selected}
+            selectedIds={selectedIds}
+            onSelectMany={selectMany}
+            onBatchChange={(patches) => {
+              if (current.current)
+                commit(patchObjects(current.current, patches));
+            }}
+            snapping={snapping}
+            rulers={rulers}
             onSelect={setSelected}
             onChange={change}
             zoom={zoom}
             guides={guides}
             onEditState={setEditingStable}
           />
+          <div className="canvas-options">
+            <label>
+              <input
+                type="checkbox"
+                checked={snapping}
+                onChange={(e) => setSnapping(e.target.checked)}
+              />{" "}
+              면·안전선·객체 맞춤
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={rulers}
+                onChange={(e) => setRulers(e.target.checked)}
+              />{" "}
+              눈금자 (mm)
+            </label>
+            <span>Shift+클릭 · 빈 곳 드래그로 여러 개 선택</span>
+          </div>
           <div className="canvas-bottom-bar">
             <div className="canvas-legend">
               <span>
@@ -1084,7 +1460,115 @@ export default function EditorPage({
           </p>
         </section>
         <aside className="editor-right">
-          <fieldset className="editor-properties-fieldset" disabled={readOnly}>
+          {!!selectedIds.length && (
+            <div className="panel-section selection-tools">
+              <h2>{selectedIds.length}개 레이어 선택</h2>
+              <div className="property-row">
+                <button
+                  className="button button-light button-sm"
+                  disabled={readOnly}
+                  onClick={() =>
+                    commit(
+                      setObjectsLocked(scene, selectedIds, true),
+                      false,
+                      true,
+                    )
+                  }
+                >
+                  <Lock size={14} /> 잠금
+                </button>
+                <button
+                  className="button button-light button-sm"
+                  disabled={readOnly}
+                  onClick={() =>
+                    commit(
+                      setObjectsLocked(scene, selectedIds, false),
+                      false,
+                      true,
+                    )
+                  }
+                >
+                  <Unlock size={14} /> 해제
+                </button>
+              </div>
+              {object?.locked && (
+                <p className="panel-hint">
+                  잠긴 레이어입니다. 편집하려면 잠금을 해제하세요.
+                </p>
+              )}
+              <label className="guide-toggle">
+                <input
+                  type="checkbox"
+                  checked={alignToFace}
+                  onChange={(e) => setAlignToFace(e.target.checked)}
+                />{" "}
+                면 기준 정렬
+              </label>
+              <div className="alignment-buttons">
+                {(
+                  [
+                    ["left", "왼쪽"],
+                    ["center", "가로 중앙"],
+                    ["right", "오른쪽"],
+                    ["top", "위"],
+                    ["middle", "세로 중앙"],
+                    ["bottom", "아래"],
+                  ] as [Alignment, string][]
+                ).map(([a, label]) => (
+                  <button
+                    key={a}
+                    disabled={readOnly}
+                    onClick={() =>
+                      commit(
+                        alignObjects(
+                          scene,
+                          face.id,
+                          selectedIds,
+                          a,
+                          alignToFace || selectedIds.length === 1,
+                        ),
+                      )
+                    }
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="property-row">
+                <button
+                  disabled={readOnly || selectedIds.length < 3}
+                  onClick={() =>
+                    commit(distributeObjects(scene, face.id, selectedIds, "x"))
+                  }
+                >
+                  가로 간격 균등
+                </button>
+                <button
+                  disabled={readOnly || selectedIds.length < 3}
+                  onClick={() =>
+                    commit(distributeObjects(scene, face.id, selectedIds, "y"))
+                  }
+                >
+                  세로 간격 균등
+                </button>
+              </div>
+              <button
+                className="text-link"
+                disabled={readOnly}
+                onClick={() => {
+                  commit(deleteObjects(scene, selectedIds));
+                  setSelected(null);
+                }}
+              >
+                선택한 잠금 해제 레이어 삭제
+              </button>
+            </div>
+          )}
+
+          <fieldset
+            className="editor-properties-fieldset"
+            disabled={readOnly || !!object?.locked}
+          >
             <div className="panel-section">
               <h2>
                 {object
@@ -1114,7 +1598,7 @@ export default function EditorPage({
                       className="icon-button danger"
                       aria-label="선택한 레이어 삭제"
                       onClick={() => {
-                        commit(removeObject(scene, object.id));
+                        commit(deleteObjects(scene, [object.id]));
                         setSelected(null);
                       }}
                     >
@@ -1175,11 +1659,21 @@ export default function EditorPage({
                       </label>
                       <label className="field property-field">
                         글자 굵기
-                        <select value={object.font_weight ?? 400} onChange={(event) => change(object.id, { font_weight: Number(event.target.value) as 400 | 700 })}>
+                        <select
+                          value={object.font_weight ?? 400}
+                          onChange={(event) =>
+                            change(object.id, {
+                              font_weight: Number(event.target.value) as
+                                400 | 700,
+                            })
+                          }
+                        >
                           <option value={400}>보통 · Regular</option>
                           <option value={700}>굵게 · Bold</option>
                         </select>
-                        <small>캔버스·3D·PDF에 같은 굵기 글꼴을 사용합니다.</small>
+                        <small>
+                          캔버스·3D·PDF에 같은 굵기 글꼴을 사용합니다.
+                        </small>
                       </label>
                       <div className="property-row">
                         <label className="field property-field">
@@ -1214,6 +1708,56 @@ export default function EditorPage({
                       </div>
                     </>
                   )}
+                  {object.type === "text" && (
+                    <div className="property-row">
+                      <label className="field property-field">
+                        자간 (pt)
+                        <input
+                          type="number"
+                          step="0.1"
+                          min={-5}
+                          max={30}
+                          value={object.letter_spacing ?? 0}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            if (n >= -5 && n <= 30)
+                              change(object.id, { letter_spacing: n });
+                          }}
+                        />
+                      </label>
+                      <label className="field property-field">
+                        행간 (배수)
+                        <input
+                          type="number"
+                          step="0.05"
+                          min={0.5}
+                          max={4}
+                          value={object.line_height ?? 1.2}
+                          onChange={(e) => {
+                            const n = Number(e.target.value);
+                            if (n >= 0.5 && n <= 4)
+                              change(object.id, { line_height: n });
+                          }}
+                        />
+                      </label>
+                    </div>
+                  )}
+                  {object.type !== "barcode" && (
+                    <label className="field property-field">
+                      불투명도 ({Math.round((object.opacity ?? 1) * 100)}%)
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={(object.opacity ?? 1) * 100}
+                        onChange={(e) =>
+                          change(object.id, {
+                            opacity: Number(e.target.value) / 100,
+                          })
+                        }
+                      />
+                    </label>
+                  )}
                   {object.type === "image" && object.asset_id && (
                     <div className="field property-field">
                       <button
@@ -1223,10 +1767,22 @@ export default function EditorPage({
                         disabled={!!fittingImage}
                         onClick={() => void fitImageLayer(object.id)}
                       >
-                        {fittingImage === object.id && <LoaderCircle className="spin" size={15} />}
+                        {fittingImage === object.id && (
+                          <LoaderCircle className="spin" size={15} />
+                        )}
                         비율 유지하여 면 안에 맞춤
                       </button>
-                      <small>이미지 전체를 중앙에 놓고 회전을 0°로 맞춥니다. 비율에 따라 여백이 남습니다.</small>
+                      <button
+                        type="button"
+                        className="button button-light button-sm full-width"
+                        onClick={() => setPanel("crop")}
+                      >
+                        <Crop size={15} /> 이미지 자르기
+                      </button>
+                      <small>
+                        현재 보이는 이미지 영역을 중앙에 놓고 회전을 0°로
+                        맞춥니다. 비율에 따라 여백이 남습니다.
+                      </small>
                     </div>
                   )}
                   {object.type === "barcode" && (
@@ -1234,7 +1790,12 @@ export default function EditorPage({
                       EAN-13 {object.barcode_value}
                       <br />
                       모듈 {object.module_mm} mm · 비율 고정
-                      {object.barcode_usage === "sample" && <><br />SAMPLE / 검토용 · 실제 상품 번호가 아닙니다.</>}
+                      {object.barcode_usage === "sample" && (
+                        <>
+                          <br />
+                          SAMPLE / 검토용 · 실제 상품 번호가 아닙니다.
+                        </>
+                      )}
                     </p>
                   )}
                   {object.type !== "image" && object.type !== "barcode" && (
@@ -1328,16 +1889,14 @@ export default function EditorPage({
                         <button
                           className="icon-button"
                           aria-label="레이어 앞으로"
-                          onClick={() => commit(moveLayer(scene, object.id, 1))}
+                          onClick={() => reorderLayer(object.id, 1)}
                         >
                           <ArrowUp size={17} />
                         </button>
                         <button
                           className="icon-button"
                           aria-label="레이어 뒤로"
-                          onClick={() =>
-                            commit(moveLayer(scene, object.id, -1))
-                          }
+                          onClick={() => reorderLayer(object.id, -1)}
                         >
                           <ArrowDown size={17} />
                         </button>
@@ -1348,7 +1907,7 @@ export default function EditorPage({
                     type="button"
                     className="button button-light button-sm full-width"
                     onClick={() => {
-                      if (current.current) commit(sendLayerToBack(current.current, object.id));
+                      if (current.current) reorderLayer(object.id, "back");
                     }}
                   >
                     <ArrowDown size={15} /> 맨 뒤로 보내기
@@ -1496,22 +2055,53 @@ export default function EditorPage({
       {panel && (
         <Dialog
           title={
-            {
-              ai: "AI 디자인 스튜디오",
-              structure: "바코드와 가공 요소",
-              bindings: "상품 연결과 복제",
-              exports: "제조 조건과 출력 검수",
-              "3d": "3D 조립 미리보기",
-              history: "면별 텍스트 변경 기록",
-              preparation: "인쇄 준비와 정식 상품 바코드",
-              images: "이미지 해상도·도련 보완",
-              "image-text": "이미지 속 글자 편집",
-            }[panel]
+            panel === "crop"
+              ? "이미지 자르기"
+              : panel === "revisions"
+                ? "전체 저장본 비교·복원"
+                : panel === "library"
+                  ? "이미지 보관함"
+                  : {
+                      ai: "AI 디자인 스튜디오",
+                      structure: "바코드와 가공 요소",
+                      bindings: "상품 연결과 복제",
+                      exports: "제조 조건과 출력 검수",
+                      "3d": "3D 조립 미리보기",
+                      history: "면별 텍스트 변경 기록",
+                      preparation: "인쇄 준비와 정식 상품 바코드",
+                      images: "이미지 해상도·도련 보완",
+                      "image-text": "이미지 속 글자 편집",
+                    }[panel]
           }
           onClose={() => setPanel(null)}
         >
-          {panel === "preparation" && <PrintPreparationTools project={project} saveCurrent={saveCurrent} readOnly={readOnly} isAdmin={!!session?.user.is_admin} onBindings={() => setPanel("bindings")} onExports={() => setPanel("exports")} onStructure={(code) => { setBarcodePreset(code); setPanel("structure"); }} />}
-          {(panel === "images" || panel === "image-text") && <ImagePreparationTools key={panel} projectId={id} scene={scene} faceId={face.id} selectedId={selected} saveCurrent={saveCurrent} onApply={applyPreparedScene} readOnly={readOnly} initialTab={panel === "image-text" ? "text" : "quality"} />}
+          {panel === "preparation" && (
+            <PrintPreparationTools
+              project={project}
+              saveCurrent={saveCurrent}
+              readOnly={readOnly}
+              isAdmin={!!session?.user.is_admin}
+              onBindings={() => setPanel("bindings")}
+              onExports={() => setPanel("exports")}
+              onStructure={(code) => {
+                setBarcodePreset(code);
+                setPanel("structure");
+              }}
+            />
+          )}
+          {(panel === "images" || panel === "image-text") && (
+            <ImagePreparationTools
+              key={panel}
+              projectId={id}
+              scene={scene}
+              faceId={face.id}
+              selectedId={selected}
+              saveCurrent={saveCurrent}
+              onApply={applyPreparedScene}
+              readOnly={readOnly}
+              initialTab={panel === "image-text" ? "text" : "quality"}
+            />
+          )}
           {panel === "ai" && (
             <AIStudio
               projectId={id}
@@ -1531,20 +2121,77 @@ export default function EditorPage({
               initialBarcode={barcodePreset}
               onCommit={commit}
               readOnly={readOnly}
-              geometry={project.geometry as { faces: FaceStructure[] } | undefined}
-              onGeometry={(geometry) => setProject((current) => current ? { ...current, geometry } : current)}
-              onFaceSelect={(faceId) => { setFaceId(faceId); setSelected(null); setPanel(null); }}
+              geometry={
+                project.geometry as { faces: FaceStructure[] } | undefined
+              }
+              onGeometry={(geometry) =>
+                setProject((current) =>
+                  current ? { ...current, geometry } : current,
+                )
+              }
+              onFaceSelect={(faceId) => {
+                setFaceId(faceId);
+                setSelected(null);
+                setPanel(null);
+              }}
             />
           )}
           {panel === "bindings" && (
             <BindingTools
               project={project}
+              lockedIds={scene.faces.flatMap((f) =>
+                f.objects.filter((o) => o.locked).map((o) => o.id),
+              )}
               saveCurrent={saveCurrent}
               onServerProject={onServerProject}
               readOnly={readOnly}
             />
           )}
-          {panel === "history" && <TextHistory projectId={id} saveCurrent={saveCurrent} readOnly={readOnly} />}
+          {panel === "crop" && object?.type === "image" && (
+            <ImageCropTools
+              key={`${object.id}:${object.asset_id}`}
+              object={object}
+              readOnly={readOnly}
+              onApply={(patch) => {
+                change(object.id, patch);
+                setPanel(null);
+              }}
+            />
+          )}
+          {panel === "revisions" && (
+            <RevisionTools
+              project={project}
+              readOnly={readOnly}
+              saveCurrent={saveCurrent}
+              onBeforeRestore={(snapshot) => {
+                if (!current.current)
+                  throw new Error("현재 편집본이 없습니다.");
+                assertLockedObjectsUnchanged(current.current, snapshot);
+              }}
+              onRestored={(p) => {
+                onServerProject(p);
+                setFaceId(p.scene.active_face_id);
+                setPanel(null);
+              }}
+            />
+          )}
+          {panel === "library" && (
+            <AssetLibrary
+              projectId={id}
+              readOnly={readOnly}
+              onSelect={(asset) => {
+                addLibraryAsset(asset);
+                setPanel(null);
+              }}
+            />
+          )}
+          {panel === "history" && (
+            <TextHistory
+              projectId={id}
+              saveCurrent={saveCurrent}
+              readOnly={readOnly}
+            />
+          )}
           {panel === "exports" && (
             <ExportTools
               project={project}
@@ -1552,9 +2199,10 @@ export default function EditorPage({
               saveCurrent={saveCurrent}
               onServerProject={onServerProject}
               onCommit={commit}
-              onFaceSelect={(id) => {
+              onFaceSelect={(id, objectId) => {
                 setFaceId(id);
-                setSelected(null);
+                setSelected(objectId || null);
+                if (objectId) setMobilePane("properties");
                 setPanel(null);
               }}
               readOnly={readOnly}

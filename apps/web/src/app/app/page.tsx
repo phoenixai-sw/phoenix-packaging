@@ -16,6 +16,7 @@ import { packagingMedia } from "@/lib/media";
 import { ProjectPreview } from "@/components/project-preview";
 import { api, errorMessage } from "@/lib/api";
 import type { Project } from "@editor/model";
+import { DashboardActivity } from "@/components/dashboard-activity";
 export default function Dashboard() {
   const session = useSession();
   const [projects, setProjects] = useState<Project[]>([]);
@@ -79,6 +80,7 @@ export default function Dashboard() {
           <span>AI DESIGN CONCEPT</span>
         </div>
       </section>
+      <DashboardActivity />
       <section className="projects-section">
         <div className="projects-heading">
           <h2>

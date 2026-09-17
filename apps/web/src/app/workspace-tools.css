@@ -1,0 +1,32 @@
+.asset-library-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:16px; }
+.asset-library-card { display:flex; flex-direction:column; gap:8px; padding:12px; min-width:0; border:1px solid #e1e4dc; border-radius:12px; background:#fff; }
+.asset-library-card img { width:100%; height:160px; object-fit:contain; background:#f3f2ed; border-radius:7px; }
+.asset-library-card strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+.asset-library-card small { color:#64716b; font-size:11px; }
+.asset-library-card .button { margin-top:auto; }
+.dashboard-activity { margin:28px 0; }
+.workspace-metrics { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
+.workspace-metrics > * { display:flex; flex-direction:column; gap:9px; padding:20px; border:1px solid #e1e4dc; border-radius:14px; background:white; }
+.workspace-metrics span { color:#64716b; font-size:13px; }
+.workspace-metrics strong { font-size:30px; line-height:1.2; }
+.workspace-metrics small { font-size:11px; color:#64716b; }
+.activity-timeline { margin-top:18px; border:1px solid #e1e4dc; border-radius:14px; padding:18px; background:white; }
+.activity-timeline summary { cursor:pointer; font-weight:700; font-size:14px; }
+.activity-timeline ul { list-style:none; margin:12px 0 0; padding:0; max-height:350px; overflow:auto; }
+.activity-timeline a { display:grid; grid-template-columns:1.2fr 1fr 1fr; gap:12px; padding:12px 0; border-top:1px solid #eee; align-items:center; font-size:12px; }
+.activity-timeline strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.activity-timeline span,.activity-timeline time { color:#64716b; font-size:11px; }
+.help-index { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:24px; }
+.help-index a { padding:10px 15px; border:1px solid #dedfd6; border-radius:20px; font-size:13px; background:#fff; }
+.help-section { padding:26px; margin-bottom:18px; border:1px solid #dedfd6; border-radius:14px; background:white; scroll-margin-top:28px; }
+.help-section h2 { font-size:20px; margin-bottom:16px; }
+.help-section li,.help-section p { line-height:1.9; font-size:14px; margin:12px 0; color:#44594e; }
+.help-section ol { padding-left:22px; }
+@media(max-width:700px) {
+  .workspace-metrics { grid-template-columns:1fr; }
+  .workspace-metrics > * { padding:16px; }
+  .activity-timeline a { grid-template-columns:1fr; gap:6px; }
+  .help-section { padding:18px; }
+  .asset-library-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+  .asset-library-card { padding:8px; }
+}

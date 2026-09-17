@@ -47,14 +47,20 @@ export function regionFromPoints(
 }
 export function regionPlacement(object: SceneObject, region: ImageRegion) {
   validateImageRegion(region);
+  const crop = object.crop || { x: 0, y: 0, width: 1, height: 1 };
+  validateImageRegion(crop);
+  if (region.x < crop.x - 1e-8 || region.y < crop.y - 1e-8 ||
+      region.x + region.width > crop.x + crop.width + 1e-8 ||
+      region.y + region.height > crop.y + crop.height + 1e-8)
+    throw new Error("글자 영역은 현재 잘라서 표시한 이미지 안에 있어야 합니다. 영역을 줄이거나 자르기를 해제하세요.");
   const angle = (object.rotation_deg * Math.PI) / 180;
-  const dx = object.width_mm * region.x,
-    dy = object.height_mm * region.y;
+  const dx = object.width_mm * (region.x - crop.x) / crop.width,
+    dy = object.height_mm * (region.y - crop.y) / crop.height;
   return {
     x_mm: object.x_mm + dx * Math.cos(angle) - dy * Math.sin(angle),
     y_mm: object.y_mm + dx * Math.sin(angle) + dy * Math.cos(angle),
-    width_mm: object.width_mm * region.width,
-    height_mm: object.height_mm * region.height,
+    width_mm: object.width_mm * region.width / crop.width,
+    height_mm: object.height_mm * region.height / crop.height,
     rotation_deg: object.rotation_deg,
   };
 }
@@ -119,6 +125,7 @@ export function applyImageText(
   const source = face?.objects.find((o) => o.id === objectId);
   if (!face || !source || source.type !== "image" || !source.asset_id)
     throw new Error("원본 이미지 레이어를 다시 선택해 주세요.");
+  if (source.locked) throw new Error("잠긴 이미지입니다. 잠금을 해제한 뒤 문구를 수정하세요.");
   const placement = regionPlacement(source, region);
   if (Math.min(placement.width_mm, placement.height_mm) < 0.1)
     throw new Error("선택 영역이 너무 작습니다.");
