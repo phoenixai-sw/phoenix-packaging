@@ -13,6 +13,7 @@ export function StructureTools({
   geometry,
   onGeometry,
   onFaceSelect,
+  initialBarcode,
 }: {
   scene: Scene;
   faceId: string;
@@ -21,8 +22,9 @@ export function StructureTools({
   geometry?: { faces: FaceStructure[] };
   onGeometry: (geometry: Record<string, unknown>) => void;
   onFaceSelect: (faceId: string) => void;
+  initialBarcode?: string;
 }) {
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(initialBarcode || "");
   const [moduleMm, setModuleMm] = useState(0.33);
   const [height, setHeight] = useState(22.85);
   const [owned, setOwned] = useState(false);

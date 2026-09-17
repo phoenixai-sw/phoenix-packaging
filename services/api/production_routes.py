@@ -49,6 +49,7 @@ def _preflight(db,project,revision,reviewed,project_payload,storage,settings):
     def resolver(asset_id):
         asset=owned_record(db,Asset,asset_id,project.tenant_id)
         return storage.get(asset.storage_key)
+    resolver.metadata=lambda asset_id: owned_record(db,Asset,asset_id,project.tenant_id).metadata_json
     snapshot=_snapshot(project,revision,project_payload)
     report=preflight_project(snapshot,conditions,resolver)
     if not settings.enable_production_export:

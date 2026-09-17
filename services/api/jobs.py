@@ -52,6 +52,14 @@ def process_pending_jobs(session_factory, storage, limit=1) -> int:
                         path.write_bytes(storage.get(asset.storage_key))
                         return path
 
+                def asset_metadata(asset_id):
+                    with session_factory() as asset_db:
+                        asset = asset_db.scalar(select(Asset).where(Asset.id == str(asset_id), Asset.tenant_id == tenant_id))
+                        if asset is None:
+                            raise ValueError("Asset is not accessible in this tenant")
+                        return asset.metadata_json
+                asset_resolver.metadata = asset_metadata
+
                 output = temp / "review.pdf"
                 manifest = export_review_pdf(snapshot, output, asset_resolver=asset_resolver)
                 # Each lease writes its own object: an expired worker cannot

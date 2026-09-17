@@ -44,6 +44,8 @@ import { StructureTools } from "@/components/structure-tools";
 import { BindingTools } from "@/components/binding-tools";
 import { ExportTools } from "@/components/export-tools";
 import { TextHistory } from "@/components/text-history";
+import { PrintPreparationTools } from "@/components/print-preparation-tools";
+import { assertImageSnapshot } from "@editor/image-tools";
 import type { PackagingPreviewProps } from "@preview3d/PackagingPreview";
 import type { FaceStructure } from "@editor/structure";
 import { readRecovery, writeRecovery, type Recovery } from "@/lib/recovery";
@@ -74,6 +76,7 @@ const Canvas = dynamic(() => import("@editor/canvas"), {
 const PackagingPreview = dynamic(() => import("@preview3d/PackagingPreview"), {
   ssr: false,
 });
+const ImagePreparationTools = dynamic(() => import("@/components/image-preparation-tools").then((module) => module.ImagePreparationTools), { ssr: false });
 type SaveStatus = "saved" | "dirty" | "saving" | "error" | "conflict";
 export default function EditorPage({
   params,
@@ -85,9 +88,10 @@ export default function EditorPage({
   const readOnly = !canEdit(session);
   const uploadConfig = useApiData<{ upload_max_bytes: number }>("/config");
   const [panel, setPanel] = useState<
-    "ai" | "structure" | "bindings" | "exports" | "3d" | "history" | null
+    "ai" | "structure" | "bindings" | "exports" | "3d" | "history" | "preparation" | "images" | "image-text" | null
   >(null);
   const [project, setProject] = useState<Project | null>(null);
+  const [barcodePreset, setBarcodePreset] = useState("");
   const [scene, setScene] = useState<Scene | null>(null);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
@@ -276,6 +280,12 @@ export default function EditorPage({
         "현재 변경 내용을 먼저 저장해 주세요. 저장 오류나 충돌을 확인하세요.",
       );
     return revision.current;
+  }
+  async function applyPreparedScene(expectedScene: string, expectedRevision: number, transform: (scene: Scene) => Scene) {
+    if (readOnly || !current.current || conflict.current) throw new Error("편집 권한과 저장 상태를 확인해 주세요.");
+    assertImageSnapshot(current.current, expectedScene, revision.current, expectedRevision);
+    commit(transform(current.current));
+    await saveCurrent();
   }
   function onServerProject(p: Project) {
     current.current = p.scene;
@@ -890,6 +900,9 @@ export default function EditorPage({
               <button onClick={() => setPanel("structure")}>
                 <Barcode size={17} /> 바코드와 가공
               </button>
+              <button onClick={() => setPanel("preparation")}><ShieldCheck size={17} /> 인쇄 준비·상품 바코드</button>
+              <button onClick={() => setPanel("images")}><ImagePlus size={17} /> 해상도·도련 보완</button>
+              <button onClick={() => setPanel("image-text")}><Type size={17} /> 이미지 속 글자 편집</button>
               <button onClick={() => setPanel("bindings")}>
                 <Link2 size={17} /> 상품 연결·복제
               </button>
@@ -1490,10 +1503,15 @@ export default function EditorPage({
               exports: "제조 조건과 출력 검수",
               "3d": "3D 조립 미리보기",
               history: "면별 텍스트 변경 기록",
+              preparation: "인쇄 준비와 정식 상품 바코드",
+              images: "이미지 해상도·도련 보완",
+              "image-text": "이미지 속 글자 편집",
             }[panel]
           }
           onClose={() => setPanel(null)}
         >
+          {panel === "preparation" && <PrintPreparationTools project={project} saveCurrent={saveCurrent} readOnly={readOnly} isAdmin={!!session?.user.is_admin} onBindings={() => setPanel("bindings")} onExports={() => setPanel("exports")} onStructure={(code) => { setBarcodePreset(code); setPanel("structure"); }} />}
+          {(panel === "images" || panel === "image-text") && <ImagePreparationTools key={panel} projectId={id} scene={scene} faceId={face.id} selectedId={selected} saveCurrent={saveCurrent} onApply={applyPreparedScene} readOnly={readOnly} initialTab={panel === "image-text" ? "text" : "quality"} />}
           {panel === "ai" && (
             <AIStudio
               projectId={id}
@@ -1510,6 +1528,7 @@ export default function EditorPage({
             <StructureTools
               scene={scene}
               faceId={face.id}
+              initialBarcode={barcodePreset}
               onCommit={commit}
               readOnly={readOnly}
               geometry={project.geometry as { faces: FaceStructure[] } | undefined}

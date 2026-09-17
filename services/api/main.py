@@ -489,6 +489,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_production_routes(app,db_session,owned,project_payload,snapshot_revision)
     from .uploads import install_upload_routes
     install_upload_routes(app,db_session,asset_payload)
+    from .print_preparation import install_print_preparation_routes
+    install_print_preparation_routes(app,db_session)
+    from .image_quality import install_image_quality_routes
+    install_image_quality_routes(app,db_session,asset_payload)
 
     return app
 

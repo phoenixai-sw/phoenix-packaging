@@ -10,7 +10,8 @@ from sqlalchemy.exc import IntegrityError
 from .database import utcnow
 from .models import Asset, Job, Tenant, User, Project
 from .feature_models import AiUnit, ProviderAttempt, ProviderBudget, AuditEvent, Membership, WorkspaceMember
-from .image_provider import generate_image, ProviderError
+from .image_provider import (generate_image, ProviderError, MAX_REFERENCE_BYTES,
+                             validate_edit_reference, composite_edit_result)
 from .billing.service import lock_wallet
 from .errors import APIError
 
@@ -84,7 +85,11 @@ def summarize_job(db, job):
     assets=[]
     for unit in succeeded:
         asset=db.get(Asset,unit.asset_id)
-        if asset: assets.append({"id":asset.id,"name":asset.original_name,"source":asset.source,"width_px":asset.width_px,"height_px":asset.height_px,"url":f"/v1/assets/{asset.id}/content"})
+        if asset:
+            detail={"id":asset.id,"name":asset.original_name,"source":asset.source,"width_px":asset.width_px,"height_px":asset.height_px,"url":f"/v1/assets/{asset.id}/content"}
+            if asset.metadata_json.get("edit_mode")=="remove_text":
+                detail.update({key:asset.metadata_json.get(key) for key in ("edit_mode","edit_region","edit_pixel_box","reference_asset_id","preservation_scope","source_size_px","outside_pixels_preserved")})
+            assets.append(detail)
     cost=job.snapshot["unit_cost"]
     reserved=sum(u.status in {"queued","running"} for u in units)*cost
     charged=len(succeeded)*cost
@@ -164,9 +169,14 @@ def process_ai_jobs(session_factory, storage, settings, limit=1, provider=None):
                 with session_factory() as db:
                     original=db.scalar(select(Asset).where(Asset.id==data["reference_asset_id"],Asset.tenant_id==tenant_id))
                     if not original: raise ProviderError("ASSET_UNAVAILABLE","원본 이미지에 접근할 수 없습니다.")
-                    content=storage.get(original.storage_key)
-                    with Image.open(BytesIO(content)) as image:
-                        buffer=BytesIO();image.convert("RGBA").save(buffer,format="PNG");reference=buffer.getvalue()
+                    if data.get("edit_mode")=="remove_text":
+                        content=storage.get_limited(original.storage_key,MAX_REFERENCE_BYTES)
+                        image=validate_edit_reference(data,content)
+                        buffer=BytesIO();image.save(buffer,format="PNG",icc_profile=image.info.get("icc_profile"));reference=buffer.getvalue()
+                    else:
+                        content=storage.get(original.storage_key)
+                        with Image.open(BytesIO(content)) as image:
+                            buffer=BytesIO();image.convert("RGBA").save(buffer,format="PNG");reference=buffer.getvalue()
             # Reference download can take time. Verify the lease and permission
             # again immediately before issuing an external paid request.
             with session_factory() as db:
@@ -187,6 +197,8 @@ def process_ai_jobs(session_factory, storage, settings, limit=1, provider=None):
                 attempt.cost_is_estimate=result.metadata.get("cost_is_estimate",True)
                 attempt.status="provider_succeeded"
                 db.commit()
+            if data.get("edit_mode")=="remove_text":
+                result=composite_edit_result(data,reference,result)
             asset_id=str(uuid4());key=f"{tenant_id}/ai/{job_id}/{unit_id}/{lease}.png"
             storage.put(key,result.content,"image/png")
             digest=sha256(result.content).hexdigest()
@@ -209,10 +221,12 @@ def process_ai_jobs(session_factory, storage, settings, limit=1, provider=None):
                 else:
                     job=db.get(Job,job_id)
                     asset=Asset(id=asset_id,tenant_id=tenant_id,workspace_id=data.get("workspace_id"),storage_key=key,original_name=f"디자인 시안 {index+1}.png",content_type="image/png",byte_size=len(result.content),width_px=result.width,height_px=result.height,
-                        source=settings.ai_provider,metadata_json={**result.metadata,"sha256":digest,"job_id":job_id,"prompt":data["prompt"],"reference_asset_id":data.get("reference_asset_id")})
+                        source=settings.ai_provider,metadata_json={**result.metadata,"sha256":digest,"job_id":job_id,"prompt":data["prompt"],"reference_asset_id":data.get("reference_asset_id"),
+                        **({"confirmed_source_text":data.get("confirmed_source_text","")} if data.get("edit_mode")=="remove_text" else {})})
                     db.add(asset);db.flush()
                     unit.asset_id=asset_id;unit.status="succeeded";unit.result_metadata=result.metadata;unit.provider_request_id=result.metadata.get("provider_request_id")
-                    db.add(AuditEvent(tenant_id=tenant_id,action="generation_succeeded",entity_id=job_id,details={"unit":index,"provider":settings.ai_provider}))
+                    db.add(AuditEvent(tenant_id=tenant_id,action="generation_succeeded",entity_id=job_id,details={"unit":index,"provider":settings.ai_provider,
+                        **({"edit_mode":"remove_text","reference_asset_id":data["reference_asset_id"],"edit_pixel_box":data["edit_pixel_box"],"preservation_scope":"outside_edit_region"} if data.get("edit_mode")=="remove_text" else {})}))
                 unit.updated_at=utcnow();summarize_job(db,db.get(Job,job_id));db.commit()
         except Exception as exc:
             error=exc if isinstance(exc,ProviderError) else ProviderError("AI_STORAGE_OR_COMMIT_FAILED","결과 저장이 완료되지 않아 예약을 복원합니다.",uncertain=True)

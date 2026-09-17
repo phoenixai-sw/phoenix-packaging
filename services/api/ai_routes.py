@@ -12,7 +12,8 @@ from .models import Project, Asset, Job
 from .billing.models import Quote, Reservation
 from .billing.service import reserve, release_unit, canonical_hash
 from .ai_jobs import summarize_job, lock_tenant_work
-from .image_provider import get_capabilities
+from .image_provider import (get_capabilities, ProviderError, EDIT_VERSION, MAX_REFERENCE_BYTES,
+                             normalize_edit_region, edit_pixel_box, decode_edit_reference)
 from .image_sizing import ImageSizeError, select_image_output
 
 
@@ -35,6 +36,14 @@ def prepare_ai_quote(db,user,body,settings):
     project=owned_record(db,Project,body["project_id"],user.tenant_id)
     if project.base_revision!=body.get("base_revision"): raise APIError(409,"REVISION_CONFLICT","디자인이 변경되었습니다. 저장 후 새 견적을 요청해 주세요.")
     submitted=body.get("input_data") or {}
+    mode=submitted.get("edit_mode", "full")
+    if not isinstance(mode,str) or mode not in {"full", "remove_text"}:
+        raise APIError(422,"AI_EDIT_MODE_INVALID","지원하지 않는 이미지 수정 방식입니다.")
+    edit_fields={"edit_mode", "edit_region", "confirmed_source_text"}
+    if action!="image.edit.standard" and edit_fields.intersection(submitted):
+        raise APIError(422,"EDIT_ACTION_MISMATCH","글자 제거는 원본 이미지 수정 작업에서만 사용할 수 있습니다.")
+    if mode=="full" and {"edit_region","confirmed_source_text"}.intersection(submitted):
+        raise APIError(422,"EDIT_MODE_MISMATCH","영역을 선택한 글자 제거 방식을 지정해 주세요.")
     prompt=body.get("prompt") if body.get("prompt") is not None else submitted.get("prompt","")
     if not isinstance(prompt,str) or not 5<=len(prompt.strip())<=4000: raise APIError(422,"PROMPT_INVALID","디자인 설명을 5~4,000자로 입력해 주세요.")
     face_id=body.get("face_id") or submitted.get("face_id","front")
@@ -44,11 +53,49 @@ def prepare_ai_quote(db,user,body,settings):
     if action=="image.edit.standard":
         if not reference: raise APIError(422,"REFERENCE_REQUIRED","수정할 원본 이미지를 선택해 주세요.")
         from .asset_reconciliation import ensure_asset_available
-        ensure_asset_available(owned_record(db,Asset,reference,user.tenant_id))
+        reference_asset=owned_record(db,Asset,reference,user.tenant_id)
+        ensure_asset_available(reference_asset)
     elif reference: raise APIError(422,"REFERENCE_ACTION_MISMATCH","원본 이미지를 수정하려면 이미지 수정 작업을 선택해 주세요.")
     data={"action":action,"prompt":prompt.strip(),"face_id":face_id,"width_mm":face["width_mm"],"height_mm":face["height_mm"],"reference_asset_id":str(reference) if reference else None,"workspace_id":project.workspace_id,"provider_mode":settings.ai_provider,"model":settings.image_model,"quality":"high"}
+    sizing_width,sizing_height=face["width_mm"],face["height_mm"]
+    if action=="image.edit.standard":
+        data["edit_mode"]=mode
+    if mode=="remove_text":
+        confirmed=submitted.get("confirmed_source_text","")
+        if not isinstance(confirmed,str) or len(confirmed)>4000:
+            raise APIError(422,"SOURCE_TEXT_INVALID","확인한 원문은 4,000자 이하로 입력해 주세요.")
+        try:
+            region=normalize_edit_region(submitted.get("edit_region"))
+            # Bind old uploads too: early upload rows may not have a SHA. A
+            # bounded private read freezes actual bytes without mutating them.
+            from hashlib import sha256
+            from .storage import build_storage
+            storage=build_storage(settings)
+            content=storage.get_limited(reference_asset.storage_key,MAX_REFERENCE_BYTES)
+            original=decode_edit_reference(content)
+            if not 1/3<=original.width/original.height<=3:
+                raise ProviderError("EDIT_REFERENCE_ASPECT_UNSUPPORTED","글자 제거 원본의 가로세로 비율은 1:3~3:1이어야 합니다.")
+            box=edit_pixel_box(region,*original.size)
+            saved_digest=reference_asset.metadata_json.get("sha256")
+            digest=sha256(content).hexdigest()
+            if saved_digest and saved_digest!=digest:
+                raise ProviderError("AI_REFERENCE_CHANGED","원본 이미지의 저장 무결성을 확인하지 못했습니다.")
+            data.update({"edit_version":EDIT_VERSION,"edit_region":region,"edit_pixel_box":box,
+                         "confirmed_source_text":confirmed,"reference_sha256":digest,
+                         "reference_width_px":original.width,"reference_height_px":original.height,
+                         "reference_byte_size":len(content),"preservation_scope":"outside_edit_region"})
+            if isinstance(reference_asset.metadata_json.get("image_quality"),dict):
+                from copy import deepcopy
+                # Partial retouching cannot turn interpolated source pixels
+                # into native detail or erase synthesized-bleed provenance.
+                data["reference_image_quality"]=deepcopy(reference_asset.metadata_json["image_quality"])
+            sizing_width,sizing_height=original.size
+        except ProviderError as error:
+            raise APIError(422,error.code,error.message) from None
+        except Exception:
+            raise APIError(503,"AI_REFERENCE_UNAVAILABLE","원본 이미지를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.") from None
     try:
-        data.update(select_image_output(settings.image_model, face["width_mm"], face["height_mm"]))
+        data.update(select_image_output(settings.image_model, sizing_width, sizing_height))
     except ImageSizeError as error:
         raise APIError(422,"AI_SIZE_INVALID",str(error)) from None
     return {"action":action,"units":units,"project_id":project.id,"base_revision":project.base_revision,"input_data":data}
