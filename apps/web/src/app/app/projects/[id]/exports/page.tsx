@@ -10,33 +10,41 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { api, ApiError, errorMessage } from "@/lib/api";
+import { apiRequest, type ApiData } from "@/lib/api-contract";
 import {
   canRetryExport,
   canRecordPrinterIntake,
   exportKindLabel,
   exportStatusLabel,
   isExportInProgress,
+  exportApprovalNotice,
 } from "@/lib/export-state";
 import { Dialog } from "@/components/management";
 import { PrinterIntake } from "@/components/printer-intake";
 import { useSession } from "@/components/workspace";
 import { canEdit } from "@/lib/business";
 import type { Project } from "@editor/model";
-type ExportJob = {
-  id: string;
-  kind?: string;
-  status: string;
-  created_at: string;
-  error?: { message?: string } | string;
-  download_url?: string;
-  result?: {
-    revision_number?: number;
-    asset_count?: number;
-    font_count?: number;
-    byte_size?: number;
-    rights_notice?: string;
-  };
-};
+type ExportJob = ApiData<"/v1/projects/{project_id}/exports">["items"][number];
+
+function CurrentApproval({ job }: { job: ExportJob }) {
+  const notice = exportApprovalNotice(job);
+  if (!notice) return null;
+  return (
+    <div className={`alert ${notice.warning ? "alert-error" : "alert-info"}`}>
+      <div>
+        <strong>{notice.title}</strong>
+        <p>{notice.detail}</p>
+        {notice.reasons.map((reason) => (
+          <p key={reason.id}>
+            <strong>{reason.label}</strong> · {reason.reason}
+            {reason.revokedAt && ` · 철회 ${new Date(reason.revokedAt).toLocaleString("ko-KR")}`}
+          </p>
+        ))}
+        {notice.checkedAt && <small>상태 확인: {new Date(notice.checkedAt).toLocaleString("ko-KR")}</small>}
+      </div>
+    </div>
+  );
+}
 export default function Exports({
   params,
 }: {
@@ -59,7 +67,7 @@ export default function Exports({
       try {
         const [p, result] = await Promise.all([
           api<Project>(`/projects/${id}`),
-          api<{ items: ExportJob[] }>(`/projects/${id}/exports`),
+          apiRequest("get", "/v1/projects/{project_id}/exports", { path: { project_id: id } }),
         ]);
         if (!active) return;
         setProject(p);
@@ -109,6 +117,9 @@ export default function Exports({
           {project?.name || "프로젝트"} · 저장된 검토·제작 파일과 편집용 ZIP의
           처리 상태를 확인하세요.
         </p>
+        <button className="button button-light button-sm" onClick={() => setRetry((n) => n + 1)} disabled={loading}>
+          <RotateCcw size={15} /> 상태 새로고침
+        </button>
       </div>
       <div className="alert alert-info">
         <FileText size={18} />
@@ -158,7 +169,7 @@ export default function Exports({
               </span>
               <div>
                 <h3>
-                  {exportKindLabel(job.kind)}{" "}
+                  {exportKindLabel(job.kind, job.result && "format" in job.result ? job.result.format : undefined)}{" "}
                   <span>#{jobs.length - index}</span>
                 </h3>
                 <p>
@@ -182,13 +193,14 @@ export default function Exports({
                   )}
                 {job.error && (
                   <p className="export-history-error">
-                    {typeof job.error === "string"
-                      ? job.error
-                      : job.error.message || "출력 중 문제가 발생했습니다."}
+                    {job.error}
                   </p>
                 )}
+                <CurrentApproval job={job} />
               </div>
-              {job.status === "succeeded" ? (
+              {job.status === "succeeded" && !job.download_url ? (
+                <span>파일 다운로드를 사용할 수 없습니다.</span>
+              ) : job.status === "succeeded" ? (
                 <div className="export-row-actions">
                   {canEdit(session) && canRecordPrinterIntake(job) && (
                     <button
@@ -207,7 +219,9 @@ export default function Exports({
                     <Download size={16} />{" "}
                     {job.kind === "editable_export"
                       ? "편집용 ZIP 다운로드"
-                      : "다운로드"}
+                      : job.result && "format" in job.result && job.result.format === "print_engine_zip"
+                        ? "시험 ZIP 다운로드"
+                        : "다운로드"}
                   </a>
                 </div>
               ) : canRetryExport(job) ? (

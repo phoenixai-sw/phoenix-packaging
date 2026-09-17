@@ -124,6 +124,8 @@ class Subscription(Base):
     cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False)
     billing_anchor: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     paid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    pricing_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    next_pricing_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
@@ -159,6 +161,8 @@ class PaymentOrder(Base):
     currency: Mapped[str] = mapped_column(String(3), default="KRW")
     credits: Mapped[int] = mapped_column(Integer)
     pricing_version: Mapped[str] = mapped_column(String(80))
+    pricing_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    source_pricing_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="pending")
     invoice_id: Mapped[str | None] = mapped_column(ForeignKey("billing_invoices.id"), nullable=True, unique=True)
     subscription_id: Mapped[str | None] = mapped_column(ForeignKey("subscriptions.id"), nullable=True)

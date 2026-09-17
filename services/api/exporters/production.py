@@ -96,12 +96,14 @@ def _preview_all_faces(document,scene,path):
     preview.save(path)
 
 
-def export_production_bundle(project:dict,output_dir:Path,approved_conditions:dict,asset_resolver=None,approval_recheck=None) -> dict:
+def export_production_bundle(project:dict,output_dir:Path,approved_conditions:dict,asset_resolver=None,approval_recheck=None,*,icc_bytes=None) -> dict:
     """Caller must load conditions from registry DB. Optional callback rechecks revocation before publication."""
     preflight=preflight_project(project,approved_conditions,asset_resolver)
     if not preflight["production_allowed"]:
         first=next(issue for issue in preflight["issues"] if issue["severity"]=="error")
         raise ExportValidationError(first["code"],first["message"],first.get("field","production"))
+    if approved_conditions['profile'].get('requirements',{}).get('adapter_id')=='icc-cmyk-outline-v1':
+        return _export_icc_bundle(project,output_dir,approved_conditions,asset_resolver,approval_recheck,icc_bytes,preflight)
     scene=validate_scene(_scene_from_project(project)); geometry=geometry_for_scene(scene)
     output_dir=Path(output_dir)
     if output_dir.exists():
@@ -125,7 +127,7 @@ def export_production_bundle(project:dict,output_dir:Path,approved_conditions:di
         manifest={"schema_version":"1.0","kind":"production","adapter":"rgb-face-pages-v1","generated_at":datetime.now(timezone.utc).isoformat(),
                   "project_id":ticket["project_id"],"revision_id":ticket["revision_id"],"geometry_hash":geometry["geometry_hash"],"template_id":ticket["template_id"],"profile_id":ticket["profile_id"],
                   "font":{"id":"NotoSansKR","embedded":True,"sha256":hashlib.sha256(FONT_PATH.read_bytes()).hexdigest()},"capabilities":CAPABILITIES,
-                  "font_weights":_font_manifest(scene),
+                  "font_weights":_font_manifest(scene,asset_resolver),
                   "files":[{"name":p.name,"bytes":p.stat().st_size,"sha256":hashlib.sha256(p.read_bytes()).hexdigest()} for p in sorted(staging.iterdir())],
                   "manifest_hash_policy":"The manifest hashes the five payload files; it does not claim a self hash."}
         _json(staging/"manifest.json",manifest)
@@ -139,3 +141,44 @@ def export_production_bundle(project:dict,output_dir:Path,approved_conditions:di
     finally:
         if staging.exists() and staging.resolve().parent==output_dir.parent.resolve() and staging.name.startswith(".production-"):
             shutil.rmtree(staging)
+
+
+def _export_icc_bundle(project,output_dir,conditions,resolver,recheck,icc_bytes,preflight):
+    from .print_pdf import render_print_artifacts
+    if not isinstance(icc_bytes,bytes):raise ExportValidationError('ICC_REQUIRED','허가된 ICC 원본 바이트가 필요합니다.')
+    output_dir=Path(output_dir)
+    if output_dir.exists():raise ExportValidationError('OUTPUT_EXISTS','출력 경로가 이미 있습니다.')
+    output_dir.parent.mkdir(parents=True,exist_ok=True)
+    parent=Path(tempfile.mkdtemp(prefix='.production-',dir=output_dir.parent));staging=parent/'bundle'
+    try:
+        profile=project['print_output']['requirements']
+        manifest=render_print_artifacts(project,staging,profile,icc_bytes,resolver)
+        ticket={'schema_version':'2.0','project_id':str(project.get('id','')),'revision_id':str(project['revision_id']),
+            'template_id':conditions['template']['id'],'profile_id':conditions['profile']['id'],'material':conditions['material'],
+            'geometry_hash':manifest['geometry_hash'],'output':profile,'icc_sha256':sha256_bytes(icc_bytes),
+            'confirmed_fields':project['scene'].get('confirmed_fields',[]),'reviewed_face_ids':conditions['reviewed_face_ids'],
+            'approval_evidence':{'template':conditions['template']['approval'],'profile':conditions['profile']['approval']},
+            'manufacturer_intake_status':'not_submitted'}
+        _json(staging/'job-ticket.json',ticket)
+        # The ticket is explicitly an information document, separate from CMYK artwork.
+        canvas=Canvas(str(staging/'job-ticket.pdf'),pagesize=(210*mm,297*mm),invariant=1);_font();canvas.setFont(FONT_ID,10)
+        for index,line in enumerate(['Phoenix Packaging 제작 작업 정보',f"프로젝트: {ticket['project_id']}",f"리비전: {ticket['revision_id']}",
+            f"출력: 일반 PDF / ICC CMYK / 글꼴 윤곽선 / {profile['layout']} / 도련 {profile['bleed_mm']:g}mm",
+            'production.pdf: 인쇄 아트 / cut.pdf: CUT / fold.pdf: FOLD',
+            'PDF/X · 별색 · 화이트판 · 오버프린트 · 제조사 최종 입고 승인은 포함하지 않습니다.',
+            f"ICC SHA256: {ticket['icc_sha256']}"]):canvas.drawString(15*mm,(275-index*10)*mm,line)
+        canvas.save();_json(staging/'preflight.json',{**preflight,'final_verification':manifest['verification']})
+        manifest.update(project_id=ticket['project_id'],revision_id=ticket['revision_id'],template_id=ticket['template_id'],profile_id=ticket['profile_id'],
+                        generated_at=datetime.now(timezone.utc).isoformat(),approval_evidence=ticket['approval_evidence'],capabilities=preflight['capabilities'])
+        manifest['files']=[{'name':p.name,'bytes':p.stat().st_size,'sha256':sha256_bytes(p.read_bytes())} for p in sorted(staging.iterdir()) if p.name!='manifest.json']
+        manifest['manifest_hash_policy']='All payload files except manifest.json are hashed; no self hash.';_json(staging/'manifest.json',manifest)
+        if recheck:
+            latest=recheck()
+            if latest!=conditions or not preflight_project(project,latest,resolver)['production_allowed']:
+                raise ExportValidationError('APPROVAL_CHANGED','출력 중 승인 조건이 변경되었습니다.')
+        staging.rename(output_dir);return manifest
+    finally:
+        if parent.exists():shutil.rmtree(parent)
+
+
+def sha256_bytes(raw):return hashlib.sha256(raw).hexdigest()

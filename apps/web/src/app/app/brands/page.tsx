@@ -12,6 +12,8 @@ import {
 import { useApiData, canEdit, type BrandData } from "@/lib/business";
 import { uploadAsset } from "@/lib/assets";
 import { api, errorMessage } from "@/lib/api";
+import type { ApiSchema } from "@/lib/api-contract";
+import { FontManagement } from "@/components/font-management";
 export default function Brands() {
   const session = useSession();
   const { data, loading, error, refresh } = useApiData<{ items: BrandData[] }>(
@@ -21,6 +23,8 @@ export default function Brands() {
   const [name, setName] = useState("");
   const [colors, setColors] = useState("#274631, #E5B18D, #F5F0E5");
   const [logo, setLogo] = useState<string | undefined>();
+  const [fontIds, setFontIds] = useState<string[]>([]);
+  const { data: fonts, refresh: refreshFonts } = useApiData<ApiSchema<"FontList">>("/fonts");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [formError, setFormError] = useState("");
@@ -29,6 +33,7 @@ export default function Brands() {
     setName(brand?.name || "");
     setColors(brand?.colors?.join(", ") || "#274631, #E5B18D, #F5F0E5");
     setLogo(brand?.logo_asset_id || undefined);
+    setFontIds(brand?.font_asset_ids ?? []);
     setFormError("");
   }
   async function save(e: React.FormEvent) {
@@ -48,6 +53,7 @@ export default function Brands() {
           name,
           colors: palette,
           font_ids: ["NotoSansKR"],
+          font_asset_ids: fontIds,
           logo_asset_id: logo || null,
         }),
       });
@@ -115,7 +121,7 @@ export default function Brands() {
                   />
                 ))}
               </div>
-              <p>{brand.font_ids?.join(", ") || "NotoSansKR"}</p>
+              <p>{brand.font_ids?.join(", ") || "NotoSansKR"}{brand.font_asset_ids.length > 0 ? ` · 등록 글꼴 ${brand.font_asset_ids.length}개` : ""}</p>
               {canEdit(session) && (
                 <button
                   className="button button-light button-sm"
@@ -128,6 +134,7 @@ export default function Brands() {
           ))}
         </div>
       )}
+      <FontManagement catalog={fonts} readOnly={!canEdit(session)} onChanged={refreshFonts} />
       {editing !== undefined && (
         <Dialog
           title={editing ? "브랜드 편집" : "새 브랜드"}
@@ -152,16 +159,17 @@ export default function Brands() {
               />
             </label>
             <label className="field">
-              로고 이미지 (PNG · JPG · WebP)
+              로고 이미지 (PNG · JPG · WebP · SVG)
               <input
                 type="file"
-                accept="image/png,image/jpeg,image/webp"
+                accept="image/png,image/jpeg,image/webp,image/svg+xml"
                 disabled={busy}
                 onChange={(e) => {
                   if (e.target.files?.[0]) void upload(e.target.files[0]);
                 }}
               />
             </label>
+            <p className="field-hint">SVG는 1MiB 이하 정적 윤곽선을 PNG로 변환합니다. SVG 글자는 윤곽선으로 바꾸고 외부 이미지·스크립트는 제거해 주세요.</p>
             {logo && (
               <img
                 className="logo-form-preview"
@@ -169,9 +177,10 @@ export default function Brands() {
                 alt="업로드한 로고"
               />
             )}
-            <p className="field-hint">
-              웹과 출력에 동일한 Noto Sans KR 글꼴을 사용합니다.
-            </p>
+            <fieldset disabled={busy} style={{ border: 0, padding: 0 }}><legend>새 문구에 허용할 등록 글꼴</legend>
+              {fonts?.items.map(font => <label className="checkbox-label" key={font.id}><input type="checkbox" checked={fontIds.includes(font.id)} onChange={e => setFontIds(ids => e.target.checked ? [...ids, font.id] : ids.filter(id => id !== font.id))} />{font.family} · {font.weight}</label>)}
+              <p className="field-hint">기본 Noto Sans KR은 항상 사용 가능합니다. 허용 해제는 새 선택에만 적용하며 기존 디자인·저장본의 글꼴은 유지합니다.</p>
+            </fieldset>
             <Feedback error={formError} />
             <button className="button button-dark full-width" disabled={busy}>
               {busy ? (

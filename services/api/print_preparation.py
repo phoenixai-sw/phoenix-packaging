@@ -3,6 +3,9 @@
 Checksum calculation never issues a GS1 number. Registration records are the
 customer's declaration, not an automated GS1 ownership verification.
 """
+from .contracts.base import Envelope, ERROR_RESPONSES
+from .contracts import business as B
+from .contracts import registry as R
 from datetime import datetime
 from uuid import UUID
 
@@ -158,7 +161,7 @@ def install_print_preparation_routes(app, db_session):
     def result(request, value):
         return {"data": value, "request_id": request.state.request_id}
 
-    @router.post("/barcodes/gtin13/compose")
+    @router.post("/barcodes/gtin13/compose", response_model=Envelope[B.ComposedBarcode], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def compose(body: ComposeBody, request: Request, db=Depends(db_session)):
         require_auth(request, db, mutate=True)
         if not body.registered_prefix_confirmed:
@@ -170,13 +173,13 @@ def install_print_preparation_routes(app, db_session):
         value = check_retail_barcode(stem + digit)
         return result(request, {"value": value, "check_digit": digit, "issued": False, "notice": BARCODE_NOTICE})
 
-    @router.get("/variants/{identity}/barcode-registration")
+    @router.get("/variants/{identity}/barcode-registration", response_model=Envelope[B.VariantBarcodeData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def registration(identity: UUID, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db)
         variant = owned_record(db, Variant, identity, user.tenant_id)
         return result(request, barcode_registration_payload(db, variant))
 
-    @router.put("/variants/{identity}/barcode-registration")
+    @router.put("/variants/{identity}/barcode-registration", response_model=Envelope[B.VariantBarcodeData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def register(identity: UUID, body: RegistrationBody, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
         if not body.confirmed_rights:
@@ -202,7 +205,7 @@ def install_print_preparation_routes(app, db_session):
         db.commit()
         return result(request, barcode_registration_payload(db, variant))
 
-    @router.get("/projects/{identity}/print-preparation")
+    @router.get("/projects/{identity}/print-preparation", response_model=Envelope[R.PrintPreparation], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def preparation(identity: UUID, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db)
         project = owned_record(db, Project, identity, user.tenant_id)

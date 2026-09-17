@@ -1,9 +1,12 @@
 """Read-only workspace summaries and reusable images with ACLs applied before pagination."""
+from .contracts.base import Envelope, ERROR_RESPONSES
+from .contracts import core as C
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import func, or_, select
 from .auth import require_auth
 from .business import owned_record
+from .retention.deletion import available_asset_clause
 from .feature_models import WorkspaceMember
 from .models import Asset, Job, Project, Revision
 
@@ -19,7 +22,7 @@ def visible_workspace(db, user, column):
 def install_workspace_views(app, db_session, asset_payload):
     router = APIRouter(prefix="/v1")
 
-    @router.get("/workspace/overview")
+    @router.get("/workspace/overview", response_model=Envelope[C.WorkspaceOverview], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def overview(request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db)
         scope = [Project.tenant_id == user.tenant_id, visible_workspace(db, user, Project.workspace_id)]
@@ -40,20 +43,20 @@ def install_workspace_views(app, db_session, asset_payload):
                          "job_counts": [{"kind": k, "status": s, "count": c} for k, s, c in counts],
                          "timeline": timeline[:20]}, "request_id": request.state.request_id}
 
-    @router.get("/assets")
+    @router.get("/assets", response_model=Envelope[C.AssetsData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def assets(request: Request, q: str = Query("", max_length=160),
-               source: str | None = Query(None, pattern="^(upload|openai|fixture|image_quality)$"),
+               source: str | None = Query(None, pattern="^(upload|openai|fixture|image_quality|svg_import)$"),
                project_id: UUID | None = None, offset: int = Query(0, ge=0, le=100000),
                limit: int = Query(24, ge=1, le=60), db=Depends(db_session)):
         user, _ = require_auth(request, db)
         if project_id:
             owned_record(db, Project, project_id, user.tenant_id)
-        scope = [Asset.tenant_id == user.tenant_id, visible_workspace(db, user, Asset.workspace_id)]
+        scope = [Asset.tenant_id == user.tenant_id, visible_workspace(db, user, Asset.workspace_id), available_asset_clause(), Asset.source != "sanitized_svg"]
         if q.strip():
             escaped = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             scope.append(Asset.original_name.ilike(f"%{escaped}%", escape="\\"))
         if source:
-            scope.append(Asset.source == source)
+            scope.append(Asset.source.in_(("upload","svg_import")) if source=="upload" else Asset.source == source)
         rows = db.scalars(select(Asset).where(*scope).order_by(Asset.created_at.desc(), Asset.id.desc())
                           .offset(offset).limit(limit + 1)).all()
         return {"data": {"items": [{**asset_payload(a), "created_at": a.created_at.isoformat()} for a in rows[:limit]],

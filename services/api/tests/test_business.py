@@ -268,9 +268,12 @@ def test_registry_approval_requires_dimensions_and_is_irreversible(business):
     row=owner.post("/v1/admin/template-versions",json=spec);assert row.status_code==201,row.text
     path=f"/v1/admin/template-versions/{row.json()['data']['id']}"
     approval={"evidence_asset_id":evidence_id,"notes":"Fixture only","approved_by_name":"Test admin"}
+    assert owner.post(path+"/approve",json=approval).json()["code"]=="REVIEW_REQUIRED"
+    assert owner.post(path+"/review",json={"reason":"Review fixture dimensions"}).status_code==200
     assert owner.post(path+"/approve",json=approval).status_code==422
     valid=owner.post("/v1/admin/template-versions",json={**spec,"approved_dimensions":{"width_mm":160,"height_mm":230}}).json()["data"]
     path=f"/v1/admin/template-versions/{valid['id']}"
+    assert owner.post(path+"/review",json={"reason":"Review valid fixture"}).status_code==200
     accepted=owner.post(path+"/approve",json=approval);assert accepted.status_code==200,accepted.text
     assert owner.post(path+"/revoke",json={"reason":"Test revocation"}).status_code==200
     assert owner.post(path+"/approve",json=approval).status_code==409

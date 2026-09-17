@@ -1,4 +1,39 @@
+import type { ApiSchema } from "./api-contract";
+
 export type ExportJobState = { kind?: string; status: string };
+
+/** This is today's registry state, never a rewrite of the original file result. */
+export function exportApprovalNotice(job: {
+  kind?: string;
+  current_approval?: ApiSchema<"ExportCurrentApproval"> | null;
+}) {
+  if (job.kind !== "production_export") return null;
+  const approval = job.current_approval;
+  const revoked = approval?.status === "revoked";
+  const approved = approval?.status === "approved";
+  return {
+    warning: !approved,
+    title: revoked
+      ? "해당 조건 승인 철회"
+      : approved
+        ? "현재 도면·인쇄 프로필 승인 유지"
+        : "현재 승인 상태 확인 필요",
+    detail: revoked
+      ? "기존 출력 파일은 보존됩니다. 다시 제작하기 전에 현재 조건을 확인해 주세요."
+      : approved
+        ? "출력 당시 사용한 조건의 현재 상태입니다. 새 제작의 검수·승인을 대신하지 않습니다."
+        : "출력 당시의 조건을 현재 승인된 상태로 확인할 수 없습니다. 제작 전에 운영자에게 확인해 주세요.",
+    reasons: (approval?.versions || [])
+      .filter((version) => version.status === "revoked")
+      .map((version) => ({
+        id: `${version.kind}:${version.id || "unknown"}`,
+        label: `${version.kind === "template" ? "도면" : "인쇄 프로필"} · ${version.name}`,
+        reason: version.public_reason || "승인이 철회되었습니다. 운영자에게 상세 확인을 요청하세요.",
+        revokedAt: version.revoked_at,
+      })),
+    checkedAt: approval?.checked_at,
+  };
+}
 export function canRetryExport(job: ExportJobState) {
   return (
     ["review_export", "editable_export"].includes(job.kind || "") &&
@@ -9,7 +44,9 @@ export function canRetryExport(job: ExportJobState) {
 export function canRetryReviewExport(job: ExportJobState) {
   return job.kind === "review_export" && job.status === "failed";
 }
-export function exportKindLabel(kind?: string) {
+export function exportKindLabel(kind?: string, resultFormat?: string) {
+  if (kind === "review_export" && resultFormat === "print_engine_zip")
+    return "CMYK 출력 시험 ZIP";
   return (
     (
       {

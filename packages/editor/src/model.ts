@@ -11,7 +11,8 @@ export type SceneObject = {
   text?: string;
   font_size_pt?: number;
   font_id?: string;
-  font_weight?: 400 | 700;
+  font_weight?: number;
+  font_asset_id?: string;
   color?: string;
   align?: "left" | "center" | "right";
   asset_id?: string;

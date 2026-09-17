@@ -5,6 +5,8 @@
   "workspaces": ["apps/web"],
   "engines": {"node": ">=22 <25"},
   "scripts": {
+    "contracts:generate": "openapi-typescript packages/contracts/openapi.json -o packages/contracts/api.generated.ts",
+    "contracts:check": "openapi-typescript packages/contracts/openapi.json -o packages/contracts/api.generated.ts --check",
     "dev": "npm run dev --workspace=@phoenix/web",
     "build": "npm run build --workspace=@phoenix/web",
     "start": "npm run start --workspace=@phoenix/web",

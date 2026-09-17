@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Check, Download, LoaderCircle, ShieldCheck } from "lucide-react";
 import { api, errorMessage } from "@/lib/api";
+import type { ApiSchema, ApiData } from "@/lib/api-contract";
 import {
   canRetryExport,
   exportKindLabel,
@@ -12,6 +13,7 @@ import {
 } from "@/lib/export-state";
 import { useApiData } from "@/lib/business";
 import { Feedback } from "./management";
+import { PrintEngineTools } from "./print-engine-tools";
 import type { Project, Scene } from "@editor/model";
 type Version = {
   id: string;
@@ -21,44 +23,9 @@ type Version = {
   material?: string;
   requirements?: { required_fields?: string[] };
 };
-type Preflight = {
-  status: string;
-  review_allowed: boolean;
-  production_allowed: boolean;
-  issues: Array<{
-    code: string;
-    severity: string;
-    scope: string;
-    message: string;
-    face_id?: string;
-    object_id?: string;
-    field?: string;
-  }>;
-};
-type Quote = {
-  id: string;
-  credit_total: number;
-  balance_before: number;
-  balance_after: number;
-  expires_at: string;
-};
-type Job = {
-  id: string;
-  kind?: string;
-  status: string;
-  download_url?: string;
-  error?: { message?: string } | string;
-  result?: {
-    format?: string;
-    revision_number?: number;
-    asset_count?: number;
-    font_count?: number;
-    byte_size?: number;
-    credits_charged?: number;
-    rights_notice?: string;
-    review_only?: boolean;
-  };
-};
+type Preflight = ApiSchema<"PreflightReport">;
+type Quote = ApiSchema<"QuoteData">;
+type Job = ApiData<"/v1/jobs/{job_id}">;
 export function ExportTools({
   project,
   scene,
@@ -320,7 +287,7 @@ export function ExportTools({
           aria-live="polite"
         >
           <strong>
-            {exportKindLabel(job.kind)} · {exportStatusLabel(job.status)}
+            {exportKindLabel(job.kind, job.result && "format" in job.result ? job.result.format : undefined)} · {exportStatusLabel(job.status)}
           </strong>
           {job.kind === "editable_export" && job.result && (
             <p className="field-hint">
@@ -339,7 +306,7 @@ export function ExportTools({
           {job.error && (
             <Feedback
               error={
-                typeof job.error === "string" ? job.error : job.error.message
+                job.error
               }
             />
           )}{" "}
@@ -352,7 +319,7 @@ export function ExportTools({
                   : job.download_url
               }
             >
-              <Download size={16} /> {exportKindLabel(job.kind)} 다운로드
+              <Download size={16} /> {exportKindLabel(job.kind, job.result && "format" in job.result ? job.result.format : undefined)} 다운로드
             </a>
           )}
           {canRetryExport(job) && (
@@ -592,7 +559,7 @@ export function ExportTools({
                       <button
                         className="text-link"
                         onClick={() =>
-                          onFaceSelect(issue.face_id!, issue.object_id)
+                          onFaceSelect(issue.face_id!, issue.object_id ?? undefined)
                         }
                       >
                         해당 레이어·면 확인
@@ -636,7 +603,7 @@ export function ExportTools({
                           <button
                             className="text-link"
                             onClick={() =>
-                              onFaceSelect(issue.face_id!, issue.object_id)
+                              onFaceSelect(issue.face_id!, issue.object_id ?? undefined)
                             }
                           >
                             해당 레이어·면 확인
@@ -687,6 +654,7 @@ export function ExportTools({
           </div>
         )}
       </section>
+      <PrintEngineTools projectId={project.id} saveCurrent={saveCurrent} readOnly={readOnly || busy} />
     </div>
   );
 }

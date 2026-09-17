@@ -1,3 +1,6 @@
+from ..contracts.base import Envelope, ERROR_RESPONSES
+from ..contracts import images as I
+from ..contracts import billing as P
 from typing import Literal
 from uuid import UUID, uuid4
 
@@ -9,7 +12,8 @@ from ..auth import require_auth
 from ..errors import APIError
 from .models import BillingAccount, PaymentOrder, Subscription
 from .payments import BillingSettings, ProviderError, billing_account, bind_and_charge, build_provider, cancel_renewal, change_plan, confirm_order, create_order, entitlements, order_payload, reconcile_webhook, refund_order, subscription_payload, sync_order
-from .policy import pricing
+from .policy import pricing, aware
+from ..database import utcnow
 from .service import create_quote, quote_payload, wallet_summary
 from .sync import payment_snapshot
 
@@ -103,7 +107,7 @@ def install_billing_routes(app, db_session, *, settings=None, provider=None):
             raise APIError(422, "IDEMPOTENCY_KEY_REQUIRED", "중복 결제 방지를 위한 요청 식별자가 필요합니다.")
         return supplied
 
-    @router.get("/credits")
+    @router.get("/credits", response_model=Envelope[P.CreditsData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def credits(request: Request, db=Depends(db_session)):
         user = actor(request, db)
         summary = wallet_summary(db, user.tenant_id)
@@ -111,7 +115,7 @@ def install_billing_routes(app, db_session, *, settings=None, provider=None):
         db.commit()
         return result(request, {**summary, "mode": settings.provider, "payments_enabled": capabilities["checkout_available"], "review_export_cost": 0})
 
-    @router.get("/billing")
+    @router.get("/billing", response_model=Envelope[P.BillingData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def billing(request: Request, db=Depends(db_session)):
         user = actor(request, db, owner=True)
         summary = wallet_summary(db, user.tenant_id)
@@ -120,11 +124,19 @@ def install_billing_routes(app, db_session, *, settings=None, provider=None):
         orders = db.scalars(select(PaymentOrder).where(PaymentOrder.tenant_id == user.tenant_id).order_by(PaymentOrder.created_at.desc()).limit(50)).all()
         account = db.get(BillingAccount, user.tenant_id)
         capabilities = settings.capabilities()
-        data = {"policy": pricing(), "summary": summary, "subscription": subscription_payload(subscription), "orders": [{**order_payload(order, account if capabilities["checkout_available"] else None, settings), "payment": payment_snapshot(db, order)} for order in orders], "entitlements": access, "payment_capabilities": capabilities}
+        # Plan-change prices stay bound to the existing subscription; topups use the current offer.
+        policy = pricing(db)
+        current_pricing_version = policy['version']
+        agreed_pricing_version = None
+        if subscription and subscription.paid_until and aware(subscription.paid_until)>utcnow():
+            agreed = subscription.pricing_snapshot or pricing()
+            agreed_pricing_version = agreed['version']
+            policy = {**policy, "plans":agreed["plans"]}
+        data = {"policy": policy, "current_pricing_version":current_pricing_version,"agreed_plan_pricing_version":agreed_pricing_version,"summary": summary, "subscription": subscription_payload(subscription), "orders": [{**order_payload(order, account if capabilities["checkout_available"] else None, settings), "payment": payment_snapshot(db, order)} for order in orders], "entitlements": access, "payment_capabilities": capabilities}
         db.commit()
         return result(request, data)
 
-    @router.post("/quotes", status_code=201)
+    @router.post("/quotes", status_code=201, response_model=Envelope[I.QuoteData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def quote(body: QuoteBody, request: Request, db=Depends(db_session)):
         user = actor(request, db, mutate=True)
         prepare = getattr(app.state, "prepare_quote", None)
@@ -138,7 +150,7 @@ def install_billing_routes(app, db_session, *, settings=None, provider=None):
         db.commit()
         return result(request, quote_payload(quote))
 
-    @router.post("/billing/orders", status_code=201)
+    @router.post("/billing/orders", status_code=201, response_model=Envelope[P.PaymentOrderData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def order(body: OrderBody, request: Request, db=Depends(db_session)):
         user = actor(request, db, owner=True, mutate=True)
         created = create_order(db, user.tenant_id, body.kind, operation(request), plan_id=body.plan_id, credits=body.credits, settings=settings)
@@ -146,14 +158,14 @@ def install_billing_routes(app, db_session, *, settings=None, provider=None):
         db.commit()
         return result(request, order_payload(created, account, settings))
 
-    @router.post("/billing/confirm")
+    @router.post("/billing/confirm", response_model=Envelope[P.PaymentOrderData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def confirm(body: ConfirmBody, request: Request, db=Depends(db_session)):
         user = actor(request, db, owner=True, mutate=True)
         payment = confirm_order(db, user.tenant_id, body.order_id, body.payment_key, body.amount, provider=get_provider(), settings=settings)
         db.commit()
         return result(request, summary(db, payment))
 
-    @router.post("/billing/billing-key/confirm")
+    @router.post("/billing/billing-key/confirm", response_model=Envelope[P.PaymentOrderData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def confirm_key(body: BillingKeyBody, request: Request, db=Depends(db_session)):
         user = actor(request, db, owner=True, mutate=True)
         try:
@@ -163,7 +175,7 @@ def install_billing_routes(app, db_session, *, settings=None, provider=None):
         db.commit()
         return result(request, summary(db, paid))
 
-    @router.post("/billing/mock-confirm")
+    @router.post("/billing/mock-confirm", response_model=Envelope[P.PaymentOrderData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def mock_confirm(body: MockBody, request: Request, db=Depends(db_session)):
         if not settings.capabilities()["mock_available"]:
             raise APIError(404, "NOT_FOUND", "요청한 항목을 찾을 수 없습니다.")
@@ -179,21 +191,21 @@ def install_billing_routes(app, db_session, *, settings=None, provider=None):
         db.commit()
         return result(request, summary(db, paid))
 
-    @router.post("/billing/change-plan")
+    @router.post("/billing/change-plan", response_model=Envelope[P.PlanChange], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def switch_plan(body: ChangePlanBody, request: Request, db=Depends(db_session)):
         user = actor(request, db, owner=True, mutate=True)
         change = change_plan(db, user.tenant_id, body.plan_id, operation(request), settings=settings)
         db.commit()
         return result(request, change)
 
-    @router.post("/billing/cancel-renewal")
+    @router.post("/billing/cancel-renewal", response_model=Envelope[P.SubscriptionData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def cancel(request: Request, db=Depends(db_session)):
         user = actor(request, db, owner=True, mutate=True)
         subscription = cancel_renewal(db, user.tenant_id)
         db.commit()
         return result(request, subscription_payload(subscription))
 
-    @router.post("/billing/orders/{order_id}/refund")
+    @router.post("/billing/orders/{order_id}/refund", response_model=Envelope[P.PaymentOrderData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def refund(order_id: str, body: RefundBody, request: Request, db=Depends(db_session)):
         user = actor(request, db, owner=True, mutate=True)
         try:
@@ -203,14 +215,14 @@ def install_billing_routes(app, db_session, *, settings=None, provider=None):
         db.commit()
         return result(request, summary(db, refunded))
 
-    @router.post("/billing/orders/{order_id}/sync")
+    @router.post("/billing/orders/{order_id}/sync", response_model=Envelope[P.PaymentOrderData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def sync(order_id: str, request: Request, db=Depends(db_session)):
         user = actor(request, db, owner=True, mutate=True)
         checked = sync_order(db, user.tenant_id, order_id, provider=get_provider(), settings=settings)
         db.commit()
         return result(request, summary(db, checked))
 
-    @router.post("/billing/webhooks/toss")
+    @router.post("/billing/webhooks/toss", response_model=Envelope[P.WebhookResult], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     async def webhook(request: Request, db=Depends(db_session)):
         # Payload/header data only locates an existing order; it never proves paid.
         if settings.provider not in {"toss_test", "toss_live"}:

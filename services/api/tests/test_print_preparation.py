@@ -172,7 +172,12 @@ def test_manufacturing_readiness_uses_same_output_requirement_rules_as_final_pre
     from services.api.exporters.preflight import preflight_project
     app,client,_,_=business;saved=project(client)
     requirements={"pdf_standard":"PDF","color_space":"RGB","font_mode":"embedded",**extra}
-    conditions={"template":{},"profile":{"requirements":requirements}}
+    # The route now validates the public contract too: keep this output-rule
+    # fixture shaped like the real registry snapshots returned by the service.
+    conditions={"template":{"id":None,"status":"unapproved","is_demo":True},
+                "profile":{"id":"test-profile","kind":"profile","name":"Test profile",
+                           "manufacturer":"Test manufacturer","status":"draft","is_demo":True,
+                           "approval":{},"requirements":requirements}}
     monkeypatch.setattr("services.api.print_preparation.approved_conditions",lambda *args:conditions)
     preparation=client.get(f"/v1/projects/{saved['id']}/print-preparation").json()["data"]
     output=next(c for c in preparation["manufacturing"]["checks"] if c["key"]=="output")

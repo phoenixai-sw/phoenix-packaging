@@ -42,6 +42,9 @@ class LocalStorage:
             raise ValueError("Asset exceeds limit")
         return content
 
+    def delete(self, key: str) -> None:
+        self.path(key).unlink(missing_ok=True)
+
 
 class SupabaseStorage:
     def __init__(self, settings: Settings):

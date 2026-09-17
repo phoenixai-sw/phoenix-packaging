@@ -7,16 +7,26 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from ..errors import APIError
+from copy import deepcopy
+from ..operations.models import PolicyVersion,ActivePolicy
 
 SEOUL = ZoneInfo("Asia/Seoul")
 
 
 @lru_cache(maxsize=1)
-def pricing():
+def seed_pricing():
     path = Path(__file__).resolve().parents[3] / "config" / "pricing.seed.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     data["actions"] = {"editor.manual": 0, "preview.all_faces": 0, **data["actions"]}
     return data
+
+
+def pricing(db=None):
+    if db is not None:
+        from ..operations.service import active_version
+        row=active_version(db,'pricing')
+        if row:return {**deepcopy(row.payload),'version':row.version}
+    return deepcopy(seed_pricing())
 
 
 def aware(value):
@@ -32,8 +42,8 @@ def add_months(value: datetime, months=1, anchor_day=None):
     return local.replace(year=year, month=month, day=day).astimezone(timezone.utc)
 
 
-def plan(plan_id):
-    value = next((item for item in pricing()["plans"] if item["id"] == plan_id), None)
+def plan(plan_id, *, db=None, snapshot=None):
+    value = next((item for item in (snapshot or pricing(db))["plans"] if item["id"] == plan_id), None)
     if value is None:
         raise APIError(422, "UNKNOWN_PLAN", "요금제를 확인해 주세요.")
     return value

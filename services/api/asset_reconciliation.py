@@ -20,6 +20,8 @@ MAX_IMAGE_BYTES = 25 * 1024 * 1024
 
 
 def ensure_asset_available(asset):
+    from .retention.deletion import ensure_object_available
+    ensure_object_available(asset)
     if asset.metadata_json.get("integrity_status") == "unavailable_compensated":
         raise APIError(410, "ASSET_UNAVAILABLE_COMPENSATED", "이미지 파일의 소실 또는 손상이 확인되어 크레딧을 복원했습니다. 새 이미지는 자동 생성되지 않습니다.")
 

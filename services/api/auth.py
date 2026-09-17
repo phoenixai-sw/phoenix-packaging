@@ -69,6 +69,7 @@ def require_auth(request: Request, db, mutate=False, authorize_write=True, enfor
             raise APIError(403, "CSRF_REJECTED", "보안 확인이 만료되었습니다. 페이지를 새로 열어 주세요.")
         if authorize_write and user.role not in {"owner", "editor"}:
             raise APIError(403, "ROLE_FORBIDDEN", "이 작업을 변경할 권한이 없습니다.")
+    request.state.metric_tenant_id = user.tenant_id
     return user, session
 
 

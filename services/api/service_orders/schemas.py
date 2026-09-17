@@ -1,0 +1,103 @@
+from datetime import datetime
+from typing import Literal
+from uuid import UUID
+from pydantic import Field
+from ..contracts.base import ContractModel
+
+ServiceCode=Literal['file_review','onboarding','pilot_pro_first_month']
+ServiceStatus=Literal['requested','quoted','accepted','in_progress','delivered','completed','canceled','rejected']
+
+
+class ServiceCatalogItem(ContractModel):
+    code:ServiceCode
+    name:str
+    suggested_amount_krw:int
+    price_note:str
+    scope:str
+    automatic_renewal:Literal[False]=False
+    credit_grant:Literal[0]=0
+    checkout_enabled:Literal[False]=False
+
+
+class CatalogPayload(ContractModel):
+    policy_version:str
+    currency:Literal['KRW']='KRW'
+    items:list[ServiceCatalogItem]
+    notice:str
+
+
+class CreateServiceOrder(ContractModel):
+    service_code:ServiceCode
+    project_id:UUID|None=None
+    request_note:str=Field(min_length=3,max_length=4000)
+
+
+class QuoteServiceOrder(ContractModel):
+    base_revision:int=Field(ge=1)
+    amount_inc_vat:int=Field(ge=0,le=10000000,strict=True)
+    scope:str=Field(min_length=5,max_length=4000)
+    exclusions:str=Field(min_length=3,max_length=2000)
+    valid_days:int=Field(ge=1,le=30,default=7)
+    reason:str=Field(min_length=3,max_length=500)
+
+
+class ServiceOrderAction(ContractModel):
+    base_revision:int=Field(ge=1)
+    note:str=Field(min_length=3,max_length=2000)
+
+
+class AcceptServiceQuote(ServiceOrderAction):
+    quote_id:UUID
+    understands_no_payment:Literal[True]
+
+
+class ServiceWorkTransition(ServiceOrderAction):
+    status:Literal['in_progress','delivered','completed','rejected']
+
+
+class ServiceQuotePayload(ContractModel):
+    id:str
+    number:int
+    amount_inc_vat:int
+    currency:Literal['KRW']='KRW'
+    scope:str
+    exclusions:str
+    expires_at:datetime
+    policy_version:str
+    reason:str
+    created_at:datetime
+
+
+class ServiceEventPayload(ContractModel):
+    id:str
+    order_revision:int
+    kind:str
+    note:str
+    quote_id:str|None
+    created_at:datetime
+
+
+class ServiceOrderPayload(ContractModel):
+    id:str
+    service_code:ServiceCode
+    project_id:str|None
+    request_note:str
+    catalog_snapshot:ServiceCatalogItem
+    catalog_policy_version:str
+    status:ServiceStatus
+    revision:int
+    current_quote_id:str|None
+    accepted_quote_id:str|None
+    created_at:datetime
+    updated_at:datetime
+    quotes:list[ServiceQuotePayload]
+    events:list[ServiceEventPayload]
+    payment_status:Literal['not_collected']='not_collected'
+    credits_granted:Literal[0]=0
+    checkout_enabled:Literal[False]=False
+    admin_notice:str|None=None
+
+
+class ServiceOrderList(ContractModel):
+    items:list[ServiceOrderPayload]
+    next_cursor:str|None=None

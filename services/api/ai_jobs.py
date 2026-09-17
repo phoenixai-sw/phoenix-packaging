@@ -14,6 +14,7 @@ from .image_provider import (generate_image, ProviderError, MAX_REFERENCE_BYTES,
                              image_settings_payload)
 from .billing.service import lock_wallet
 from .errors import APIError
+from .operations.service import image_settings
 
 
 def lock_tenant_work(db, tenant_id):
@@ -45,6 +46,7 @@ def recheck_actor(db, job, settings):
         raise ProviderError("AI_WRITE_REVOKED", "편집 권한이 변경되어 예약을 복원합니다.")
     principal = SimpleNamespace(id=actor.id, email=actor.email, email_verified_at=actor.email_verified_at, tenant_id=job.tenant_id, role=role)
     try:
+        settings=image_settings(db,settings)
         enforce_membership_entitlement(db, principal)
         ensure_ai_access(settings, principal)
     except APIError as exc:
@@ -129,6 +131,8 @@ def process_ai_jobs(session_factory, storage, settings, limit=1, provider=None):
                 unit.status="reconciliation_required" if unit.status=="running" else "failed"
                 unit.error_code="WORKER_LEASE_EXPIRED"
                 unit.lease_id=None
+                from .metrics.service import record_generation
+                record_generation(db,db.get(Job,unit.job_id),unit,succeeded=False,error_code=unit.error_code,attempt_id="worker-timeout")
                 summarize_job(db,db.get(Job,unit.job_id))
                 db.commit()
         with session_factory() as db:
@@ -148,15 +152,20 @@ def process_ai_jobs(session_factory, storage, settings, limit=1, provider=None):
                 except ProviderError as error:
                     release_unit(db,candidate.tenant_id,candidate.reservation_id,candidate.unit_index,reason=error.code,now=now)
                     db.refresh(candidate);candidate.status="failed";candidate.error_code=error.code;candidate.lease_id=None
+                    from .metrics.service import record_generation
+                    record_generation(db,job,candidate,succeeded=False,error_code=error.code,attempt_id="actor-revoked")
                     summarize_job(db,job);db.commit();continue
                 from .provider_budget import reserve_allowance, allowance_metadata
-                budget_denial=reserve_allowance(db,settings,now)
+                effective_settings=image_settings(db,settings)
+                budget_denial=reserve_allowance(db,effective_settings,now)
                 if budget_denial:
                     release_unit(db,candidate.tenant_id,candidate.reservation_id,candidate.unit_index,reason=budget_denial,now=now)
                     db.refresh(candidate);candidate.status="failed";candidate.error_code=budget_denial
+                    from .metrics.service import record_generation
+                    record_generation(db,job,candidate,succeeded=False,error_code=budget_denial,attempt_id="provider-budget")
                     db.add(AuditEvent(tenant_id=candidate.tenant_id,action="provider_budget_blocked",entity_id=job.id,details={"code":budget_denial,"utc_day":now.strftime("%Y-%m-%d")}))
                     summarize_job(db,job);db.commit();continue
-                attempt=ProviderAttempt(tenant_id=candidate.tenant_id,unit_id=candidate.id,provider=settings.ai_provider,model=job.snapshot.get("model",settings.image_model),status="started",created_at=now,usage={"image_settings":image_settings_payload(job.snapshot),"budget":allowance_metadata(settings,now)})
+                attempt=ProviderAttempt(tenant_id=candidate.tenant_id,unit_id=candidate.id,provider=settings.ai_provider,model=job.snapshot.get("model",effective_settings.image_model),status="started",created_at=now,usage={"image_settings":image_settings_payload(job.snapshot),"budget":allowance_metadata(effective_settings,now)})
                 db.add(attempt);db.flush();db.refresh(candidate)
                 job.status="running";job.updated_at=now
                 claimed=(candidate.id,job.id,candidate.tenant_id,candidate.reservation_id,candidate.unit_index,lease,attempt.id,dict(job.snapshot),candidate.attempt_count)
@@ -187,11 +196,12 @@ def process_ai_jobs(session_factory, storage, settings, limit=1, provider=None):
                     attempt=db.get(ProviderAttempt,attempt_id);attempt.status="canceled_before_provider"
                     db.commit();processed+=1;continue
                 recheck_actor(db,db.get(Job,job_id),settings)
+                provider_settings=image_settings(db,settings)
                 db.commit()
             # After entering the adapter, a missing response may still incur a
             # provider charge. Only failures before this boundary are free.
             provider_invoked=True
-            result=provider(settings,data,reference)
+            result=provider(provider_settings,data,reference)
             # Provider billing exists even if the later private upload fails.
             with session_factory() as db:
                 attempt=db.get(ProviderAttempt,attempt_id)
@@ -205,6 +215,15 @@ def process_ai_jobs(session_factory, storage, settings, limit=1, provider=None):
             if data.get("edit_mode")=="remove_text":
                 result=composite_edit_result(data,reference,result)
             asset_id=str(uuid4());key=f"{tenant_id}/ai/{job_id}/{unit_id}/{lease}.png"
+            from .retention.storage_lifecycle import record_write_intent, mark_published
+            try:
+                record_write_intent(session_factory,tenant_id,job_id,lease,key,result.content,unit_id=unit_id)
+            except APIError as late:
+                if late.code != "WORKER_LEASE_LOST": raise
+                with session_factory() as db:
+                    db.get(ProviderAttempt,attempt_id).status="late_result_not_charged"
+                    db.commit()
+                processed+=1;continue
             storage.put(key,result.content,"image/png")
             digest=sha256(result.content).hexdigest()
             if sha256(storage.get(key)).hexdigest()!=digest:
@@ -230,7 +249,10 @@ def process_ai_jobs(session_factory, storage, settings, limit=1, provider=None):
                         **({"design_context":data["design_context"],"prompt_version":data["prompt_version"]} if data.get("design_context") else {}),
                         **({"confirmed_source_text":data.get("confirmed_source_text","")} if data.get("edit_mode")=="remove_text" else {})})
                     db.add(asset);db.flush()
+                    mark_published(db,key)
                     unit.asset_id=asset_id;unit.status="succeeded";unit.result_metadata=result.metadata;unit.provider_request_id=result.metadata.get("provider_request_id")
+                    from .metrics.service import record_generation
+                    record_generation(db,job,unit,succeeded=True)
                     db.add(AuditEvent(tenant_id=tenant_id,action="generation_succeeded",entity_id=job_id,details={"unit":index,"provider":settings.ai_provider,
                         **({"edit_mode":"remove_text","reference_asset_id":data["reference_asset_id"],"edit_pixel_box":data["edit_pixel_box"],"preservation_scope":"outside_edit_region"} if data.get("edit_mode")=="remove_text" else {})}))
                 unit.updated_at=utcnow();summarize_job(db,db.get(Job,job_id));db.commit()
@@ -252,6 +274,8 @@ def process_ai_jobs(session_factory, storage, settings, limit=1, provider=None):
                     unit.error_code=error.code;unit.lease_id=None;unit.updated_at=utcnow()
                     summarize_job(db,db.get(Job,job_id))
                     db.add(AuditEvent(tenant_id=tenant_id,action="generation_failed",entity_id=job_id,details={"unit":index,"code":error.code}))
+                    from .metrics.service import record_generation
+                    record_generation(db,db.get(Job,job_id),unit,succeeded=False,error_code=error.code,attempt_id=attempt_id)
                 db.commit()
         processed+=1
     return processed

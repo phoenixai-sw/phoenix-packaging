@@ -24,6 +24,7 @@ const fields: Array<[keyof SceneObject, string]> = [
   ["locked", "잠금"],
   ["font_size_pt", "글자 크기"],
   ["font_weight", "글자 굵기"],
+  ["font_asset_id", "브랜드 글꼴"],
   ["color", "색상"],
   ["align", "정렬"],
   ["x_mm", "X 위치"],

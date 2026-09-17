@@ -15,6 +15,7 @@ import {
 import type Konva from "konva";
 import type { Face, SceneObject } from "./model";
 import { roundMM } from "./model";
+import { drawEditableText, fontFamily, fontData, loadObjectFonts } from "./fonts";
 import {
   cropPixels,
   objectBounds,
@@ -232,12 +233,16 @@ export default function Canvas({
   const [textValue, setTextValue] = useState("");
   const composing = useRef(false);
   const [fontReady, setFontReady] = useState(false);
+  const [fontError, setFontError] = useState("");
+  const [fontRetry, setFontRetry] = useState(0);
+  const fontSignature = [...new Set(face.objects.map(o => o.font_asset_id).filter(Boolean))].sort().join(":");
   useEffect(() => {
-    Promise.all([
-      document.fonts.load('400 16px "NotoSansKREditor"'),
-      document.fonts.load('700 16px "NotoSansKREditor"'),
-    ]).then(() => setFontReady(true));
-  }, []);
+    let active = true;
+    setFontReady(false); setFontError("");
+    loadObjectFonts(face.objects).then(() => { if (active) setFontReady(true); })
+      .catch((error: unknown) => { if (active) setFontError(error instanceof Error ? error.message : "글꼴을 불러오지 못했습니다."); });
+    return () => { active = false; };
+  }, [fontSignature, fontRetry]);
   useEffect(() => {
     if (!host.current) return;
     const observer = new ResizeObserver((entries) => {
@@ -278,7 +283,7 @@ export default function Canvas({
     onEditState(false);
   }, [face.id, onEditState]);
   function startEdit(object: SceneObject) {
-    if (object.locked || readOnly) return;
+    if (object.locked || readOnly || (object.font_asset_id && !fontData(object.font_asset_id))) return;
     setEditing(object.id);
     setTextValue(object.text || "");
     onEditState(true);
@@ -567,10 +572,12 @@ export default function Canvas({
                         fontSize={
                           (((object.font_size_pt || 16) * 25.4) / 72) * scale
                         }
-                        fontFamily="NotoSansKREditor"
-                        fontStyle={
-                          object.font_weight === 700 ? "bold" : "normal"
-                        }
+                        fontFamily={fontFamily(object)}
+                        fontStyle={String(object.font_weight ?? 400)}
+                        sceneFunc={(context) => {
+                          if (object.font_asset_id && !fontData(object.font_asset_id)) return;
+                          drawEditableText(context._context, object, scale);
+                        }}
                         fill={object.color || "#263b2d"}
                         rotation={object.rotation_deg}
                         align={object.align || "left"}
@@ -865,8 +872,10 @@ export default function Canvas({
                   color: current.color,
                   textAlign: current.align,
                   lineHeight: current.line_height ?? 1.2,
-                  fontFamily: "NotoSansKREditor",
+                  fontFamily: fontFamily(current),
                   fontWeight: current.font_weight ?? 400,
+                  fontKerning: "none",
+                  fontVariantLigatures: "none",
                   letterSpacing:
                     (((current.letter_spacing ?? 0) * 25.4) / 72) * scale,
                   transform: `rotate(${current.rotation_deg}deg)`,
@@ -877,7 +886,7 @@ export default function Canvas({
         </div>
       </div>
       {!fontReady && (
-        <div className="canvas-font-notice">한글 글꼴을 불러오고 있어요…</div>
+        <div className="canvas-font-notice" role={fontError ? "alert" : "status"}>{fontError || "글꼴 원본을 불러오고 있어요…"}{fontError && <button type="button" onClick={() => setFontRetry(value => value + 1)}>글꼴 다시 불러오기</button>}</div>
       )}
     </div>
   );

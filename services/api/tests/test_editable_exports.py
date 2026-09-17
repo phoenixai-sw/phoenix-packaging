@@ -211,7 +211,13 @@ def test_actor_revocation_before_generation_or_publication_leaves_no_download(cl
     with app.state.session_factory() as db:
         assert db.get(Job, job["id"]).status == "failed"
         assert db.get(Job, job["id"]).result is None
-    assert not list(app.state.storage.root.rglob("*.zip"))
+    # Publication remains forbidden. The unpublished object is retained as a
+    # known write intent until hold/backup-aware GC is explicitly enabled.
+    assert len(list(app.state.storage.root.rglob("*.zip"))) == (1 if when == "after_upload" else 0)
+    if when == "after_upload":
+        from services.api.retention.models import StorageIntent
+        with app.state.session_factory() as db:
+            assert db.scalar(select(StorageIntent).where(StorageIntent.job_id == job["id"])).status == "planned"
 
 
 def test_workspace_tenant_viewer_and_expired_membership_access(business):

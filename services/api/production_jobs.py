@@ -17,6 +17,8 @@ from .registry import approved_conditions
 from .exporters import export_production_bundle,preflight_project
 from .billing.service import canonical_hash,capture_unit,release
 from .billing.payments import enforce_membership_entitlement
+from .retention.storage_lifecycle import record_write_intent,mark_published
+from .metrics.service import record_production_success
 
 
 def _current_conditions(db,snapshot,tenant_id,*,lock=False):
@@ -34,12 +36,17 @@ def _current_conditions(db,snapshot,tenant_id,*,lock=False):
     enforce_membership_entitlement(db,actor)
     if lock:
         identities=[snapshot.get("template_version_id"),snapshot.get("print_profile_version_id")]
+        if snapshot.get("print_output"):identities.append(snapshot['print_output']['icc']['id'])
         list(db.scalars(select(RegistryVersion).where(RegistryVersion.id.in_([i for i in identities if i])).order_by(RegistryVersion.id).with_for_update().execution_options(populate_existing=True)))
     # Version/material fields come from the frozen job, never a later scene.
     frozen=SimpleNamespace(**snapshot)
     conditions=approved_conditions(db,frozen,snapshot["revision_id"],snapshot["reviewed_face_ids"])
     if canonical_hash(conditions)!=snapshot["conditions_hash"]:
         raise APIError(409,"APPROVAL_CHANGED","제조사 승인 조건이 변경되거나 철회되었습니다.")
+    if snapshot.get('print_output'):
+        from .print_engine import freeze_print_output
+        current=freeze_print_output(db,snapshot['print_profile_version_id'],test_mode=False)
+        if canonical_hash(current)!=canonical_hash(snapshot['print_output']):raise APIError(409,'PRINT_PROFILE_CHANGED','ICC 출력 조건이 변경되었습니다.')
     return conditions
 
 
@@ -77,21 +84,36 @@ def process_production_jobs(session_factory,storage,settings,limit=1):
                         asset=db.scalar(select(Asset).where(Asset.id==str(identity),Asset.tenant_id==tenant_id))
                         if not asset or asset.workspace_id not in (None,snapshot.get("workspace_id")):
                             raise APIError(404,"ASSET_UNAVAILABLE","출력 자산의 접근 권한을 확인해 주세요.")
-                        path=temporary/f"asset-{asset.id}";path.write_bytes(storage.get(asset.storage_key));assets[identity]=path;return path
+                        raw=storage.get(asset.storage_key)
+                        if snapshot.get('print_output'):
+                            expected=next((a for a in snapshot.get('print_assets',[]) if a['id']==asset.id),None)
+                            if not expected or sha256(raw).hexdigest()!=expected['sha256']:raise APIError(422,'PRINT_SOURCE_HASH_MISMATCH','동결한 이미지와 원본 파일이 다릅니다.')
+                        path=temporary/f"asset-{asset.id}";path.write_bytes(raw);assets[identity]=path;return path
                 def asset_metadata(identity):
+                    if snapshot.get('print_output'):
+                        expected=next((a for a in snapshot.get('print_assets',[]) if a['id']==str(identity)),None)
+                        if expected is None:raise ValueError('Asset quality snapshot missing')
+                        return expected['quality_metadata']
                     with session_factory() as db:
                         asset=db.scalar(select(Asset).where(Asset.id==str(identity),Asset.tenant_id==tenant_id))
                         if not asset or asset.workspace_id not in (None,snapshot.get("workspace_id")):
                             raise APIError(404,"ASSET_UNAVAILABLE","출력 자산의 접근 권한을 확인해 주세요.")
                         return asset.metadata_json
                 resolver.metadata=asset_metadata
+                from .font_assets.service import attach_font_resolver
+                attach_font_resolver(resolver,session_factory,storage,tenant_id,snapshot)
                 def recheck():
                     with session_factory() as db:return _current_conditions(db,snapshot,tenant_id)
-                bundle=temporary/"bundle";manifest=export_production_bundle(snapshot,bundle,conditions,resolver,approval_recheck=recheck)
+                icc=None
+                if snapshot.get('print_output'):
+                    from .print_engine import resolve_print_icc
+                    with session_factory() as db:icc=resolve_print_icc(db,storage,snapshot['print_output'])
+                bundle=temporary/"bundle";manifest=export_production_bundle(snapshot,bundle,conditions,resolver,approval_recheck=recheck,icc_bytes=icc)
                 archive=temporary/"production.zip"
                 with ZipFile(archive,"w",ZIP_DEFLATED) as zipfile:
                     for path in sorted(bundle.iterdir()):zipfile.write(path,path.name)
                 raw=archive.read_bytes();digest=sha256(raw).hexdigest();key=f"{tenant_id}/exports/{job_id}/{lease}.zip"
+                record_write_intent(session_factory,tenant_id,job_id,lease,key,raw)
                 storage.put(key,raw,"application/zip")
                 if sha256(storage.get(key)).hexdigest()!=digest:raise APIError(503,"STORAGE_VERIFICATION_FAILED","제작 묶음 보관을 확인하지 못했습니다.")
                 with session_factory() as db:
@@ -106,6 +128,9 @@ def process_production_jobs(session_factory,storage,settings,limit=1):
                         job.status="failed";job.error="예약 유효시간이 지나 결과를 공개하지 않았습니다. 새 견적으로 요청해 주세요."
                     else:
                         job.status="succeeded";job.error=None;job.result={"storage_key":key,"media_type":"application/zip","filename":f"phoenix-production-{job_id}.zip","sha256":digest,"manifest":manifest,"review_only":False,"credits_charged":snapshot["unit_cost"],"manufacturer_intake_status":"not_submitted"}
+                        mark_published(db,key)
+                        job.updated_at=utcnow()
+                        record_production_success(db,job)
                         db.add(AuditEvent(tenant_id=tenant_id,actor_id=snapshot["actor_id"],action="production_succeeded",entity_id=job_id,details={"revision_id":snapshot["revision_id"],"sha256":digest}))
                     job.updated_at=utcnow();db.commit()
         except Exception as exc:

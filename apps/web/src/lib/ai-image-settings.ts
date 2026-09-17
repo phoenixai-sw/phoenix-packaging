@@ -1,3 +1,4 @@
+import type { ApiSchema } from "./api-contract";
 export type ImageModel = "gpt-image-2.5-sunburst" | "gpt-image-2.5-flare";
 export type ImageQuality = "low" | "medium" | "high" | "xhigh" | "max" | "auto";
 export type ImageMode = "generate" | "edit";
@@ -11,27 +12,8 @@ export type ImageSelection = {
   count: number;
   reference: string;
 };
-export type ImageSettings = {
-  model: string;
-  quality: string;
-  requested_quality?: string;
-  output_size?: string;
-  output_width_px?: number;
-  output_height_px?: number;
-  output_effective_ppi?: number | null;
-  output_experimental?: boolean;
-  layout_context?: ImageLayoutContext | null;
-};
-export type ImageLayoutContext = {
-  package_kind: string;
-  face_id: string;
-  brand_colors: string[];
-  reserved_object_count: number;
-  quiet_region_source:
-    | "placed_editable_objects"
-    | "combined_editable_objects"
-    | "empty_layout_default";
-};
+export type ImageSettings = ApiSchema<"ImageSettings">;
+export type ImageLayoutContext = ApiSchema<"LayoutContext">;
 
 export function imageLayoutSummary(context?: ImageLayoutContext | null) {
   if (!context) return null;
@@ -181,7 +163,7 @@ export function imageQuoteMatches(
   quote: {
     action: string;
     requested_units: number;
-    image_settings?: ImageSettings;
+    image_settings?: ImageSettings | null;
   },
   selection: ImageSelection,
 ): boolean {
@@ -194,7 +176,7 @@ export function imageQuoteMatches(
   );
 }
 
-export function imageModelLabel(model?: string): string {
+export function imageModelLabel(model?: string | null): string {
   if (model === "gpt-image-2.5-sunburst") return "Sunburst";
   if (model === "gpt-image-2.5-flare") return "Flare";
   return model || "모델 기록 없음";

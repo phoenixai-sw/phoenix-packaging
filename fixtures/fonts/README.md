@@ -15,8 +15,9 @@ Latin-only web subset. Keep the exact same file in the web public font directory
 - Build: fontTools 4.60.1 `instantiateVariableFont(font, {"wght": 400}, inplace=False)`.
 
 The static instance is necessary for matching embedded TrueType metrics in
-ReportLab and the browser. fontTools is a build dependency only; it is not needed
-to run the application. The full variable source is not duplicated in the repo.
+ReportLab and the browser. fontTools builds the static instances and is also a
+runtime dependency for the ICC print adapter's vector glyph outlines. The full
+variable source is not duplicated in the repo.
 The original font family has been retained; the reserved font name `Source` is
 not used for this generated instance. Review output embeds glyph subsets and
 blocks unsupported characters instead of silently substituting another font.

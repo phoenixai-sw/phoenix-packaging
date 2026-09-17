@@ -18,6 +18,7 @@ import { useApiData, dateTime } from "@/lib/business";
 import { api, errorMessage } from "@/lib/api";
 import { RegistryConditionFields } from "@/components/registry-condition-fields";
 import { RegisteredStructureAdmin } from "@/components/registered-structure-admin";
+import { PrintEngineAdmin } from "@/components/print-engine-admin";
 import {
   ProviderBudgetSummary,
   type ProviderBudget,
@@ -74,7 +75,7 @@ export default function Admin() {
   const versions = useApiData<{ items: Version[] }>("/admin/template-versions");
   const profiles = useApiData<{ items: Version[] }>("/admin/print-profiles");
   const [dialog, setDialog] = useState<
-    "version" | "profile" | "approve" | "revoke" | null
+    "version" | "profile" | "review" | "approve" | "revoke" | null
   >(null);
   const [target, setTarget] = useState<Version>();
   const [name, setName] = useState("");
@@ -90,6 +91,7 @@ export default function Admin() {
   const [demo, setDemo] = useState(true);
   const [evidence, setEvidence] = useState("");
   const [notes, setNotes] = useState("");
+  const [publicReason, setPublicReason] = useState("");
   const [approver, setApprover] = useState("");
   const [requirements, setRequirements] = useState(
     '{"color_space":"RGB","pdf_standard":"PDF","layout":"face_pages","bleed_mm":0,"font_mode":"embedded","min_ppi":300}',
@@ -103,6 +105,7 @@ export default function Admin() {
     setError("");
     setName("");
     setNotes("");
+    setPublicReason("");
     setEvidence("");
   }
   async function submit(e: React.FormEvent) {
@@ -122,10 +125,15 @@ export default function Admin() {
             }),
           },
         );
+      else if (dialog === "review" && target)
+        await api(
+          `/admin/${versions.data?.items.some((v) => v.id === target.id) ? "template-versions" : "print-profiles"}/${target.id}/review`,
+          { method: "POST", body: JSON.stringify({ reason: notes }) },
+        );
       else if (dialog === "revoke" && target)
         await api(
           `/admin/${versions.data?.items.some((v) => v.id === target.id) ? "template-versions" : "print-profiles"}/${target.id}/revoke`,
-          { method: "POST", body: JSON.stringify({ reason: notes }) },
+          { method: "POST", body: JSON.stringify({ reason: notes, public_reason: publicReason.trim() || null }) },
         );
       else
         await api(
@@ -223,6 +231,7 @@ export default function Admin() {
                 overview.refresh();
               }}
             />
+            <PrintEngineAdmin onRegistered={() => { profiles.refresh(); overview.refresh(); }} />
             {(
               [
                 {
@@ -271,7 +280,7 @@ export default function Admin() {
                           <td>
                             <span className="pill">
                               {item.is_demo ? "데모 / " : ""}
-                              {item.status}
+                              {({ draft: "초안", review: "검토 중", approved: "승인", revoked: "철회" } as Record<string, string>)[item.status] ?? item.status}
                             </span>
                           </td>
                           <td>
@@ -286,11 +295,13 @@ export default function Admin() {
                               >
                                 승인 철회
                               </button>
+                            ) : item.status === "draft" ? (
+                              <button className="button button-light button-sm" disabled={item.is_demo} onClick={() => open("review", item)}>검토 요청</button>
                             ) : (
                               <button
                                 className="button button-light button-sm"
                                 disabled={
-                                  item.is_demo || item.status !== "draft"
+                                  item.is_demo || item.status !== "review"
                                 }
                                 onClick={() => open("approve", item)}
                               >
@@ -423,6 +434,8 @@ export default function Admin() {
               ? "제조사 증빙을 확인한 승인"
               : dialog === "revoke"
                 ? "기존 승인 철회"
+                : dialog === "review"
+                  ? "제조 조건 검토 요청"
                 : dialog === "version"
                   ? "템플릿 버전 등록"
                   : "인쇄 프로파일 등록"
@@ -470,6 +483,11 @@ export default function Admin() {
                   />
                 </label>
               </>
+            ) : dialog === "review" ? (
+              <>
+                <p className="dialog-description">{target?.name}을 검토 중으로 전환합니다. 도면·재질·인쇄 조건과 사용 허락을 검토한 뒤 증빙을 첨부해야 승인할 수 있습니다. 검토 요청만으로 제작 출력은 열리지 않습니다.</p>
+                <label className="field">검토 요청 사유<textarea required minLength={5} maxLength={1000} value={notes} onChange={e => setNotes(e.target.value)} rows={3} /></label>
+              </>
             ) : dialog === "revoke" ? (
               <>
                 <p className="dialog-description">
@@ -477,7 +495,7 @@ export default function Admin() {
                   결과물은 이력과 함께 보존됩니다.
                 </p>
                 <label className="field">
-                  철회 사유
+                  내부 철회 사유
                   <textarea
                     required
                     minLength={3}
@@ -487,6 +505,7 @@ export default function Admin() {
                     rows={3}
                   />
                 </label>
+                <label className="field">고객에게 표시할 사유 (선택)<textarea minLength={5} maxLength={1000} value={publicReason} onChange={e => setPublicReason(e.target.value)} rows={3} /><small>완료된 출력 파일 이력에 표시됩니다. 개인정보나 내부 검토 내용은 입력하지 마세요. 비워 두면 기본 철회 안내가 표시됩니다.</small></label>
               </>
             ) : (
               <>
@@ -618,6 +637,8 @@ export default function Admin() {
                 "증빙 확인 완료·승인"
               ) : dialog === "revoke" ? (
                 "승인 철회 확인"
+              ) : dialog === "review" ? (
+                "검토 요청 기록"
               ) : (
                 "버전 등록"
               )}

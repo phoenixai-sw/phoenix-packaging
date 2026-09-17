@@ -69,7 +69,7 @@ def ensure_trial(db, tenant_id, *, now=None):
     tenant = db.get(Tenant, tenant_id)
     if tenant is None:
         raise APIError(404, "NOT_FOUND", "작업 공간을 찾을 수 없습니다.")
-    trial = pricing()["trial"]
+    trial = pricing(db)["trial"]
     _grant(db, tenant_id, trial["credits"], "trial", "standard_only", aware(tenant.created_at) + timedelta(days=trial["expires_days"]), "signup-trial", now, reason="가입 체험 크레딧 · 표준 이미지 생성/수정 전용")
     return wallet
 
@@ -90,16 +90,16 @@ def _eligible(bucket, action):
     return bucket.scope == "paid" or action in TRIAL_ACTIONS
 
 
-def _action_cost(action, units):
+def _action_cost(action, units, db=None):
     if isinstance(units, bool) or not isinstance(units, int) or not 1 <= units <= 10:
         raise APIError(422, "INVALID_UNITS", "작업 수량은 1~10개로 입력해 주세요.")
-    if action not in pricing()["actions"]:
+    if action not in pricing(db)["actions"]:
         raise APIError(422, "ACTION_UNAVAILABLE", "지원하지 않는 작업입니다.")
     if action.startswith("export.") and units != 1:
         raise APIError(422, "INVALID_EXPORT_UNITS", "출력 견적은 제작 항목 하나씩 요청해 주세요.")
     if action in {"image.generate.high", "image.edit.high"} and os.getenv("AI_HIGH_ENABLED", "false").lower() != "true":
         raise APIError(422, "HIGH_RESOLUTION_DISABLED", "고품질 이미지 작업은 원가 검증 후 제공됩니다.")
-    return pricing()["actions"][action]
+    return pricing(db)["actions"][action]
 
 
 def production_fingerprint(tenant_id, identity):
@@ -130,6 +130,11 @@ def production_fingerprint(tenant_id, identity):
         from ..geometry.pouch_features import normalize_pouch_features, physical_pouch_features
         features=normalize_pouch_features(identity["pouch_features"],"stand-up-pouch",float(dimensions["width_mm"]),float(dimensions["height_mm"]))
         normalized["pouch_features"]={key:measure(value) if not isinstance(value,(bool,str)) else value for key,value in physical_pouch_features(features).items()}
+    if identity.get("structure_geometry_hash") is not None:
+        value=identity["structure_geometry_hash"]
+        if not isinstance(value,str) or len(value)!=64 or any(c not in '0123456789abcdef' for c in value):
+            raise APIError(422,"INVALID_STRUCTURE_IDENTITY","제작 구조 해시를 확인해 주세요.")
+        normalized["structure_geometry_hash"]=value
     return canonical_hash(normalized)
 
 
@@ -164,14 +169,14 @@ def create_quote(db, tenant_id, action, units, *, project_id, base_revision, inp
     wallet = ensure_trial(db, tenant_id, now=now)
     expire_available(db, tenant_id, now=now)
     _project_revision(db, tenant_id, project_id, base_revision)
-    cost, fingerprint = _production_cost(db, tenant_id, action, input_data, _action_cost(action, units))
+    cost, fingerprint = _production_cost(db, tenant_id, action, input_data, _action_cost(action, units, db))
     if action.startswith("export.production") and not wallet.ever_paid:
         raise APIError(403, "PAID_PRODUCTION_REQUIRED", "체험 계정에서는 검토용 출력만 사용할 수 있습니다.")
     buckets = db.scalars(select(CreditBucket).where(CreditBucket.tenant_id == tenant_id, CreditBucket.expires_at > now)).all()
     balance = sum(bucket.available for bucket in buckets if _eligible(bucket, action))
     if balance < units * cost:
         raise APIError(402, "INSUFFICIENT_CREDITS", "크레딧이 부족합니다.", {"required": units * cost, "available": balance})
-    quote = Quote(tenant_id=tenant_id, action=action, units=units, unit_cost=cost, credit_total=units * cost, pricing_version=pricing()["version"], project_id=project_id, base_revision=base_revision, input_hash=canonical_hash(_request(action, units, project_id, base_revision, input_data)), input_data=input_data or {}, fingerprint=fingerprint, balance_before=balance, expires_at=now + timedelta(minutes=5), created_at=now)
+    quote = Quote(tenant_id=tenant_id, action=action, units=units, unit_cost=cost, credit_total=units * cost, pricing_version=pricing(db)["version"], project_id=project_id, base_revision=base_revision, input_hash=canonical_hash(_request(action, units, project_id, base_revision, input_data)), input_data=input_data or {}, fingerprint=fingerprint, balance_before=balance, expires_at=now + timedelta(minutes=5), created_at=now)
     db.add(quote)
     db.flush()
     return quote
@@ -182,6 +187,7 @@ def quote_payload(quote):
     if quote.action.startswith("image."):
         from ..image_provider import image_settings_payload
         payload["image_settings"] = image_settings_payload(quote.input_data)
+        payload["provider_mode"] = quote.input_data.get("provider_mode")
     return payload
 
 
@@ -197,7 +203,7 @@ def reserve(db, tenant_id, operation_key, action, units, *, quote_id=None, proje
             raise APIError(409, "IDEMPOTENCY_CONFLICT", "같은 요청 식별자로 다른 작업을 실행할 수 없습니다.")
         return existing
     _project_revision(db, tenant_id, project_id, base_revision)
-    cost, fingerprint = _production_cost(db, tenant_id, action, input_data, _action_cost(action, units))
+    cost, fingerprint = _production_cost(db, tenant_id, action, input_data, _action_cost(action, units, db))
     if action.startswith("export.production") and not wallet.ever_paid:
         raise APIError(403, "PAID_PRODUCTION_REQUIRED", "체험 크레딧으로 제작용 출력을 할 수 없습니다.")
     if quote_id:

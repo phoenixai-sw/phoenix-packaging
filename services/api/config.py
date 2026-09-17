@@ -23,6 +23,7 @@ class Settings:
     openai_api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
     image_model: str = field(default_factory=lambda: os.getenv("IMAGE_MODEL", "gpt-image-2.5-sunburst"))
     ai_image_models: tuple[str, ...] = field(default_factory=lambda: tuple(x.strip() for x in os.getenv("AI_IMAGE_MODELS", "gpt-image-2.5-sunburst,gpt-image-2.5-flare").split(",") if x.strip()))
+    ai_image_qualities: tuple[str, ...] = field(default_factory=lambda: tuple(x.strip() for x in os.getenv("AI_IMAGE_QUALITIES", "low,medium,high,xhigh,max,auto").split(",") if x.strip()))
     ai_daily_units: int = field(default_factory=lambda: int(os.getenv("AI_DAILY_UNIT_LIMIT", "30")))
     ai_daily_cost_limit_usd: float = field(default_factory=lambda: float(os.getenv("AI_DAILY_COST_LIMIT_USD", "10")))
     ai_request_allowance_usd: float = field(default_factory=lambda: float(os.getenv("AI_REQUEST_ALLOWANCE_USD", "2")))
@@ -38,6 +39,8 @@ class Settings:
     admin_emails: tuple[str, ...] = field(default_factory=lambda: tuple(x.strip().lower() for x in os.getenv("ADMIN_EMAILS", "").split(",") if x.strip()))
     session_days: int = 7
     upload_limit: int = field(default_factory=lambda: int(os.getenv("UPLOAD_LIMIT_BYTES", str(20 * 1024 * 1024))))
+    storage_gc_delete_enabled: bool = field(default_factory=lambda: os.getenv("STORAGE_GC_DELETE_ENABLED", "false").lower() == "true")
+    retention_customer_delete_enabled: bool = field(default_factory=lambda: os.getenv("RETENTION_CUSTOMER_DELETE_ENABLED", "false").lower() == "true")
 
     def validate(self) -> None:
         if self.environment not in {"development", "test", "staging", "production"}:
@@ -69,6 +72,8 @@ class Settings:
             raise ValueError("Only explicitly supported GPT Image 2.5 presets are enabled")
         if not self.ai_image_models or set(self.ai_image_models) - {"gpt-image-2.5-sunburst", "gpt-image-2.5-flare"} or self.image_model not in self.ai_image_models:
             raise ValueError("AI_IMAGE_MODELS must allow supported models and include IMAGE_MODEL")
+        if not self.ai_image_qualities or set(self.ai_image_qualities)-{'low','medium','high','xhigh','max','auto'} or 'high' not in self.ai_image_qualities:
+            raise ValueError('AI_IMAGE_QUALITIES must allow supported qualities and include high')
         if self.ai_daily_units < 0 or self.ai_daily_units > 10000:
             raise ValueError("AI daily unit limit is invalid")
         import math
@@ -77,3 +82,5 @@ class Settings:
                 raise ValueError("AI USD budget values must be positive and finite")
         if self.enable_production_export and not self.policy_approved:
             raise ValueError("Production export requires confirmed operating policies")
+        if (self.storage_gc_delete_enabled or self.retention_customer_delete_enabled) and self.environment in {"staging", "production"} and not self.policy_approved:
+            raise ValueError("Hosted storage deletion requires confirmed operating policies")

@@ -3,6 +3,7 @@ from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from uuid import uuid4
+from .retention.storage_lifecycle import record_write_intent, mark_published
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -46,28 +47,71 @@ def process_pending_jobs(session_factory, storage, limit=1) -> int:
                 def asset_resolver(asset_id):
                     with session_factory() as asset_db:
                         asset = asset_db.scalar(select(Asset).where(Asset.id == str(asset_id), Asset.tenant_id == tenant_id))
-                        if asset is None:
+                        if asset is None or (snapshot.get('print_output') and asset.workspace_id not in (None,snapshot.get('workspace_id'))):
                             raise ValueError("Asset is not accessible in this tenant")
                         path = temp / f"asset-{asset.id}"
-                        path.write_bytes(storage.get(asset.storage_key))
+                        raw=storage.get(asset.storage_key)
+                        if snapshot.get('print_output'):
+                            from hashlib import sha256
+                            expected=next((a for a in snapshot.get('print_assets',[]) if a['id']==asset.id),None)
+                            if not expected or sha256(raw).hexdigest()!=expected['sha256']:
+                                from .errors import APIError
+                                raise APIError(422,'PRINT_SOURCE_HASH_MISMATCH','동결한 이미지와 원본 파일이 다릅니다.')
+                        path.write_bytes(raw)
                         return path
 
                 def asset_metadata(asset_id):
+                    if snapshot.get('print_output'):
+                        expected=next((a for a in snapshot.get('print_assets',[]) if a['id']==str(asset_id)),None)
+                        if expected is None:raise ValueError('Asset quality snapshot missing')
+                        return expected['quality_metadata']
                     with session_factory() as asset_db:
                         asset = asset_db.scalar(select(Asset).where(Asset.id == str(asset_id), Asset.tenant_id == tenant_id))
                         if asset is None:
                             raise ValueError("Asset is not accessible in this tenant")
                         return asset.metadata_json
                 asset_resolver.metadata = asset_metadata
+                from .font_assets.service import attach_font_resolver
+                attach_font_resolver(asset_resolver,session_factory,storage,tenant_id,snapshot)
 
-                output = temp / "review.pdf"
-                manifest = export_review_pdf(snapshot, output, asset_resolver=asset_resolver)
+                engine_test = snapshot.get("print_output", {}).get("mode") == "test"
+                if engine_test:
+                    from .print_engine import resolve_print_icc,check_test_access
+                    from .exporters.print_pdf import render_print_artifacts
+                    from zipfile import ZipFile,ZIP_DEFLATED
+                    with session_factory() as db:
+                        check_test_access(db,tenant_id,snapshot)
+                        icc=resolve_print_icc(db,storage,snapshot["print_output"])
+                    manifest=render_print_artifacts(snapshot,temp/"engine",snapshot["print_output"]["requirements"],icc,asset_resolver,test_mode=True)
+                    output=temp/"engine-test.zip"
+                    with ZipFile(output,"w",ZIP_DEFLATED) as archive:
+                        for path in sorted((temp/"engine").iterdir()):archive.write(path,path.name)
+                    if output.stat().st_size>200*1024*1024:
+                        from .errors import APIError
+                        raise APIError(413,"PRINT_BUNDLE_LIMIT","시험 출력 묶음이 200MiB를 넘습니다.")
+                else:
+                    output = temp / "review.pdf"
+                    manifest = export_review_pdf(snapshot, output, asset_resolver=asset_resolver)
                 # Each lease writes its own object: an expired worker cannot
                 # overwrite the output of the worker that recovered its job.
-                key = f"{tenant_id}/exports/{job_id}/{lease_id}.pdf"
-                storage.put(key, output.read_bytes(), "application/pdf")
+                extension="zip" if engine_test else "pdf"
+                key = f"{tenant_id}/exports/{job_id}/{lease_id}.{extension}"
+                raw = output.read_bytes()
+                record_write_intent(session_factory, tenant_id, job_id, lease_id, key, raw)
+                storage.put(key, raw, "application/zip" if engine_test else "application/pdf")
+                if engine_test:
+                    from hashlib import sha256
+                    if sha256(storage.get(key)).digest()!=sha256(raw).digest():
+                        from .errors import APIError
+                        raise APIError(503,"STORAGE_VERIFICATION_FAILED","시험 출력 묶음 보관을 확인하지 못했습니다.")
             with session_factory() as db:
-                db.execute(update(Job).where(Job.id == job_id, Job.status == "running", Job.lease_id == lease_id).values(status="succeeded", result={"storage_key": key, "manifest": manifest, "review_only": True, "credits_charged": 0}, error=None, updated_at=utcnow()))
+                extra={}
+                if engine_test:
+                    check_test_access(db,tenant_id,snapshot,lock=True)
+                    extra={"format":"print_engine_zip","media_type":"application/zip","filename":f"phoenix-print-engine-test-{job_id}.zip","sha256":sha256(raw).hexdigest()}
+                won = db.execute(update(Job).where(Job.id == job_id, Job.status == "running", Job.lease_id == lease_id).values(status="succeeded", result={"storage_key": key, "manifest": manifest, "review_only": True, "credits_charged": 0,**extra}, error=None, updated_at=utcnow()))
+                if won.rowcount == 1:
+                    mark_published(db, key)
                 db.commit()
         except Exception as exc:
             # Error descriptions are selected, never raw provider URLs or data.

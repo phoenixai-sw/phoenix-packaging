@@ -1,4 +1,8 @@
 """Server-authoritative generation quotes and durable, idempotent image jobs."""
+from .contracts import jobs as J
+from .contracts import core as C
+from .contracts.base import Envelope, ERROR_RESPONSES
+from .contracts import images as I
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
@@ -17,6 +21,7 @@ from .image_provider import (get_capabilities, ProviderError, EDIT_VERSION, MAX_
                              AI_SELECTION_VERSION, IMAGE_ACTIONS,
                              resolve_image_selection)
 from .image_sizing import ImageSizeError, select_image_output
+from .operations.service import image_settings
 
 
 def ensure_ai_access(settings,user):
@@ -28,6 +33,7 @@ def ensure_ai_access(settings,user):
 
 
 def prepare_ai_quote(db,user,body,settings):
+    settings=image_settings(db,settings)
     ensure_ai_access(settings,user)
     action=body["action"]
     if action not in IMAGE_ACTIONS: raise APIError(422,"AI_ACTION_INVALID","지원하지 않는 이미지 작업입니다.")
@@ -137,10 +143,11 @@ def install_ai_routes(app,db_session,job_payload,snapshot_revision):
     settings=app.state.settings
     def result(request,data): return {"data":data,"request_id":request.state.request_id}
 
-    @router.get("/ai/capabilities")
-    def capabilities(request:Request): return result(request,get_capabilities(settings))
+    @router.get("/ai/capabilities", response_model=Envelope[I.ImageCapabilities], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
+    def capabilities(request:Request,db=Depends(db_session)):
+        return result(request,get_capabilities(image_settings(db,settings),db))
 
-    @router.post("/jobs",status_code=202)
+    @router.post("/jobs",status_code=202, response_model=Envelope[J.AIGenerationJob], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def create_job(body:JobBody,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True);ensure_ai_access(settings,user)
         operation=request.headers.get("idempotency-key","")
@@ -156,7 +163,7 @@ def install_ai_routes(app,db_session,job_payload,snapshot_revision):
         if quote.input_data.get("provider_mode")!=settings.ai_provider:
             raise APIError(409,"QUOTE_CHANGED","이미지 서비스 설정이 변경되었습니다. 견적을 다시 확인해 주세요.")
         try:
-            resolve_image_selection(settings,quote.input_data)
+            resolve_image_selection(image_settings(db,settings),quote.input_data)
         except ProviderError as error:
             raise APIError(409,"QUOTE_CHANGED",error.message) from None
         if quote.input_data.get("reference_asset_id"): owned_record(db,Asset,quote.input_data["reference_asset_id"],user.tenant_id)
@@ -186,13 +193,13 @@ def install_ai_routes(app,db_session,job_payload,snapshot_revision):
             raise APIError(409,"JOB_CONFLICT","작업이 이미 시작되었는지 확인해 주세요.") from None
         return result(request,job_payload(job))
 
-    @router.get("/projects/{identity}/generations")
+    @router.get("/projects/{identity}/generations", response_model=Envelope[C.Items[J.AIGenerationJob]], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def generations(identity:UUID,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db);owned_record(db,Project,identity,user.tenant_id)
         rows=db.scalars(select(Job).where(Job.tenant_id==user.tenant_id,Job.project_id==str(identity),Job.kind=="ai_generation").order_by(Job.created_at.desc()).limit(100))
         return result(request,{"items":[job_payload(row) for row in rows]})
 
-    @router.post("/jobs/{identity}/cancel")
+    @router.post("/jobs/{identity}/cancel", response_model=Envelope[J.AIGenerationJob], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def cancel(identity:UUID,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True);job=owned_record(db,Job,identity,user.tenant_id)
         if job.kind!="ai_generation": raise APIError(422,"JOB_NOT_CANCELABLE","이미지 작업만 취소할 수 있습니다.")

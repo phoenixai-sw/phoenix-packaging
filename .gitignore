@@ -17,6 +17,7 @@ supabase/.branches/
 *.sqlite*
 .local/
 /output/pdf/
+/output/ops-ui/
 test-results/
 playwright-report/
 *.log

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 240 180">
+  <title>Phoenix static SVG import test — self-authored fixture, not a customer logo</title>
+  <defs>
+    <linearGradient id="sunrise" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#673344" />
+      <stop offset="1" stop-color="#ffbc77" />
+    </linearGradient>
+    <clipPath id="round-window"><circle cx="120" cy="90" r="75" /></clipPath>
+  </defs>
+  <rect width="240" height="180" fill="#fff2dc" />
+  <g clip-path="url(#round-window)">
+    <rect x="30" y="15" width="180" height="150" fill="url(#sunrise)" />
+  </g>
+  <path d="M65 112 Q120 30 175 112 Z" fill="#fff2dc" stroke="#251536" stroke-width="4" />
+  <circle cx="120" cy="61" r="10" fill="#ffbc77" />
+  <path d="M75 127 Q120 151 165 127" fill="none" stroke="#fff2dc" stroke-width="5" stroke-linecap="round" />
+</svg>

@@ -17,6 +17,11 @@ from cryptography.fernet import Fernet
 from sqlalchemy import MetaData,Table,select,inspect,DateTime,Date,Numeric
 from services.api import models,feature_models
 from services.api.billing import models as billing_models
+from services.api.service_orders import models as service_order_models
+from services.api.operations import models as operation_models
+from services.api.metrics import models as metric_models
+from services.api.retention import models as retention_models
+from services.api.font_assets import models as font_models
 from services.api.config import Settings
 from services.api.database import Base,build_database
 from services.api.storage import build_storage,LocalStorage
@@ -42,38 +47,57 @@ def decode_rows(rows,table):
 
 
 def backup(output,key_path):
-    settings=Settings();engine,_=build_database(settings);storage=build_storage(settings)
+    settings=Settings();engine,sessions=build_database(settings);storage=build_storage(settings)
     output=output.resolve()
     if key_path.resolve().is_relative_to(output): raise ValueError("Keep the encryption key outside the backup directory")
     output.mkdir(parents=True,exist_ok=False)
     key=key_path.read_bytes() if key_path.exists() else Fernet.generate_key()
     if not key_path.exists(): key_path.write_bytes(key)
-    content=BytesIO();manifest={"created_at":datetime.now().isoformat(),"tables":{},"objects":{}}
-    with engine.connect() as connection,connection.begin(),ZipFile(content,"w",ZIP_DEFLATED) as archive:
-        # One repeatable snapshot on PostgreSQL; reflection only targets app tables.
-        if engine.dialect.name=="postgresql": connection.exec_driver_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-        available=set(inspect(connection).get_table_names());meta=MetaData()
-        for table in Base.metadata.sorted_tables:
-            if table.name not in available: continue
-            reflected=Table(table.name,meta,autoload_with=connection)
-            rows=[dict(row) for row in connection.execute(select(reflected)).mappings()]
-            raw=json.dumps(rows,default=encode,ensure_ascii=False,sort_keys=True).encode()
-            archive.writestr("tables/"+table.name+".json",raw)
-            manifest["tables"][table.name]={"rows":len(rows),"sha256":sha256(raw).hexdigest()}
-            for row in rows:
-                keys=[]
-                if table.name in {"assets","approval_evidence"}: keys.append(row["storage_key"])
-                if table.name=="jobs" and row.get("result") and row["result"].get("storage_key"): keys.append(row["result"]["storage_key"])
-                for object_key in keys:
-                    if object_key in manifest["objects"]: continue
-                    data=storage.get(object_key);archive_name="objects/"+str(len(manifest["objects"]))
-                    archive.writestr(archive_name,data)
-                    manifest["objects"][object_key]={"path":archive_name,"sha256":sha256(data).hexdigest(),"bytes":len(data)}
-        archive.writestr("manifest.json",json.dumps(manifest,ensure_ascii=False).encode())
-    encrypted=Fernet(key).encrypt(content.getvalue());(output/"application-backup.fernet").write_bytes(encrypted)
-    report=verify(output,key_path)
-    (output/"verification.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
-    engine.dispose();return report
+    from services.api.retention.storage_lifecycle import begin_backup,add_backup_pins,finish_backup
+    with engine.connect() as probe:
+        can_pin="storage_backup_runs" in inspect(probe).get_table_names()
+    if (settings.storage_gc_delete_enabled or settings.retention_customer_delete_enabled) and not can_pin:
+        raise ValueError("GC requires durable backup pin tables before backup")
+    # Only control metadata is written. The customer-data snapshot remains one
+    # repeatable READ ONLY transaction. Pre-migration backup works with GC off.
+    run_id=begin_backup(sessions,"암호화 애플리케이션 백업과 독립 복원 검증") if can_pin else None
+    try:
+        content=BytesIO();manifest={"created_at":datetime.now().isoformat(),"tables":{},"objects":{}}
+        with engine.connect() as connection,connection.begin(),ZipFile(content,"w",ZIP_DEFLATED) as archive:
+            if engine.dialect.name=="postgresql": connection.exec_driver_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            available=set(inspect(connection).get_table_names());meta=MetaData()
+            for table in Base.metadata.sorted_tables:
+                if table.name not in available: continue
+                reflected=Table(table.name,meta,autoload_with=connection)
+                rows=[dict(row) for row in connection.execute(select(reflected)).mappings()]
+                raw=json.dumps(rows,default=encode,ensure_ascii=False,sort_keys=True).encode()
+                archive.writestr("tables/"+table.name+".json",raw)
+                manifest["tables"][table.name]={"rows":len(rows),"sha256":sha256(raw).hexdigest()}
+                for row in rows:
+                    keys=[]
+                    if table.name in {"assets","approval_evidence","font_assets"} and not (row.get("metadata_json") or {}).get("_retention"): keys.append(row["storage_key"])
+                    if table.name=="jobs" and row.get("result") and row["result"].get("storage_key") and not row["result"].get("_retention"): keys.append(row["result"]["storage_key"])
+                    for object_key in keys:
+                        if object_key in manifest["objects"]: continue
+                        data=storage.get(object_key);archive_name="objects/"+str(len(manifest["objects"]))
+                        archive.writestr(archive_name,data)
+                        manifest["objects"][object_key]={"path":archive_name,"sha256":sha256(data).hexdigest(),"bytes":len(data)}
+            archive.writestr("manifest.json",json.dumps(manifest,ensure_ascii=False).encode())
+        # The global run barrier was active throughout enumeration/copy. Pin
+        # writes follow the read transaction, avoiding SQLite reader deadlocks.
+        if run_id: add_backup_pins(sessions,run_id,manifest["objects"])
+        encrypted=Fernet(key).encrypt(content.getvalue());(output/"application-backup.fernet").write_bytes(encrypted)
+        report=verify(output,key_path)
+        if run_id: finish_backup(sessions,run_id,verified=True,manifest_hash=sha256(json.dumps(manifest,sort_keys=True).encode()).hexdigest())
+        report["source_backup_pin_registered"]=bool(run_id)
+        report["source_database_control_metadata_written"]=bool(run_id)
+        (output/"verification.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
+        return report
+    except Exception:
+        if run_id: finish_backup(sessions,run_id,verified=False)
+        raise
+    finally:
+        engine.dispose()
 
 
 def verify(output,key_path,restore_dir=None):
@@ -149,5 +173,5 @@ if __name__=="__main__":
         print(json.dumps(report))
     except Exception as exc:
         # SQL parameters, credentials and source rows must never reach console.
-        print(json.dumps({"verified":False,"error_type":type(exc).__name__,"message":"Backup or local recovery verification failed; no source data was changed."}))
+        print(json.dumps({"verified":False,"error_type":type(exc).__name__,"message":"Backup or local recovery verification failed; customer content was not changed. Backup control metadata may record the failed attempt."}))
         raise SystemExit(1) from None

@@ -1,4 +1,6 @@
 """Google Identity Services ID-token exchange; no password or email fallback."""
+from .contracts.base import Envelope, ERROR_RESPONSES
+from .contracts import core as C
 from datetime import timedelta, timezone
 import hmac
 import secrets
@@ -17,6 +19,7 @@ from .auth_proxy import challenge_rate_identity
 from .database import utcnow
 from .errors import APIError
 from .models import GoogleLoginChallenge, LoginSession, Tenant, User
+from .metrics.schemas import AcquisitionInput
 
 CHALLENGE_COOKIE = "phoenix_google_challenge"
 CHALLENGE_SECONDS = 600
@@ -26,6 +29,7 @@ class GoogleLoginInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     credential: str = Field(min_length=20, max_length=16384)
     csrf_token: str = Field(min_length=32, max_length=128)
+    acquisition: AcquisitionInput | None = None
 
 
 class BoundedGoogleRequest(GoogleRequest):
@@ -99,6 +103,7 @@ def resolve_google_user(db, identity):
         db.flush()
         user = User(tenant_id=tenant.id, name=identity["name"], email=identity["email"], role="owner", password_hash="")
         db.add(user)
+        db.info["metrics_new_account"] = True
     if not user.is_active and user.id is not None:
         raise APIError(403, "ACCOUNT_DISABLED", "이 계정은 현재 사용할 수 없습니다. 운영자에게 문의해 주세요.")
     user.google_sub = identity["sub"]
@@ -115,7 +120,7 @@ def resolve_google_user(db, identity):
 def install_google_auth(app, db_session):
     router = APIRouter(prefix="/v1/auth")
 
-    @router.get("/google/challenge")
+    @router.get("/google/challenge", response_model=Envelope[C.GoogleChallenge], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def challenge(request: Request, response: Response, db=Depends(db_session)):
         settings = app.state.settings
         check_origin(request)
@@ -135,7 +140,7 @@ def install_google_auth(app, db_session):
         response.set_cookie(CHALLENGE_COOKIE, secret, httponly=True, secure=settings.cookie_secure, samesite="lax", max_age=CHALLENGE_SECONDS, path="/")
         return {"data": {"client_id": settings.google_client_id, "nonce": nonce, "csrf_token": nonce, "expires_at": expires.isoformat()}, "request_id": request.state.request_id}
 
-    @router.post("/google")
+    @router.post("/google", response_model=Envelope[C.SessionData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def login(body: GoogleLoginInput, request: Request, response: Response, verifier=Depends(google_verifier), db=Depends(db_session)):
         settings = app.state.settings
         check_origin(request)
@@ -162,6 +167,10 @@ def install_google_auth(app, db_session):
             session = create_session(db, user, response, settings)
             from .billing.service import ensure_trial
             ensure_trial(db, user.tenant_id)
+            from .metrics.service import record_signup, record_trial_granted
+            if db.info.get("metrics_new_account"):
+                record_signup(db, user, body.acquisition)
+            record_trial_granted(db, user.tenant_id)
             db.commit()
         except IntegrityError:
             db.rollback()

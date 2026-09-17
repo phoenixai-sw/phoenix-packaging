@@ -50,7 +50,8 @@ export type SceneObject = {
   text?: string | null;
   font_size_pt?: number | null;
   font_id?: "NotoSansKR" | null;
-  font_weight?: 400 | 700;
+  font_weight?: number;
+  font_asset_id?: string | null;
   color?: string | null;
   align?: "left" | "center" | "right" | null;
   asset_id?: string | null;

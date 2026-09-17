@@ -3,6 +3,8 @@
 Legacy clients can use CAS without a lease only while no active editor owns the
 project. A stale supplied token never silently falls back to legacy writes.
 """
+from .contracts.base import Envelope, ERROR_RESPONSES
+from .contracts import core as C
 from copy import deepcopy
 from datetime import timedelta
 import hmac
@@ -123,13 +125,13 @@ def install_editor_routes(app, db_session, project_payload, snapshot_revision, n
     def result(request, data):
         return {"data": data, "request_id": request.state.request_id}
 
-    @router.get("/{project_id}/edit-session")
+    @router.get("/{project_id}/edit-session", response_model=Envelope[C.EditorLease], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def status(project_id: UUID, request: Request, editor_id: UUID | None = None, db=Depends(db_session)):
         user, session = require_auth(request, db)
         project = owned_record(db, Project, project_id, user.tenant_id)
         return result(request, _state(db, db.get(ProjectEditLease, project.id), user, session, editor_id))
 
-    @router.post("/{project_id}/edit-session")
+    @router.post("/{project_id}/edit-session", response_model=Envelope[C.EditorLease], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def acquire(project_id: UUID, body: EditorIdentity, request: Request, db=Depends(db_session)):
         user, session = require_auth(request, db, mutate=True)
         project = owned_record(db, Project, project_id, user.tenant_id)
@@ -159,7 +161,7 @@ def install_editor_routes(app, db_session, project_payload, snapshot_revision, n
             _held(db, lease, now)
         return lease, now, True
 
-    @router.patch("/{project_id}/edit-session")
+    @router.patch("/{project_id}/edit-session", response_model=Envelope[C.EditorLease], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def heartbeat(project_id: UUID, body: EditorProof, request: Request, db=Depends(db_session)):
         user, session = require_auth(request, db, mutate=True)
         project = owned_record(db, Project, project_id, user.tenant_id)
@@ -170,7 +172,7 @@ def install_editor_routes(app, db_session, project_payload, snapshot_revision, n
         db.commit()
         return result(request, _state(db, lease, user, session, body.editor_id, token=True, now=now))
 
-    @router.delete("/{project_id}/edit-session")
+    @router.delete("/{project_id}/edit-session", response_model=Envelope[C.EditorLease], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def release(project_id: UUID, body: EditorProof, request: Request, db=Depends(db_session)):
         user, session = require_auth(request, db, mutate=True, authorize_write=False)
         project = owned_record(db, Project, project_id, user.tenant_id)
@@ -180,7 +182,7 @@ def install_editor_routes(app, db_session, project_payload, snapshot_revision, n
         db.commit()
         return result(request, _state(db, lease, user, session, body.editor_id, now=now))
 
-    @router.get("/{project_id}/revisions")
+    @router.get("/{project_id}/revisions", response_model=Envelope[C.RevisionsData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def revisions(project_id: UUID, request: Request, limit: int = Query(default=100, ge=1, le=100),
                   before_number: int | None = Query(default=None, ge=1, le=2_147_483_647), include_scene: bool = True, db=Depends(db_session)):
         user, _ = require_auth(request, db)
@@ -204,13 +206,13 @@ def install_editor_routes(app, db_session, project_payload, snapshot_revision, n
             raise APIError(404, "REVISION_NOT_FOUND", "프로젝트의 저장 이력을 찾을 수 없습니다.")
         return row
 
-    @router.get("/{project_id}/revisions/{revision_id}")
+    @router.get("/{project_id}/revisions/{revision_id}", response_model=Envelope[C.RevisionData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def detail(project_id: UUID, revision_id: UUID, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db)
         project = owned_record(db, Project, project_id, user.tenant_id)
         return result(request, revision_payload(history(db, project, revision_id, user.tenant_id)))
 
-    @router.post("/{project_id}/revisions/{revision_id}/restore")
+    @router.post("/{project_id}/revisions/{revision_id}/restore", response_model=Envelope[C.RestoredProject], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def restore(project_id: UUID, revision_id: UUID, body: RestoreBody, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
         project = owned_record(db, Project, project_id, user.tenant_id)
@@ -225,7 +227,7 @@ def install_editor_routes(app, db_session, project_payload, snapshot_revision, n
         links = {key: raw.get(key) for key in ("brand_id", "product_variant_id")}
         validate_project_links(db, user, {**links, "workspace_id": project.workspace_id})
         try:
-            scene = normalize_scene(db, user, project, Scene.model_validate(raw), links=links)
+            scene = normalize_scene(db, user, project, Scene.model_validate(raw), links=links, restoring=True)
         except ValidationError:
             raise APIError(422, "REVISION_SCENE_INVALID", "이 저장 이력은 현재 장면 규격에 맞지 않아 자동 복원할 수 없습니다. 원본 이력은 보존됩니다.") from None
         previous = snapshot_revision(db, project, "before_restore")

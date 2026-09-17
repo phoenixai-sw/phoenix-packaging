@@ -1,4 +1,6 @@
 """Free deterministic image derivatives. Preview never changes a project scene."""
+from .contracts.base import Envelope, ERROR_RESPONSES
+from .contracts import images as I
 from copy import deepcopy
 from datetime import timedelta
 from hashlib import sha256
@@ -216,14 +218,14 @@ def install_image_quality_routes(app, db_session, asset_payload):
     def identity(body):
         return {"base_revision": body.base_revision, "face_id": body.face_id, "object_id": body.object_id}
 
-    @router.post("/inspect")
+    @router.post("/inspect", response_model=Envelope[I.ImageInspection], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def inspect(body: InspectBody, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True, authorize_write=False)
         _, _, face, obj, asset = context(body, db, user)
         quality = inspect_image(face, obj, asset, read(asset), body.target_ppi)
         return {"data": {**identity(body), **quality}, "request_id": request.state.request_id}
 
-    @router.post("/preview", status_code=201)
+    @router.post("/preview", status_code=201, response_model=Envelope[I.ImageQualityPreview], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def preview(body: PreviewBody, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
         # Serializes idempotency, quota and processing load for this tenant on SQLite and PostgreSQL.
@@ -252,7 +254,8 @@ def install_image_quality_routes(app, db_session, asset_payload):
         candidate = deepcopy(scene)
         next(o for f in candidate["faces"] for o in f["objects"] if o["id"]==body.object_id).update(patch)
         validate_scene(candidate, structure_snapshot=getattr(project,"structure_snapshot",None))
-        used = db.scalar(select(func.coalesce(func.sum(Asset.byte_size), 0)).where(Asset.tenant_id==user.tenant_id))
+        from .retention.deletion import available_asset_clause
+        used = db.scalar(select(func.coalesce(func.sum(Asset.byte_size), 0)).where(Asset.tenant_id==user.tenant_id,available_asset_clause(include_deleting=True)))
         pending = db.scalar(select(func.coalesce(func.sum(UploadSession.byte_size), 0)).where(
             UploadSession.tenant_id==user.tenant_id, UploadSession.status=="pending", UploadSession.expires_at>utcnow()))
         if used + pending + len(result) > QUOTA_BYTES:

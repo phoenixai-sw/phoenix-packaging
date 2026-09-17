@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import re
+from uuid import UUID
 from typing import Any
 
 DEMO_TEMPLATE_ID = "three-side-seal-demo-v1"
@@ -189,6 +190,8 @@ def validate_scene(scene: dict, *, check_safe_area: bool = True, structure_snaps
             if kind in ("text", "shape"):
                 obj["color"] = obj.get("color") or "#172c28"
                 _check_color(obj["color"], f"{field}.color")
+            if obj.get("font_asset_id") is not None and kind != "text":
+                raise GeometryValidationError("FONT_ASSET_TEXT_ONLY", "브랜드 글꼴은 텍스트 객체에만 적용할 수 있습니다.", f"{field}.font_asset_id")
             if kind == "text":
                 text = obj.get("text")
                 if not isinstance(text, str) or len(text) > 12000 or any(ord(char) < 32 and char not in "\n\r\t" for char in text):
@@ -198,7 +201,15 @@ def validate_scene(scene: dict, *, check_safe_area: bool = True, structure_snaps
                 if obj["font_id"] != "NotoSansKR":
                     raise GeometryValidationError("UNSUPPORTED_FONT", "검증된 NotoSansKR 글꼴을 선택해 주세요.", f"{field}.font_id")
                 obj.setdefault("font_weight",400)
-                if obj["font_weight"] not in (400,700):
+                if obj.get("font_asset_id") is not None:
+                    try:
+                        if not isinstance(obj["font_asset_id"],str):raise ValueError()
+                        obj["font_asset_id"]=str(UUID(obj["font_asset_id"]))
+                    except (ValueError,TypeError,AttributeError):
+                        raise GeometryValidationError("INVALID_FONT_ASSET", "유효한 브랜드 글꼴 식별자가 필요합니다.", f"{field}.font_asset_id") from None
+                    if isinstance(obj["font_weight"],bool) or not isinstance(obj["font_weight"],int) or not 1<=obj["font_weight"]<=1000:
+                        raise GeometryValidationError("UNSUPPORTED_FONT_WEIGHT", "업로드한 정적 글꼴의 실제 두께가 필요합니다.", f"{field}.font_weight")
+                elif obj["font_weight"] not in (400,700):
                     raise GeometryValidationError("UNSUPPORTED_FONT_WEIGHT", "글꼴 두께는 일반 400 또는 굵게 700을 선택해 주세요.", f"{field}.font_weight")
                 obj["align"] = obj.get("align") or "left"
                 if obj["align"] not in ("left", "center", "right"):
