@@ -6,6 +6,18 @@ export type ImageRegion = {
   width: number;
   height: number;
 };
+/** Only source-removal inputs affect a paid cleanup result; replacement text is a later scene edit. */
+export function textRemovalInputKey(input: {
+  assetId: string;
+  region: ImageRegion;
+  sourceText: string;
+}) {
+  return JSON.stringify({
+    assetId: input.assetId,
+    region: input.region,
+    sourceText: input.sourceText,
+  });
+}
 export function validateImageRegion(region: ImageRegion): ImageRegion {
   if (
     !Object.values(region).every(Number.isFinite) ||

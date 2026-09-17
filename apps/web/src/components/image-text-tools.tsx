@@ -8,6 +8,7 @@ import {
   regionFromPoints,
   validateImageRegion,
   imageRegionPixels,
+  textRemovalInputKey,
   type ImageRegion,
 } from "@editor/image-tools";
 import type { Scene, SceneObject } from "@editor/model";
@@ -102,13 +103,10 @@ export function ImageTextTools({
     startPoint = useRef<{ x: number; y: number } | null>(null),
     jobKey = useRef("");
   const working = !!job && !terminal.includes(job.status);
-  const inputKey = JSON.stringify({
+  const inputKey = textRemovalInputKey({
+    assetId: object.asset_id!,
     region,
     sourceText,
-    text,
-    fontSize,
-    weight,
-    color,
   });
   const stale =
     !!snapshot &&
@@ -486,7 +484,6 @@ export function ImageTextTools({
               disabled={busy || working}
               onChange={(e) => {
                 setText(e.target.value);
-                setQuote(undefined);
                 setReviewed(false);
               }}
               placeholder="비워 두면 글자 제거만 적용합니다."

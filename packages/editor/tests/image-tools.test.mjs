@@ -7,6 +7,7 @@ import {
   assertImageSnapshot,
   applyImageText,
   imageRegionPixels,
+  textRemovalInputKey,
 } from "../src/image-tools.ts";
 test("OCR includes fractional boundary pixels just like the server edit region", () => {
   assert.deepEqual(
@@ -136,4 +137,53 @@ test("invalid font input cannot leave an unsavable partial replacement in the sc
     ),
   );
   assert.equal(JSON.stringify(scene), before);
+});
+test("a completed paid cleanup remains reusable after replacement wording or style changes", () => {
+  const originalInput = {
+    assetId: "original",
+    region,
+    sourceText: "37.59",
+    text: "37.59",
+    fontSize: 18,
+    weight: 400,
+    color: "#000000",
+  };
+  const revisedInput = {
+    ...originalInput,
+    text: "37.5g × 4개입",
+    fontSize: 22,
+    weight: 700,
+    color: "#f86848",
+  };
+  assert.equal(
+    textRemovalInputKey(originalInput),
+    textRemovalInputKey(revisedInput),
+  );
+  const next = applyImageText(
+    scene,
+    "source",
+    region,
+    {
+      text: revisedInput.text,
+      font_size_pt: revisedInput.fontSize,
+      font_weight: revisedInput.weight,
+      color: revisedInput.color,
+    },
+    { assetId: "already-paid-cleanup" },
+    { text: "replacement", cover: "cover" },
+  );
+  assert.equal(next.faces[0].objects[0].asset_id, "already-paid-cleanup");
+  assert.equal(next.faces[0].objects[1].text, revisedInput.text);
+  assert.equal(next.faces[0].objects[1].font_size_pt, 22);
+  assert.equal(next.faces[0].objects[1].font_weight, 700);
+  assert.equal(next.faces[0].objects[1].color, "#f86848");
+  for (const changed of [
+    { ...originalInput, sourceText: "다른 원문" },
+    { ...originalInput, assetId: "different-source" },
+    { ...originalInput, region: { ...region, width: 0.4 } },
+  ])
+    assert.notEqual(
+      textRemovalInputKey(originalInput),
+      textRemovalInputKey(changed),
+    );
 });
