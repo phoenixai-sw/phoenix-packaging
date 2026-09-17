@@ -56,7 +56,7 @@ def process_production_jobs(session_factory,storage,settings,limit=1):
             db.commit()
         for attempt in range(20):
             with session_factory() as db:
-                active=select(Job.tenant_id).where(Job.status=="running",Job.kind.in_(["review_export","production_export"]))
+                active=select(Job.tenant_id).where(Job.status=="running",Job.kind.in_(["review_export","production_export","editable_export"]))
                 candidate=db.scalar(select(Job).where(Job.kind=="production_export",Job.status=="queued",Job.tenant_id.not_in(active)).order_by(Job.created_at).limit(1).with_for_update(skip_locked=True))
                 if candidate is None:break
                 try:

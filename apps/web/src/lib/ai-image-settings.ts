@@ -20,7 +20,55 @@ export type ImageSettings = {
   output_height_px?: number;
   output_effective_ppi?: number | null;
   output_experimental?: boolean;
+  layout_context?: ImageLayoutContext | null;
 };
+export type ImageLayoutContext = {
+  package_kind: string;
+  face_id: string;
+  brand_colors: string[];
+  reserved_object_count: number;
+  quiet_region_source:
+    | "placed_editable_objects"
+    | "combined_editable_objects"
+    | "empty_layout_default";
+};
+
+export function imageLayoutSummary(context?: ImageLayoutContext | null) {
+  if (!context) return null;
+  const packageNames: Record<string, string> = {
+    "three-side-seal": "삼방 실링 파우치",
+    "stand-up-pouch": "스탠드 파우치",
+    "folding-box": "접이식 박스",
+  };
+  const faceNames: Record<string, string> = {
+    front: "앞면",
+    back: "뒷면",
+    bottom: "바닥",
+    left: "왼쪽 면",
+    right: "오른쪽 면",
+    top: "윗면",
+  };
+  const count = Number.isSafeInteger(context.reserved_object_count)
+    ? Math.max(0, context.reserved_object_count)
+    : 0;
+  return {
+    packageLabel: packageNames[context.package_kind] || "등록 포장 구조",
+    faceLabel: faceNames[context.face_id] || "선택 면",
+    colors: [
+      ...new Set(
+        context.brand_colors
+          .filter((color) => /^#[0-9a-f]{6}$/i.test(color))
+          .map((color) => color.toUpperCase()),
+      ),
+    ],
+    quietMessage:
+      context.quiet_region_source === "empty_layout_default" || !count
+        ? "안전영역 중심에 문구 공간 확보"
+        : context.quiet_region_source === "combined_editable_objects"
+          ? `글자·바코드 자리 ${count}곳을 묶어 공간 확보`
+          : `글자·바코드 자리 ${count}곳에 공간 확보`,
+  };
+}
 export const DEFAULT_IMAGE_MODEL: ImageModel = "gpt-image-2.5-sunburst";
 export const DEFAULT_IMAGE_QUALITY: ImageQuality = "high";
 export const IMAGE_MODELS: ImageModel[] = [

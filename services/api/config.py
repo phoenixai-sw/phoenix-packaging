@@ -24,6 +24,9 @@ class Settings:
     image_model: str = field(default_factory=lambda: os.getenv("IMAGE_MODEL", "gpt-image-2.5-sunburst"))
     ai_image_models: tuple[str, ...] = field(default_factory=lambda: tuple(x.strip() for x in os.getenv("AI_IMAGE_MODELS", "gpt-image-2.5-sunburst,gpt-image-2.5-flare").split(",") if x.strip()))
     ai_daily_units: int = field(default_factory=lambda: int(os.getenv("AI_DAILY_UNIT_LIMIT", "30")))
+    ai_daily_cost_limit_usd: float = field(default_factory=lambda: float(os.getenv("AI_DAILY_COST_LIMIT_USD", "10")))
+    ai_request_allowance_usd: float = field(default_factory=lambda: float(os.getenv("AI_REQUEST_ALLOWANCE_USD", "2")))
+    ai_monthly_budget_alert_usd: float = field(default_factory=lambda: float(os.getenv("AI_MONTHLY_BUDGET_ALERT_USD", "100")))
     ai_high_enabled: bool = field(default_factory=lambda: os.getenv("AI_HIGH_ENABLED", "false").lower() == "true")
     ai_allowed_emails: tuple[str, ...] = field(default_factory=lambda: tuple(x.strip().lower() for x in os.getenv("AI_ALLOWED_EMAILS", "").split(",") if x.strip()))
     ai_require_verified_email: bool = field(default_factory=lambda: os.getenv("AI_REQUIRE_VERIFIED_EMAIL", "true").lower() == "true")
@@ -68,5 +71,9 @@ class Settings:
             raise ValueError("AI_IMAGE_MODELS must allow supported models and include IMAGE_MODEL")
         if self.ai_daily_units < 0 or self.ai_daily_units > 10000:
             raise ValueError("AI daily unit limit is invalid")
+        import math
+        for value in (self.ai_daily_cost_limit_usd, self.ai_request_allowance_usd, self.ai_monthly_budget_alert_usd):
+            if not math.isfinite(value) or not 0 < value <= 100000:
+                raise ValueError("AI USD budget values must be positive and finite")
         if self.enable_production_export and not self.policy_approved:
             raise ValueError("Production export requires confirmed operating policies")

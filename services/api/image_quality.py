@@ -199,7 +199,7 @@ def install_image_quality_routes(app, db_session, asset_payload):
             db.refresh(project)
         if project.base_revision != body.base_revision:
             raise APIError(409, "REVISION_CONFLICT", "프로젝트가 변경되었습니다. 저장 후 다시 진단해 주세요.")
-        scene = validate_scene(Scene.model_validate(project.scene).model_dump(mode="json"))
+        scene = validate_scene(Scene.model_validate(project.scene).model_dump(mode="json"), structure_snapshot=getattr(project,"structure_snapshot",None))
         face = next((face for face in scene["faces"] if face["id"] == body.face_id), None)
         obj = next((obj for obj in face["objects"] if obj["id"] == body.object_id), None) if face else None
         if not obj or obj["type"] != "image":
@@ -251,7 +251,7 @@ def install_image_quality_routes(app, db_session, asset_payload):
         patch = {"asset_id": derivative_id, **patch}
         candidate = deepcopy(scene)
         next(o for f in candidate["faces"] for o in f["objects"] if o["id"]==body.object_id).update(patch)
-        validate_scene(candidate)
+        validate_scene(candidate, structure_snapshot=getattr(project,"structure_snapshot",None))
         used = db.scalar(select(func.coalesce(func.sum(Asset.byte_size), 0)).where(Asset.tenant_id==user.tenant_id))
         pending = db.scalar(select(func.coalesce(func.sum(UploadSession.byte_size), 0)).where(
             UploadSession.tenant_id==user.tenant_id, UploadSession.status=="pending", UploadSession.expires_at>utcnow()))

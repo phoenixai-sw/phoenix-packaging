@@ -130,10 +130,18 @@ class PouchFeatures(StrictModel):
         return round(value, 4)
 
 
+class StructureRef(StrictModel):
+    template_version_id: str = Field(min_length=1,max_length=100)
+    definition_hash: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+    engine_version: Literal["structure-v2.1"]
+    geometry_hash: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
+
+
 class Scene(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     template_version_id: str | None = Field(default=None,max_length=100)
     template_kind: TemplateKind | None = None
+    structure_ref: StructureRef | None = None
     bottom_mm: float | None = Field(default=None,ge=30,le=180)
     depth_mm: float | None = Field(default=None,ge=30,le=300)
     holes: list[Hole] = Field(default_factory=list,max_length=8)
@@ -208,7 +216,7 @@ class RevisionInput(StrictModel):
 class ExportInput(StrictModel):
     project_id: UUID
     base_revision: int = Field(ge=1)
-    kind: Literal["review", "production"] = "review"
+    kind: Literal["review", "production", "editable"] = "review"
     reviewed_face_ids: list[FaceId] = Field(default_factory=list,max_length=6)
     quote_id: UUID | None = None
 

@@ -40,11 +40,13 @@ def preflight_project(project:dict, approved_conditions:dict|None=None, asset_re
         issues.append({"code":code,"message":message,"severity":"error","scope":scope,**details})
     scene=None; geometry=None
     try:
-        scene=validate_scene(_scene_from_project(project))
-        geometry=geometry_for_scene(scene)
+        scene=validate_scene(_scene_from_project(project), structure_snapshot=project.get("structure_snapshot"))
+        geometry=geometry_for_scene(scene, structure_snapshot=project.get("structure_snapshot"))
     except GeometryValidationError as exc:
         add(exc.code,exc.message,"review",field=exc.field)
     conditions=approved_conditions or {}
+    if project.get("structure_snapshot") is not None or (scene and scene.get("structure_ref")):
+        add("STRUCTURE_V2_PRODUCTION_UNSUPPORTED","등록 구조 V2는 현재 검토용입니다. 제조사별 제작 어댑터 검증 전에는 제작용 출력할 수 없습니다.")
     template=conditions.get("template") or {}; profile=conditions.get("profile") or {}
     requirements=profile.get("requirements") or {}
     if conditions.get("registry_verified") is not True:

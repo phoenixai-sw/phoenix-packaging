@@ -117,7 +117,7 @@ def _layout_text(obj: dict) -> list[str]:
 def validate_export(project: dict, *, production: bool = False) -> dict:
     if production or project.get("kind") == "production" or project.get("export_kind") == "production":
         raise ExportValidationError("PRODUCTION_EXPORT_DISABLED", "데모 구조는 검토용 출력만 가능합니다. 제작용 출력은 제조사 승인 후 지원합니다.", "kind")
-    scene = validate_scene(_scene_from_project(project))
+    scene = validate_scene(_scene_from_project(project), structure_snapshot=project.get("structure_snapshot"))
     _font()
     warnings = [
         {"code": "DEMO_UNAPPROVED", "message": "데모 구조 · 제조사 미승인"},
@@ -125,6 +125,8 @@ def validate_export(project: dict, *, production: bool = False) -> dict:
         {"code": "RGB_REVIEW", "message": "RGB 검토 PDF입니다. PDF/X·CMYK·별색·화이트 잉크 출력이 아닙니다."},
         {"code": "FINISHED_SIZE", "message": "페이지는 완성 치수와 같습니다. 바깥 블리드는 검토 페이지에서 잘립니다."},
     ]
+    if project.get("structure_snapshot") is not None:
+        warnings[0]={"code":"REGISTERED_STRUCTURE_REVIEW","message":"등록 구조 검토 · 제작 사용 불가"}
     texts = []
     for face in scene["faces"]:
         for obj in face["objects"]:
@@ -343,7 +345,7 @@ def _draw_guides(canvas: Canvas, face: dict, page: int, total: int, structural_f
     size = min(9, (width - 24) * mm / pdfmetrics.stringWidth(label, FONT_ID, 1))
     canvas.setFont(FONT_ID, size)
     canvas.drawCentredString(width * mm / 2, (height - 4) * mm, label)
-    second = "데모 구조 · 제조사 미승인"
+    second = "등록 구조 검토 · 제작 사용 불가" if structural_face and structural_face.get("registered_structure") else "데모 구조 · 제조사 미승인"
     canvas.setFont(FONT_ID, size * 0.76)
     canvas.drawCentredString(width * mm / 2, (height - 7.4) * mm, second)
     canvas.setFillColor(HexColor("#453b38"))
@@ -397,7 +399,7 @@ def _draw_net(canvas: Canvas, scene: dict, geometry: dict, resolver, warnings) -
     for line in geometry["fold_lines"]:
         canvas.line(line["x1_mm"]*mm,(h-line["y1_mm"])*mm,line["x2_mm"]*mm,(h-line["y2_mm"])*mm)
     canvas.setDash();canvas.setFont(FONT_ID,10);canvas.setFillColor(HexColor("#88452f"))
-    canvas.drawString(3*mm,3*mm,"검토용 전개도 · 데모 구조 · 제조사 미승인 · 제작 사용 불가")
+    canvas.drawString(3*mm,3*mm,"검토용 전개도 · 등록 구조 · 제작 사용 불가" if scene.get("structure_ref") else "검토용 전개도 · 데모 구조 · 제조사 미승인 · 제작 사용 불가")
     canvas.showPage()
     return {"face_id":"net","width_mm":w,"height_mm":h,"role":"assembly_reference","bleed_mm":0}
 
@@ -420,7 +422,7 @@ def _render(project: dict, resolver: AssetResolver | None, production: bool) -> 
         warnings = [warning for warning in warnings if warning["code"] != "FINISHED_SIZE"]
         warnings += basic["issues"]
         warnings.append({"code":"BASIC_REVIEW_BLEED","message":"면별 페이지는 재단 치수 바깥 3mm 도련을 포함합니다. 전개도는 조립 참고용입니다."})
-    geometry=geometry_for_scene(scene)
+    geometry=geometry_for_scene(scene, structure_snapshot=project.get("structure_snapshot"))
     lookup={f["id"]:f for f in scene["faces"]}
     ordered_faces=[lookup[f["id"]] for f in geometry["faces"]]
     pages=[]
@@ -428,7 +430,7 @@ def _render(project: dict, resolver: AssetResolver | None, production: bool) -> 
     canvas = Canvas(output, pageCompression=1, invariant=1, pdfVersion=(1,5) if basic else (1,4))
     canvas.setTitle("Phoenix Packaging - 검토용 · 제작 사용 불가")
     canvas.setAuthor("Phoenix Packaging")
-    canvas.setSubject("데모 구조 · 제조사 미승인 / Finished-size vector review PDF")
+    canvas.setSubject("등록 구조 · 제작 사용 불가 / Registered structure review" if scene.get("structure_ref") else "데모 구조 · 제조사 미승인 / Finished-size vector review PDF")
     for page, face in enumerate(ordered_faces, start=1):
         width, height = face["width_mm"] * mm, face["height_mm"] * mm
         bleed = bleed_mm * mm
@@ -452,14 +454,15 @@ def _render(project: dict, resolver: AssetResolver | None, production: bool) -> 
     verification = None
     if basic:
         from .pdf_verification import verify_review_pdf
-        verification = verify_review_pdf(data, scene, pages, bleed_mm)
+        verification = verify_review_pdf(data, scene, pages, bleed_mm, structure_snapshot=project.get("structure_snapshot"))
     manifest = {"schema_version": "1.0", "kind": "review", "review_only": True, "production_enabled": False,
-                "approval_status": "demo_unapproved", "template_version_id": scene.get("template_version_id") or DEMO_TEMPLATE_ID,
+                "approval_status": "registered_review_only" if scene.get("structure_ref") else "demo_unapproved", "template_version_id": scene.get("template_version_id") or DEMO_TEMPLATE_ID,
                 "project_id": str(project.get("id", project.get("project_id", ""))),
                 "revision": project.get("revision", project.get("revision_number", project.get("base_revision"))),
                 "revision_id": project.get("revision_id"),
                 "review_profile_id": profile_id, "basic_preflight": basic, "pdf_verification": verification,
                 "geometry_hash": geometry["geometry_hash"],
+                "structure_ref": scene.get("structure_ref"),
                 "generated_at": datetime.now(timezone.utc).isoformat(), "sha256": hashlib.sha256(data).hexdigest(),
                 "font": {"id": "NotoSansKR", "sha256": hashlib.sha256(FONT_PATH.read_bytes()).hexdigest(), "embedded": True, "license": "OFL-1.1"},
                 "font_weights": _font_manifest(scene),

@@ -1,0 +1,39 @@
+.context {
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.context > strong {
+  font-size: 11px;
+}
+.context p {
+  margin: 4px 0;
+  font-size: 11px;
+}
+.context small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.palette {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 5px 0;
+}
+.color {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.color i {
+  width: 12px;
+  height: 12px;
+  border: 1px solid #0002;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}

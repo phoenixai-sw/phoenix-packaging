@@ -1,0 +1,44 @@
+.preview {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  background: #f4f3ec;
+  border-radius: 12px;
+}
+.preview svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 330px;
+}
+.definition {
+  width: 100%;
+  min-height: 250px;
+  font: 12px/1.65 monospace;
+  tab-size: 2;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0;
+}
+.details {
+  margin: 12px 0;
+}
+.details summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.details > div {
+  margin-top: 14px;
+}
+.comparison {
+  overflow: auto;
+  margin: 14px 0;
+}
+.comparison table {
+  min-width: 440px;
+}

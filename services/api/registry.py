@@ -76,6 +76,8 @@ class VersionBody(Body):
     source: str=Field(min_length=1,max_length=2000)
     license: str=Field(min_length=1,max_length=2000)
     material: str=Field(default="",max_length=120)
+    structure_definition: dict | None=None
+    review_available: bool=False
 
 
 class ApprovalBody(Body):
@@ -147,11 +149,15 @@ def install_registry_routes(app,db_session,project_payload,snapshot_revision):
         for field,kind in (("template_version_id","template"),("print_profile_version_id","profile")):
             if field in values and values[field]:
                 row=db.get(RegistryVersion,values[field])
+                if kind=="template" and (project.structure_snapshot is not None or (row and row.details.get("structure_definition"))):
+                    raise APIError(422,"STRUCTURE_ROUTE_REQUIRED","등록 구조는 구조 선택 메뉴에서 검토하고 적용해 주세요.")
                 if not row or row.kind!=kind or row.status!="approved" or row.is_demo: raise APIError(422,"APPROVED_VERSION_REQUIRED","승인된 버전만 선택할 수 있습니다.")
                 if kind=="template" and row.details.get("geometry_template_id")!=project.template_id: raise APIError(422,"GEOMETRY_FAMILY_MISMATCH","포장 구조와 승인 도면이 일치하지 않습니다.")
         if "template_version_id" in values: scene["template_version_id"]=values["template_version_id"] or project.template_id+"-demo-v1"
         scene["template_kind"]=project.template_id
-        scene["geometry_hash"]=geometry_for_scene(scene)["geometry_hash"];scene["reviewed_face_ids"]=[]
+        if "template_version_id" in values and project.structure_snapshot is not None:
+            raise APIError(422,"STRUCTURE_ROUTE_REQUIRED","등록 구조를 인쇄 조건 메뉴에서 해제할 수 없습니다.")
+        scene["geometry_hash"]=geometry_for_scene(scene,structure_snapshot=project.structure_snapshot)["geometry_hash"];scene["reviewed_face_ids"]=[]
         won=db.execute(update(Project).where(Project.id==project.id,Project.base_revision==body.base_revision).values(**values,scene=scene,base_revision=body.base_revision+1,updated_at=utcnow()).execution_options(synchronize_session=False))
         if won.rowcount!=1: raise APIError(409,"REVISION_CONFLICT","프로젝트가 변경되었습니다. 최신 내용을 확인해 주세요.")
         db.refresh(project);snapshot_revision(db,project,"print_settings");db.commit();return result(request,project_payload(project))
@@ -164,8 +170,10 @@ def install_registry_routes(app,db_session,project_payload,snapshot_revision):
         readiness=[{"key":"google_login","label":"Google 로그인","ready":bool(settings.google_client_id),"detail":"Google 계정 로그인 연결됨" if settings.google_client_id else "Google 로그인 클라이언트 연결 필요"},{"key":"payments","label":"결제 연동","ready":billing["checkout_available"],"detail":billing["provider"] if "provider" in billing else app.state.billing_settings.provider},{"key":"policy","label":"운영 정책 확정","ready":settings.policy_approved,"detail":"약관·환불·개인정보 운영 정책 승인"},{"key":"templates","label":"제조사 승인 도면","ready":any(v.kind=="template" and v.status=="approved" and not v.is_demo for v in versions),"detail":"제조사 증빙과 별도 관리자 승인 필요"},{"key":"profiles","label":"인쇄 조건","ready":any(v.kind=="profile" and v.status=="approved" and not v.is_demo for v in versions),"detail":"지원 가능한 출력 조건만 승인"},{"key":"ai","label":"AI 제공자","ready":settings.ai_provider=="openai","detail":settings.image_model if settings.ai_provider=="openai" else settings.ai_provider}]
         events=list(db.scalars(select(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(100)))
         costs=db.execute(select(ProviderAttempt.provider,ProviderAttempt.model,func.count(),func.sum(ProviderAttempt.cost_usd)).group_by(ProviderAttempt.provider,ProviderAttempt.model)).all()
+        from .provider_budget import budget_summary
+        provider_budget=budget_summary(db,settings)
         intake=db.execute(select(IntakeRecord.status,IntakeRecord.category,func.count()).group_by(IntakeRecord.status,IntakeRecord.category)).all()
-        return result(request,{"readiness":readiness,"counts":{"users":db.scalar(select(func.count()).select_from(User)),"projects":db.scalar(select(func.count()).select_from(Project)),"jobs":db.scalar(select(func.count()).select_from(Job))},"audit":[{"id":e.id,"action":e.action,"entity_id":e.entity_id,"details":e.details,"created_at":e.created_at.isoformat()} for e in events],"provider_costs":[{"provider":p,"model":m,"attempts":n,"cost_usd":c,"estimated":True} for p,m,n,c in costs],"intake_stats":[{"status":s,"category":c,"count":n} for s,c,n in intake],"intake_metrics":intake_metrics(db)})
+        return result(request,{"readiness":readiness,"counts":{"users":db.scalar(select(func.count()).select_from(User)),"projects":db.scalar(select(func.count()).select_from(Project)),"jobs":db.scalar(select(func.count()).select_from(Job))},"audit":[{"id":e.id,"action":e.action,"entity_id":e.entity_id,"details":e.details,"created_at":e.created_at.isoformat()} for e in events],"provider_costs":[{"provider":p,"model":m,"attempts":n,"cost_usd":c,"estimated":True} for p,m,n,c in costs],"provider_budget":provider_budget,"intake_stats":[{"status":s,"category":c,"count":n} for s,c,n in intake],"intake_metrics":intake_metrics(db)})
 
     @router.post("/admin/evidence",status_code=201)
     def evidence(request:Request,file:UploadFile=File(...),db=Depends(db_session)):
@@ -205,7 +213,19 @@ def install_registry_routes(app,db_session,project_payload,snapshot_revision):
         user=admin(request,db,True);kind=kind_for(collection)
         if kind=="template" and (not body.geometry_template_id or not body.billing_family_key): raise APIError(422,"TEMPLATE_FIELDS_REQUIRED","구조 종류와 과금 구조 식별자가 필요합니다.")
         if kind=="profile" and not body.requirements: raise APIError(422,"PRINT_REQUIREMENTS_REQUIRED","제조사 인쇄 조건을 입력해 주세요.")
-        row=RegistryVersion(kind=kind,name=body.name,manufacturer=body.manufacturer,is_demo=body.is_demo,created_by=user.id,details=body.model_dump(exclude={"name","manufacturer","is_demo"}));db.add(row);db.flush();audit(db,user,"registry_created",row.id);db.commit();return result(request,registry_payload(row))
+        details=body.model_dump(exclude={"name","manufacturer","is_demo"})
+        if body.structure_definition is not None:
+            if kind!="template":raise APIError(422,"STRUCTURE_TEMPLATE_ONLY","구조 정의는 도면 버전에만 등록할 수 있습니다.")
+            from .geometry.definitions import parse_definition
+            from .geometry.snapshots import canonical_hash,compile_structure
+            definition=parse_definition(body.structure_definition)
+            if definition["family"]!=body.geometry_template_id:raise APIError(422,"GEOMETRY_FAMILY_MISMATCH","등록 구조와 도면 종류가 다릅니다.")
+            sample=definition.get("dimensions") or {"width_mm":definition["width_range_mm"]["minimum"],"height_mm":definition["height_range_mm"]["minimum"]}
+            compile_structure(definition,sample,"registration-validation")
+            details.update(structure_definition=definition,structure_definition_hash=canonical_hash(definition))
+        elif body.review_available:
+            raise APIError(422,"STRUCTURE_DEFINITION_REQUIRED","검토 공개에는 검증 가능한 구조 정의가 필요합니다.")
+        row=RegistryVersion(kind=kind,name=body.name,manufacturer=body.manufacturer,is_demo=body.is_demo,created_by=user.id,details=details);db.add(row);db.flush();audit(db,user,"registry_created",row.id);db.commit();return result(request,registry_payload(row))
     @router.post("/admin/{collection}/{identity}/approve")
     def approve(collection:str,identity:str,body:ApprovalBody,request:Request,db=Depends(db_session)):
         user=admin(request,db,True)
@@ -217,11 +237,17 @@ def install_registry_routes(app,db_session,project_payload,snapshot_revision):
         if row.kind=="template":
             from .geometry import build_geometry
             dims=row.details.get("approved_dimensions",{})
-            build_geometry(row.details["geometry_template_id"],dims.get("width_mm"),dims.get("height_mm"),bottom_mm=dims.get("bottom_mm"),depth_mm=dims.get("depth_mm"))
+            if row.details.get("structure_definition"):
+                from .geometry.snapshots import compile_structure
+                compile_structure(row.details["structure_definition"],dims,row.id)
+            else:
+                build_geometry(row.details["geometry_template_id"],dims.get("width_mm"),dims.get("height_mm"),bottom_mm=dims.get("bottom_mm"),depth_mm=dims.get("depth_mm"))
         evidence=db.get(Evidence,str(body.evidence_asset_id))
         if not evidence: raise APIError(404,"EVIDENCE_REQUIRED","제조사 승인 증빙을 먼저 등록해 주세요.")
         if sha256(app.state.storage.get(evidence.storage_key)).hexdigest()!=evidence.sha256: raise APIError(409,"EVIDENCE_CHANGED","증빙 파일의 무결성을 확인하지 못했습니다.")
         approval={"evidence_asset_id":evidence.id,"evidence_sha256":evidence.sha256,"approved_by":user.id,"approved_by_name":body.approved_by_name,"approved_at":utcnow().isoformat(),"source":row.details["source"],"license":row.details["license"],"notes":body.notes}
+        if row.details.get("structure_definition_hash"):
+            approval["structure_definition_hash"]=row.details["structure_definition_hash"]
         changed=db.execute(update(RegistryVersion).where(RegistryVersion.id==row.id,RegistryVersion.status=="draft").values(status="approved",approval=approval,updated_at=utcnow()).execution_options(synchronize_session=False))
         if changed.rowcount!=1: raise APIError(409,"VERSION_IMMUTABLE","승인 중 도면 상태가 변경되었습니다. 새 버전을 등록해 주세요.")
         db.refresh(row);audit(db,user,"registry_approved",row.id,{"evidence_asset_id":evidence.id});db.commit();return result(request,registry_payload(row))

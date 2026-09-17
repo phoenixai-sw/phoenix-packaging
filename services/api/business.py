@@ -346,6 +346,6 @@ def install_business_routes(app, db_session, project_payload, snapshot_revision)
     def duplicate(identity:UUID,body:DuplicateBody,request:Request,db=Depends(db_session)):
         user,_=require_auth(request,db,mutate=True);source=owned_record(db,Project,identity,user.tenant_id)
         keys=("product_name","brand_name","description","width_mm","height_mm","bottom_mm","depth_mm","template_id","brand_id","product_variant_id","workspace_id","template_version_id","print_profile_version_id","material")
-        row=Project(tenant_id=user.tenant_id,created_by=user.id,name=body.name or (source.name[:150]+" 복사"),scene=deepcopy(source.scene),**{key:getattr(source,key) for key in keys});db.add(row);db.flush();snapshot_revision(db,row,"duplicated");audit(db,user,"project_duplicated",row.id);db.commit()
+        row=Project(tenant_id=user.tenant_id,created_by=user.id,name=body.name or (source.name[:150]+" 복사"),scene=deepcopy(source.scene),structure_snapshot=deepcopy(source.structure_snapshot),**{key:getattr(source,key) for key in keys});db.add(row);db.flush();snapshot_revision(db,row,"duplicated");audit(db,user,"project_duplicated",row.id);db.commit()
         return result(request,project_payload(row))
     app.include_router(router)

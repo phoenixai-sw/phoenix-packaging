@@ -3,7 +3,13 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Check, Download, LoaderCircle, ShieldCheck } from "lucide-react";
 import { api, errorMessage } from "@/lib/api";
-import { canRetryReviewExport } from "@/lib/export-state";
+import {
+  canRetryExport,
+  exportKindLabel,
+  exportStatusLabel,
+  editableExportBody,
+  isExportInProgress,
+} from "@/lib/export-state";
 import { useApiData } from "@/lib/business";
 import { Feedback } from "./management";
 import type { Project, Scene } from "@editor/model";
@@ -42,6 +48,16 @@ type Job = {
   status: string;
   download_url?: string;
   error?: { message?: string } | string;
+  result?: {
+    format?: string;
+    revision_number?: number;
+    asset_count?: number;
+    font_count?: number;
+    byte_size?: number;
+    credits_charged?: number;
+    rights_notice?: string;
+    review_only?: boolean;
+  };
 };
 export function ExportTools({
   project,
@@ -50,6 +66,7 @@ export function ExportTools({
   onServerProject,
   onCommit,
   onFaceSelect,
+  onOpenStructures,
   readOnly,
 }: {
   project: Project;
@@ -58,6 +75,7 @@ export function ExportTools({
   onServerProject: (p: Project) => void;
   onCommit: (s: Scene, confirmationOnly?: boolean) => void;
   onFaceSelect: (id: string, objectId?: string) => void;
+  onOpenStructures: () => void;
   readOnly: boolean;
 }) {
   const templates = useApiData<{ items: Version[] }>("/templates");
@@ -81,7 +99,18 @@ export function ExportTools({
   const [notice, setNotice] = useState("");
   const [checkedRevision, setCheckedRevision] = useState(0);
   const key = useRef("");
+  const editableKey = useRef<{ revision: number; key: string } | undefined>(
+      undefined,
+    ),
+    editablePending = useRef(false),
+    readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
+  const jobPanel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (job?.id) jobPanel.current?.scrollIntoView({ block: "nearest" });
+  }, [job?.id]);
   const reviewed = scene.reviewed_face_ids || [];
+  const registeredStructure = !!scene.structure_ref;
   const requiredFields = profiles.data?.items.find(
     (p) => p.id === project.print_profile_version_id,
   )?.requirements?.required_fields || [
@@ -106,13 +135,7 @@ export function ExportTools({
     setQuote(undefined);
   }, [scene, kind]);
   useEffect(() => {
-    if (
-      !job ||
-      ["succeeded", "failed", "canceled", "reconciliation_required"].includes(
-        job.status,
-      )
-    )
-      return;
+    if (!job || !isExportInProgress(job.status)) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
     async function poll() {
@@ -120,15 +143,7 @@ export function ExportTools({
         const value = await api<Job>(`/jobs/${job!.id}`);
         if (!active) return;
         setJob(value);
-        if (
-          ![
-            "succeeded",
-            "failed",
-            "canceled",
-            "reconciliation_required",
-          ].includes(value.status)
-        )
-          timer = setTimeout(poll, 1800);
+        if (isExportInProgress(value.status)) timer = setTimeout(poll, 1800);
       } catch (e) {
         if (active) {
           setError(errorMessage(e));
@@ -151,7 +166,9 @@ export function ExportTools({
         method: "PATCH",
         body: JSON.stringify({
           base_revision,
-          template_version_id: template || null,
+          ...(!registeredStructure
+            ? { template_version_id: template || null }
+            : {}),
           print_profile_version_id: profile || null,
           material,
         }),
@@ -190,6 +207,7 @@ export function ExportTools({
     }
   }
   async function exportFile(confirmQuote = false) {
+    if (readOnlyRef.current) return;
     setBusy(true);
     setError("");
     try {
@@ -231,8 +249,36 @@ export function ExportTools({
       setBusy(false);
     }
   }
+  async function exportEditable() {
+    if (readOnlyRef.current || editablePending.current) return;
+    editablePending.current = true;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const base_revision = await saveCurrent();
+      if (readOnlyRef.current)
+        throw new Error("편집 권한을 다시 확인해 주세요.");
+      if (editableKey.current?.revision !== base_revision)
+        editableKey.current = {
+          revision: base_revision,
+          key: crypto.randomUUID(),
+        };
+      const result = await api<Job>("/exports", {
+        method: "POST",
+        headers: { "Idempotency-Key": editableKey.current.key },
+        body: JSON.stringify(editableExportBody(project.id, base_revision)),
+      });
+      setJob(result);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      editablePending.current = false;
+      setBusy(false);
+    }
+  }
   async function retryJob() {
-    if (!job || !canRetryReviewExport(job)) return;
+    if (readOnlyRef.current || !job || !canRetryExport(job)) return;
     setBusy(true);
     setError("");
     try {
@@ -246,17 +292,115 @@ export function ExportTools({
   return (
     <div className="export-tools">
       <Feedback error={error} notice={notice} />
+      <section className="management-card">
+        <h3>편집용 프로젝트 ZIP</h3>
+        <p>
+          현재 저장본의 장면 JSON, 연결된 원본 이미지, 재배포 가능한 글꼴과
+          라이선스 안내를 한 파일로 준비합니다.
+        </p>
+        <p className="field-hint">
+          제작 PDF나 제조 승인 파일이 아닙니다. 원본의 사용 권한과 라이선스는
+          그대로 적용됩니다. 현재 편집 내용을 먼저 저장합니다. ZIP을 앱에 다시
+          가져오는 기능은 아직 제공하지 않습니다.
+        </p>
+        <button
+          className="button button-dark"
+          disabled={
+            busy || readOnly || (!!job && isExportInProgress(job.status))
+          }
+          onClick={() => void exportEditable()}
+        >
+          <Download size={16} /> 편집용 프로젝트 ZIP · 0크레딧
+        </button>
+      </section>
+      {job && (
+        <div
+          ref={jobPanel}
+          className="ai-job-state management-card"
+          aria-live="polite"
+        >
+          <strong>
+            {exportKindLabel(job.kind)} · {exportStatusLabel(job.status)}
+          </strong>
+          {job.kind === "editable_export" && job.result && (
+            <p className="field-hint">
+              저장본 {job.result.revision_number ?? "—"} · 이미지{" "}
+              {job.result.asset_count ?? 0}개 · 글꼴{" "}
+              {job.result.font_count ?? 0}개
+              {typeof job.result.byte_size === "number"
+                ? ` · ${(job.result.byte_size / 1024 / 1024).toFixed(1)} MiB`
+                : ""}{" "}
+              · 0크레딧
+            </p>
+          )}
+          {job.kind === "editable_export" && job.result?.rights_notice && (
+            <p className="field-hint">{job.result.rights_notice}</p>
+          )}
+          {job.error && (
+            <Feedback
+              error={
+                typeof job.error === "string" ? job.error : job.error.message
+              }
+            />
+          )}{" "}
+          {job.status === "succeeded" && job.download_url && (
+            <a
+              className="button button-dark"
+              href={
+                job.download_url.startsWith("/v1/")
+                  ? `/api${job.download_url}`
+                  : job.download_url
+              }
+            >
+              <Download size={16} /> {exportKindLabel(job.kind)} 다운로드
+            </a>
+          )}
+          {canRetryExport(job) && (
+            <button
+              className="button button-light"
+              disabled={busy || readOnly}
+              onClick={() => void retryJob()}
+            >
+              파일 준비 다시 시도
+            </button>
+          )}
+          {job.status === "failed" && job.kind === "production_export" && (
+            <p className="field-hint">
+              제작 출력은 현재 디자인을 다시 검수하고 새 견적을 확인한 뒤 요청해
+              주세요.
+            </p>
+          )}
+          <Link
+            className="text-link"
+            href={`/app/projects/${project.id}/exports`}
+            target="_blank"
+          >
+            파일 이력 보기
+          </Link>
+        </div>
+      )}
+
       <div className="form-two-columns">
         <section className="management-card">
           <h3>제조 조건</h3>
+          <p className="field-hint">
+            등록 구조의 검토 적용은 제조 승인 도면 선택과 별개입니다.
+          </p>
+          <button className="text-link" onClick={onOpenStructures}>
+            등록 구조 검토 열기
+          </button>
           <label className="field">
             도면 버전
             <select
               value={template}
               onChange={(e) => setTemplate(e.target.value)}
-              disabled={readOnly}
+              disabled={readOnly || registeredStructure}
             >
-              <option value="">현재 데모 구조</option>
+              {registeredStructure ? (
+                <option value={template}>현재 등록 구조 · 검토 전용</option>
+              ) : (
+                <option value="">현재 데모 구조</option>
+              )}
               {templates.data?.items
                 .filter(
                   (t) =>
@@ -532,58 +676,14 @@ export function ExportTools({
             <button
               className="button button-orange"
               disabled={
-                busy || new Date(quote.expires_at).getTime() < Date.now()
+                busy ||
+                readOnly ||
+                new Date(quote.expires_at).getTime() < Date.now()
               }
               onClick={() => void exportFile(true)}
             >
               견적 확인하고 제작용 출력
             </button>
-          </div>
-        )}
-        {job && (
-          <div className="ai-job-state">
-            <strong>파일 상태 · {job.status}</strong>
-            {job.error && (
-              <Feedback
-                error={
-                  typeof job.error === "string" ? job.error : job.error.message
-                }
-              />
-            )}{" "}
-            {job.status === "succeeded" && job.download_url && (
-              <a
-                className="button button-dark"
-                href={
-                  job.download_url.startsWith("/v1/")
-                    ? `/api${job.download_url}`
-                    : job.download_url
-                }
-              >
-                <Download size={16} /> 파일 다운로드
-              </a>
-            )}
-            {canRetryReviewExport(job) && (
-              <button
-                className="button button-light"
-                disabled={busy || readOnly}
-                onClick={() => void retryJob()}
-              >
-                출력 다시 시도
-              </button>
-            )}
-            {job.status === "failed" && job.kind === "production_export" && (
-              <p className="field-hint">
-                제작 출력은 현재 디자인을 다시 검수하고 새 견적을 확인한 뒤
-                요청해 주세요.
-              </p>
-            )}
-            <Link
-              className="text-link"
-              href={`/app/projects/${project.id}/exports`}
-              target="_blank"
-            >
-              파일 이력 보기
-            </Link>
           </div>
         )}
       </section>

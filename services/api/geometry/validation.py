@@ -120,7 +120,7 @@ def _corners(obj: dict) -> list[tuple[float, float]]:
             for x, y in ((0, 0), (obj["width_mm"], 0), (obj["width_mm"], obj["height_mm"]), (0, obj["height_mm"]))]
 
 
-def validate_scene(scene: dict, *, check_safe_area: bool = True) -> dict:
+def validate_scene(scene: dict, *, check_safe_area: bool = True, structure_snapshot=None) -> dict:
     """Return a deep copy; never silently resize or mutate customer input."""
     if not isinstance(scene, dict) or scene.get("schema_version") != "1.0":
         raise GeometryValidationError("INVALID_SCHEMA", "지원하는 장면 형식은 1.0입니다.", "schema_version")
@@ -131,7 +131,7 @@ def validate_scene(scene: dict, *, check_safe_area: bool = True) -> dict:
     faces = normalized.get("faces")
     if not isinstance(faces,list) or not faces or any(not isinstance(f,dict) for f in faces):
         raise GeometryValidationError("INVALID_FACES", "구조의 모든 면을 포함해 주세요.", "faces")
-    geometry = geometry_for_scene(normalized)
+    geometry = geometry_for_scene(normalized, structure_snapshot=structure_snapshot)
     if geometry.get("pouch_features") is not None:
         normalized["pouch_features"] = deepcopy(geometry["pouch_features"])
     expected = {f["id"]: f for f in geometry["faces"]}

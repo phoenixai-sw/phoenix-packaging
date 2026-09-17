@@ -5,7 +5,7 @@ from pypdf import PdfReader
 from pypdf.generic import ContentStream
 
 
-def verify_review_pdf(data, scene, pages, bleed_mm):
+def verify_review_pdf(data, scene, pages, bleed_mm, *, structure_snapshot=None):
     from .review_pdf import ExportValidationError
     from .production import _decode_barcodes
     import pypdfium2 as pdfium
@@ -44,7 +44,7 @@ def verify_review_pdf(data, scene, pages, bleed_mm):
         checks.append({"face_id": expected["face_id"], "role": "face_review" if is_face else "assembly_reference",
                        "boxes_mm": measured, "tolerance_mm": .01, "passed": True})
     document = pdfium.PdfDocument(data)
-    try: barcodes = _decode_barcodes(document, scene, bleed_mm=bleed_mm)
+    try: barcodes = _decode_barcodes(document, scene, bleed_mm=bleed_mm, structure_snapshot=structure_snapshot)
     finally: document.close()
     return {"page_boxes": checks, "used_fonts_embedded": sorted(fonts), "barcode_checks": barcodes,
             "pdf_version": reader.pdf_header, "manufacturer_approval": False}
