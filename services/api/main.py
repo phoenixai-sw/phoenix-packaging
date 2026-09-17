@@ -18,14 +18,14 @@ from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException
 
-from .auth import COOKIE_NAME, DUMMY_HASH, PASSWORDS, auth_payload, check_origin, create_session, hash_token, require_auth, throttle_auth, verify_password
+from .auth import COOKIE_NAME, auth_payload, require_auth
 from .config import Settings
 from .database import Base, build_database, utcnow
 from .errors import APIError
 from .geometry import GeometryValidationError, validate_dimensions, build_geometry, geometry_for_scene, new_scene
-from .mail import issue_email_token, mail_available
-from .models import Asset, AuthToken, Job, LoginSession, Project, Revision, Tenant, User
-from .schemas import AuthTokenInput, CreateProjectInput, DemoBackgroundInput, EmailInput, ExportInput, LoginInput, RegisterInput, ResetPasswordInput, RevisionInput, SaveDraftInput
+from .google_auth import install_google_auth
+from .models import Asset, Job, LoginSession, Project, Revision, Tenant, User
+from .schemas import CreateProjectInput, DemoBackgroundInput, ExportInput, RevisionInput, SaveDraftInput
 from .storage import SupabaseStorage, build_storage
 from . import feature_models
 from .billing import models as billing_models
@@ -162,50 +162,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/v1/config")
     def config(request: Request):
         from .image_provider import get_capabilities
-        return envelope(request, {"demo_mode": settings.demo_mode, "ai_provider": settings.ai_provider,"ai_capabilities":get_capabilities(settings), "billing_provider":app.state.billing_settings.provider, "production_export_enabled":settings.enable_production_export, "review_export_credits": 0,"direct_upload":isinstance(storage,SupabaseStorage), "upload_max_bytes":20*1024*1024 if isinstance(storage,SupabaseStorage) else settings.upload_limit, "supported_upload_types": ["image/png", "image/jpeg", "image/webp"], "email_verification_available": mail_available(settings), "mail_mode": "smtp" if settings.smtp_host else "local_outbox" if mail_available(settings) else "unconfigured"})
+        return envelope(request, {"demo_mode": settings.demo_mode, "ai_provider": settings.ai_provider,"ai_capabilities":get_capabilities(settings), "billing_provider":app.state.billing_settings.provider, "production_export_enabled":settings.enable_production_export, "review_export_credits": 0,"direct_upload":isinstance(storage,SupabaseStorage), "upload_max_bytes":20*1024*1024 if isinstance(storage,SupabaseStorage) else settings.upload_limit, "supported_upload_types": ["image/png", "image/jpeg", "image/webp"], "auth_provider": "google", "google_login_enabled": bool(settings.google_client_id), "google_client_id": settings.google_client_id or None})
 
-    @app.post("/v1/auth/register", status_code=201)
-    def register(body: RegisterInput, request: Request, response: Response, db=Depends(db_session)):
-        check_origin(request)
-        email = str(body.email).lower()
-        throttle_auth(db, email)
-        tenant = Tenant(name=f"{body.name}의 작업 공간")
-        db.add(tenant)
-        db.flush()
-        user = User(tenant_id=tenant.id, name=body.name, email=email, password_hash=PASSWORDS.hash(body.password), role="owner")
-        db.add(user)
-        try:
-            db.flush()
-        except IntegrityError:
-            db.rollback()
-            raise APIError(409, "EMAIL_UNAVAILABLE", "이 이메일로 가입할 수 없습니다. 로그인해 주세요.")
-        session = create_session(db, user, response, settings)
-        from .billing.service import ensure_trial
-        ensure_trial(db,user.tenant_id)
-        db.commit()
-        delivery = "unconfigured"
-        if mail_available(settings):
-            try:
-                delivery = issue_email_token(db, user, "verify", settings)
-            except APIError:
-                db.rollback()
-                delivery = "unavailable"
-        return envelope(request, {**auth_payload(db, user, session), "verification_delivery": delivery})
-
-    @app.post("/v1/auth/login")
-    def login(body: LoginInput, request: Request, response: Response, db=Depends(db_session)):
-        check_origin(request)
-        email = str(body.email).lower()
-        throttle_auth(db, email)
-        user = db.scalar(select(User).where(User.email == email))
-        valid = verify_password(body.password, user.password_hash if user else DUMMY_HASH)
-        if user is None or not valid or not user.is_active:
-            raise APIError(401, "INVALID_CREDENTIALS", "이메일 또는 비밀번호를 확인해 주세요.")
-        if PASSWORDS.check_needs_rehash(user.password_hash):
-            user.password_hash = PASSWORDS.hash(body.password)
-        session = create_session(db, user, response, settings)
-        db.commit()
-        return envelope(request, auth_payload(db, user, session))
+    install_google_auth(app, db_session)
 
     @app.post("/v1/auth/logout")
     def logout(request: Request, response: Response, db=Depends(db_session)):
@@ -214,60 +173,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db.commit()
         response.delete_cookie(COOKIE_NAME, path="/", httponly=True, secure=settings.cookie_secure, samesite="lax")
         return envelope(request, {"logged_out": True})
-
-    @app.post("/v1/auth/request-verification")
-    def request_verification(request: Request, db=Depends(db_session)):
-        user, _ = require_auth(request, db, mutate=True, authorize_write=False)
-        if user.email_verified_at is not None:
-            return envelope(request, {"email_verified": True})
-        throttle_auth(db, "verify:" + user.email)
-        delivery = issue_email_token(db, user, "verify", settings)
-        return envelope(request, {"email_verified": False, "delivery": delivery})
-
-    def consume_token(db, raw_token, kind):
-        # Single SQL claim prevents replay even when two requests arrive together.
-        now = utcnow()
-        user_id = db.scalar(update(AuthToken).where(AuthToken.token_hash == hash_token(raw_token), AuthToken.kind == kind, AuthToken.consumed_at.is_(None), AuthToken.expires_at > now).values(consumed_at=now).returning(AuthToken.user_id))
-        if user_id is None:
-            raise APIError(422, "TOKEN_INVALID_OR_EXPIRED", "링크가 만료되었거나 이미 사용되었습니다. 새 링크를 요청해 주세요.")
-        user = db.get(User, user_id)
-        if user is None:
-            raise APIError(422, "TOKEN_INVALID_OR_EXPIRED", "사용할 수 없는 링크입니다.")
-        return user
-
-    @app.post("/v1/auth/verify-email")
-    def verify_email(body: AuthTokenInput, request: Request, db=Depends(db_session)):
-        check_origin(request)
-        user = consume_token(db, body.token, "verify")
-        user.email_verified_at = utcnow()
-        db.commit()
-        return envelope(request, {"email_verified": True})
-
-    @app.post("/v1/auth/request-password-reset", status_code=202)
-    def request_password_reset(body: EmailInput, request: Request, db=Depends(db_session)):
-        check_origin(request)
-        if not mail_available(settings):
-            raise APIError(503, "MAIL_NOT_CONFIGURED", "이메일 인증 서비스 연결을 준비하고 있습니다.")
-        email = str(body.email).lower()
-        throttle_auth(db, "reset:" + email)
-        user = db.scalar(select(User).where(User.email == email))
-        if user is not None:
-            try:
-                issue_email_token(db, user, "reset", settings)
-            except APIError:
-                db.rollback()
-                logger.warning("password_reset_delivery_unavailable request_id=%s", request.state.request_id)
-        return envelope(request, {"accepted": True, "message": "가입한 이메일인 경우 비밀번호 재설정 링크를 보내 드립니다."})
-
-    @app.post("/v1/auth/reset-password")
-    def reset_password(body: ResetPasswordInput, request: Request, response: Response, db=Depends(db_session)):
-        check_origin(request)
-        user = consume_token(db, body.token, "reset")
-        user.password_hash = PASSWORDS.hash(body.password)
-        db.execute(delete(LoginSession).where(LoginSession.user_id == user.id))
-        db.commit()
-        response.delete_cookie(COOKIE_NAME, path="/", httponly=True, secure=settings.cookie_secure, samesite="lax")
-        return envelope(request, {"password_reset": True, "requires_login": True})
 
     @app.get("/v1/me")
     def me(request: Request, db=Depends(db_session)):
@@ -442,10 +347,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return envelope(request,job_payload(create_production_export(db,user,body,request,project_payload,snapshot_revision)))
         project = owned(db, Project, body.project_id, user.tenant_id)
         ensure_revision(project, body.base_revision)
-        operation_key = request.headers.get("idempotency-key", f"review:{project.id}:{body.base_revision}")
+        from .exporters.public_profiles import BASIC_REVIEW_PROFILE_ID
+        operation_key = request.headers.get("idempotency-key", f"review:{project.id}:{body.base_revision}:{BASIC_REVIEW_PROFILE_ID}")
         if not 1 <= len(operation_key) <= 160:
             raise APIError(422, "IDEMPOTENCY_KEY_INVALID", "요청 식별자가 올바르지 않습니다.")
-        request_hash = sha256(json.dumps(body.model_dump(mode="json"), sort_keys=True).encode()).hexdigest()
+        request_hash = sha256(json.dumps({**body.model_dump(mode="json"), "review_profile_id": BASIC_REVIEW_PROFILE_ID}, sort_keys=True).encode()).hexdigest()
         existing = db.scalar(select(Job).where(Job.tenant_id == user.tenant_id, Job.operation_key == operation_key))
         if existing:
             if existing.request_hash != request_hash:
@@ -456,7 +362,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise APIError(429, "EXPORT_RATE_LIMIT", "검토 파일 요청이 많습니다. 잠시 후 다시 시도해 주세요.", retryable=True)
         try:
             revision = snapshot_revision(db, project, "review_export")
-            job = Job(tenant_id=user.tenant_id, project_id=project.id, revision_id=revision.id, operation_key=operation_key, request_hash=request_hash, snapshot={**project_payload(project), "revision_id": revision.id})
+            job = Job(tenant_id=user.tenant_id, project_id=project.id, revision_id=revision.id, operation_key=operation_key, request_hash=request_hash, snapshot={**project_payload(project), "revision_id": revision.id, "review_profile_id": BASIC_REVIEW_PROFILE_ID})
             db.add(job)
             db.commit()
         except IntegrityError:

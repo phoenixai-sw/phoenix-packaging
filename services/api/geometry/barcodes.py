@@ -20,8 +20,8 @@ def barcode_geometry(value,module_mm=.33,bar_height_mm=22.85):
     h=normalize_mm(bar_height_mm,"mm","bar_height_mm")
     if not .264<=x<=.66:
         raise GeometryValidationError("BARCODE_MODULE_SIZE","EAN-13 모듈 폭은 0.264~0.660mm로 설정해 주세요.","module_mm")
-    if h+0.001<22.85*x/.33 or h>100:
-        raise GeometryValidationError("BARCODE_HEIGHT","바코드 높이가 배율에 필요한 최소 높이보다 작습니다.","bar_height_mm")
+    if h+1e-9<22.85*x/.33 or h>45.7:
+        raise GeometryValidationError("BARCODE_HEIGHT","소비자용 EAN-13 바 높이는 배율에 필요한 최소 높이 이상, 최대 45.70mm여야 합니다.","bar_height_mm")
     # Explicit quiet zones; ReportLab's default symmetric 9X is not used.
     # The widget validates lquiet/rquiet as booleans in this pinned version.
     # Generate the exact 95-module symbol without margins, then add explicit 11X/7X zones.

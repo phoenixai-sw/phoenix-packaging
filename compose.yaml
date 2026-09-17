@@ -8,8 +8,8 @@ x-api-env: &api-env
   COOKIE_SECURE: "false"
   DEMO_MODE: "true"
   REDIS_URL: redis://redis:6379/0
-  SMTP_HOST: mail
-  SMTP_PORT: "1025"
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+  ADMIN_EMAILS: ${ADMIN_EMAILS:-}
   APP_URL: http://localhost:3000
 services:
   db:
@@ -31,9 +31,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-  mail:
-    image: axllent/mailpit:v1.27
-    ports: ["127.0.0.1:8025:8025"]
   api:
     build:
       context: .

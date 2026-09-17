@@ -4,10 +4,16 @@ from pathlib import Path
 import httpx
 ROOT=Path(__file__).resolve().parents[1]
 LOCAL=ROOT/".local"
+sys.path.insert(0,str(ROOT))
+from scripts.cloud_settings import validate_cloud_settings
 parser=argparse.ArgumentParser();parser.add_argument("--keys",nargs="*");parser.add_argument("--storage",action="store_true");args=parser.parse_args()
 env=json.loads((LOCAL/"cloud-env.json").read_text(encoding="utf-8-sig"))
 target=json.loads((LOCAL/"vercel-api-created.json").read_text(encoding="utf-8-sig"))
 try:
+    validate_cloud_settings(env)
+    names=args.keys or list(env)
+    if any(name not in env for name in names):
+        raise ValueError("Requested setting is absent from the prepared cloud environment")
     if args.storage:
         headers={"Authorization":"Bearer "+env["SUPABASE_SERVICE_ROLE_KEY"],"apikey":env["SUPABASE_SERVICE_ROLE_KEY"]}
         with httpx.Client(timeout=30) as client:
@@ -20,7 +26,6 @@ try:
                 check=client.get(url+"/"+bucket,headers=headers);check.raise_for_status()
                 assert check.json()["public"] is False
             print("Private asset and quarantine buckets configured.")
-    names=args.keys or list(env)
     for name in names:
         payload={"key":name,"value":env[name],"type":"encrypted","target":["production","preview"]}
         path=LOCAL/"platform-env-input.json";path.write_text(json.dumps(payload),encoding="utf-8")

@@ -4,8 +4,6 @@ import hmac
 import secrets
 from types import SimpleNamespace
 
-from argon2 import PasswordHasher
-from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import Request
 from sqlalchemy import delete, func, select
 
@@ -13,9 +11,6 @@ from .database import utcnow
 from .errors import APIError
 from .models import AuthAttempt, LoginSession, Tenant, User
 
-PASSWORDS = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4)
-# A constant valid dummy hash makes unknown accounts perform the same expensive check.
-DUMMY_HASH = PASSWORDS.hash("unusable-account-placeholder")
 COOKIE_NAME = "phoenix_session"
 
 
@@ -23,11 +18,8 @@ def hash_token(token: str) -> str:
     return sha256(token.encode("utf-8")).hexdigest()
 
 
-def verify_password(password: str, stored_hash: str) -> bool:
-    try:
-        return PASSWORDS.verify(stored_hash, password)
-    except (VerificationError, InvalidHashError):
-        return False
+def platform_admin(user, settings) -> bool:
+    return bool(user.google_sub and user.google_email_authoritative and user.email_verified_at and user.email.lower() in {value.strip().lower() for value in settings.admin_emails})
 
 
 def create_session(db, user, response, settings):
@@ -52,8 +44,9 @@ def require_auth(request: Request, db, mutate=False, authorize_write=True, enfor
     if session is None or session.expires_at.replace(tzinfo=timezone.utc) <= utcnow():
         raise APIError(401, "AUTH_REQUIRED", "로그인 후 이용해 주세요.")
     user = db.get(User, session.user_id)
-    if user is None or not user.is_active:
+    if user is None or not user.is_active or not user.google_sub:
         raise APIError(401, "AUTH_REQUIRED", "다시 로그인해 주세요.")
+    user = SimpleNamespace(id=user.id, name=user.name, email=user.email, tenant_id=user.tenant_id, role=user.role, is_admin=platform_admin(user, request.app.state.settings), email_verified_at=user.email_verified_at, google_sub=user.google_sub, google_email_authoritative=user.google_email_authoritative)
     if session.active_tenant_id and session.active_tenant_id != user.tenant_id:
         from .feature_models import Membership
         membership = db.scalar(select(Membership).where(Membership.user_id == user.id, Membership.tenant_id == session.active_tenant_id, Membership.is_active.is_(True)))
@@ -63,7 +56,8 @@ def require_auth(request: Request, db, mutate=False, authorize_write=True, enfor
             # Recovery endpoints (switch home, accept invitation, logout) still
             # authenticate the real account and CSRF token, even after removal.
         else:
-            user = SimpleNamespace(id=user.id, name=user.name, email=user.email, tenant_id=membership.tenant_id, role=membership.role, is_admin=user.is_admin, email_verified_at=user.email_verified_at)
+            user.tenant_id = membership.tenant_id
+            user.role = membership.role
     from .billing.payments import enforce_membership_entitlement
     if enforce_membership:
         enforce_membership_entitlement(db, user)
@@ -86,14 +80,14 @@ def auth_payload(db, user, session):
     for member in db.scalars(select(Membership).where(Membership.user_id == user.id, Membership.is_active.is_(True))):
         memberships.append({"id": member.tenant_id, "name": db.get(Tenant, member.tenant_id).name, "role": member.role})
     workspaces = list(db.scalars(select(WorkspaceMember.workspace_id).where(WorkspaceMember.user_id == user.id, WorkspaceMember.tenant_id == user.tenant_id)))
-    return {"user": {"id": user.id, "name": user.name, "email": user.email, "role": user.role, "is_admin": user.is_admin, "email_verified": user.email_verified_at is not None}, "tenant": {"id": tenant.id, "name": tenant.name}, "memberships": memberships, "workspace_ids": workspaces, "csrf_token": session.csrf_token}
+    return {"user": {"id": user.id, "name": user.name, "email": user.email, "role": user.role, "is_admin": user.is_admin, "email_verified": user.email_verified_at is not None, "auth_provider": "google"}, "tenant": {"id": tenant.id, "name": tenant.name}, "memberships": memberships, "workspace_ids": workspaces, "csrf_token": session.csrf_token}
 
 
-def throttle_auth(db, email: str):
+def throttle_auth(db, email: str, max_attempts: int = 12):
     cutoff = utcnow() - timedelta(minutes=15)
     key = hash_token("auth:" + email.lower())
     count = db.scalar(select(func.count()).select_from(AuthAttempt).where(AuthAttempt.key_hash == key, AuthAttempt.created_at >= cutoff))
-    if count >= 12:
+    if count >= max_attempts:
         raise APIError(429, "LOGIN_RATE_LIMIT", "로그인 시도가 많습니다. 15분 뒤 다시 시도해 주세요.", retryable=True)
     db.execute(delete(AuthAttempt).where(AuthAttempt.created_at < cutoff))
     db.add(AuthAttempt(key_hash=key))

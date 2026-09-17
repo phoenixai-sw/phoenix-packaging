@@ -20,7 +20,7 @@ def ensure_ai_access(settings,user):
     if settings.ai_provider=="openai":
         allowed=user.email.lower() in settings.ai_allowed_emails
         if settings.ai_require_verified_email and user.email_verified_at is None and not allowed:
-            raise APIError(403,"EMAIL_VERIFICATION_REQUIRED","실제 AI 생성을 사용하려면 이메일 인증을 완료해 주세요.")
+            raise APIError(403,"EMAIL_VERIFICATION_REQUIRED","실제 AI 생성을 사용하려면 Google 계정으로 다시 로그인해 주세요.")
 
 
 def prepare_ai_quote(db,user,body,settings):

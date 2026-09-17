@@ -1,9 +1,6 @@
 from copy import deepcopy
 from datetime import timedelta
-from email import policy
-from email.parser import BytesParser
 from io import BytesIO
-import re
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -13,26 +10,19 @@ from sqlalchemy import select
 from services.api.config import Settings
 from services.api.database import utcnow
 from services.api.main import create_app
-from services.api.models import AuthToken, LoginSession, User
+from services.api.models import LoginSession, User
+from services.api.tests.auth_helpers import register, google_login
 
 
 @pytest.fixture
 def app(tmp_path):
-    return create_app(Settings(environment="test", database_url=f"sqlite:///{tmp_path / 'test.db'}", storage_dir=tmp_path / "storage", mail_outbox_dir=tmp_path / "mail", worker_secret="test-worker-secret"))
+    return create_app(Settings(environment="test", database_url=f"sqlite:///{tmp_path / 'test.db'}", storage_dir=tmp_path / "storage", worker_secret="test-worker-secret"))
 
 
 @pytest.fixture
 def client(app):
     with TestClient(app) as client:
         yield client
-
-
-def register(client, email="owner@example.com"):
-    response = client.post("/v1/auth/register", json={"name": "테스트", "email": email, "password": "safe-password-123"})
-    assert response.status_code == 201, response.text
-    token = response.json()["data"]["csrf_token"]
-    client.headers["X-CSRF-Token"] = token
-    return response.json()["data"]
 
 
 def project(client):
@@ -48,7 +38,7 @@ def image_file():
 
 
 def test_real_persistence_across_application_restart(tmp_path):
-    settings = Settings(environment="test", database_url=f"sqlite:///{tmp_path / 'durable.db'}", storage_dir=tmp_path / "storage", mail_outbox_dir=tmp_path / "mail")
+    settings = Settings(environment="test", database_url=f"sqlite:///{tmp_path / 'durable.db'}", storage_dir=tmp_path / "storage")
     with TestClient(create_app(settings)) as first:
         register(first)
         created = project(first)
@@ -58,7 +48,7 @@ def test_real_persistence_across_application_restart(tmp_path):
         assert result.status_code == 200, result.text
         assert result.json()["data"]["base_revision"] == 2
     with TestClient(create_app(settings)) as second:
-        login = second.post("/v1/auth/login", json={"email": "owner@example.com", "password": "safe-password-123"})
+        login = google_login(second)
         assert login.status_code == 200
         persisted = second.get(f"/v1/projects/{created['id']}").json()["data"]
         assert persisted["scene"]["faces"][0]["objects"][1]["text"] == "높은 단백질 함량\n유기농 현미"
@@ -70,7 +60,8 @@ def test_session_tokens_are_hashed_and_logout_revokes(client, app):
     with app.state.session_factory() as db:
         stored = db.scalar(select(LoginSession))
         assert stored.token_hash != cookie and len(stored.token_hash) == 64
-        assert db.scalar(select(User)).password_hash.startswith("$argon2id$")
+        assert db.scalar(select(User)).password_hash == ""
+        assert db.scalar(select(User)).google_sub
     assert client.post("/v1/auth/logout").status_code == 200
     client.cookies.set("phoenix_session", cookie)
     assert client.get("/v1/me").status_code == 401
@@ -82,7 +73,7 @@ def test_csrf_and_hostile_origin_are_rejected(client):
     assert client.post("/v1/projects", json={"name": "x", "product_name": "x"}).status_code == 403
     client.headers["X-CSRF-Token"] = data["csrf_token"]
     assert client.post("/v1/projects", headers={"Origin": "https://attacker.example"}, json={"name": "x", "product_name": "x"}).status_code == 403
-    assert client.post("/v1/auth/login", headers={"Origin": "https://attacker.example"}, json={"email": "owner@example.com", "password": "safe-password-123"}).status_code == 403
+    assert client.post("/v1/auth/google", headers={"Origin": "https://attacker.example"}, json={"credential": "test-credential-invalid", "csrf_token": "x" * 32}).status_code == 403
 
 
 def test_stale_draft_cannot_overwrite_and_snapshots_stay_immutable(client):
@@ -177,7 +168,7 @@ def test_hosted_settings_fail_closed(tmp_path):
     with pytest.raises(ValueError, match="PostgreSQL"):
         Settings(environment="staging").validate()
     with pytest.raises(ValueError, match="Fixture/demo"):
-        Settings(environment="production", database_url="postgresql://x", cookie_secure=True, allowed_origins=("https://example.com",), storage_backend="supabase", supabase_url="https://example.supabase.co", supabase_service_role_key="test", demo_mode=True).validate()
+        Settings(environment="production", database_url="postgresql://x", cookie_secure=True, app_url="https://example.com", allowed_origins=("https://example.com",), storage_backend="supabase", supabase_url="https://example.supabase.co", supabase_service_role_key="test", demo_mode=True).validate()
 
 
 def test_review_export_worker_creates_real_pdf(client, app):
@@ -195,62 +186,3 @@ def test_review_export_worker_creates_real_pdf(client, app):
     assert pdf.status_code == 200
     assert pdf.content.startswith(b"%PDF-")
     assert "application/pdf" in pdf.headers["content-type"]
-
-
-def email_token(app, mode):
-    files = sorted(app.state.settings.mail_outbox_dir.glob("*.eml"), key=lambda path: path.stat().st_mtime_ns, reverse=True)
-    for file in files:
-        message = BytesParser(policy=policy.default).parsebytes(file.read_bytes())
-        match = re.search(rf"mode={mode}&token=([A-Za-z0-9_-]+)", message.get_content())
-        if match:
-            return match.group(1)
-    raise AssertionError("Expected a local email with single-use link")
-
-
-def test_email_verification_single_use_and_replacement(client, app):
-    registered = register(client)
-    assert registered["user"]["email_verified"] is False
-    first = email_token(app, "verify")
-    response = client.post("/v1/auth/request-verification")
-    assert response.status_code == 200
-    second = email_token(app, "verify")
-    assert first != second
-    assert client.post("/v1/auth/verify-email", json={"token": first}).status_code == 422
-    assert client.post("/v1/auth/verify-email", json={"token": second}).status_code == 200
-    assert client.get("/v1/me").json()["data"]["user"]["email_verified"] is True
-    assert client.post("/v1/auth/verify-email", json={"token": second}).status_code == 422
-    with app.state.session_factory() as db:
-        assert all(row.token_hash not in {first, second} for row in db.scalars(select(AuthToken)).all())
-
-
-def test_password_reset_revokes_sessions_and_rejects_replay(client, app):
-    register(client)
-    existing_cookie = client.cookies.get("phoenix_session")
-    accepted = client.post("/v1/auth/request-password-reset", json={"email": "owner@example.com"})
-    unknown = client.post("/v1/auth/request-password-reset", json={"email": "nobody@example.com"})
-    assert accepted.status_code == unknown.status_code == 202
-    assert accepted.json()["data"] == unknown.json()["data"]
-    token = email_token(app, "reset")
-    changed = client.post("/v1/auth/reset-password", json={"token": token, "password": "replacement-pass-234"})
-    assert changed.status_code == 200
-    client.cookies.set("phoenix_session", existing_cookie)
-    assert client.get("/v1/me").status_code == 401
-    assert client.post("/v1/auth/login", json={"email": "owner@example.com", "password": "safe-password-123"}).status_code == 401
-    assert client.post("/v1/auth/login", json={"email": "owner@example.com", "password": "replacement-pass-234"}).status_code == 200
-    assert client.post("/v1/auth/reset-password", json={"token": token, "password": "second-new-pass-345"}).status_code == 422
-
-
-def test_expired_auth_token_and_durable_rate_limit(client, app):
-    register(client)
-    token = email_token(app, "verify")
-    with app.state.session_factory() as db:
-        auth_token = db.scalar(select(AuthToken))
-        auth_token.expires_at = utcnow() - timedelta(seconds=1)
-        db.commit()
-    assert client.post("/v1/auth/verify-email", json={"token": token}).status_code == 422
-    for _ in range(11):
-        assert client.post("/v1/auth/login", json={"email": "owner@example.com", "password": "wrong"}).status_code == 401
-    assert client.post("/v1/auth/login", json={"email": "owner@example.com", "password": "wrong"}).status_code == 429
-    # A new app process reads the same DB-backed limiter.
-    with TestClient(create_app(app.state.settings)) as restarted:
-        assert restarted.post("/v1/auth/login", json={"email": "owner@example.com", "password": "wrong"}).status_code == 429

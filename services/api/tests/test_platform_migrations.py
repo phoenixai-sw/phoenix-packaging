@@ -22,6 +22,9 @@ def test_populated_legacy_upgrade_preserves_safe_permissions(tmp_path,monkeypatc
         assert user.is_admin is False
         assert user.is_active is True
         assert user.email=="legacy@example.com"
+        assert user.password_hash==""
+        assert user.google_sub is None
+        assert user.google_email_authoritative is False
     with engine.connect() as db:
         assert not list(db.exec_driver_sql("PRAGMA foreign_key_check"))
     engine.dispose()

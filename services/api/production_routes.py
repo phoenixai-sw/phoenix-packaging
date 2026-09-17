@@ -61,9 +61,11 @@ def _preflight(db,project,revision,reviewed,project_payload,storage,settings):
 
 def public_preflight(report,kind="production"):
     """Review can remain available while manufacturing-only conditions are blocked."""
-    blockers=[issue for issue in report["issues"] if issue["severity"]=="error" and (kind=="production" or issue["scope"]=="review")]
-    warnings=[issue for issue in report["issues"] if issue not in blockers]
-    return {**report,"kind":kind,"status":"blocked" if blockers else "pass","blockers":blockers,"warnings":warnings,"checks":report["issues"]}
+    visible = [issue for issue in report["issues"] if kind == "production" or issue["scope"] == "review"]
+    blockers=[issue for issue in visible if issue["severity"]=="error"]
+    warnings=[issue for issue in visible if issue not in blockers]
+    return {**report,"kind":kind,"status":"blocked" if blockers else "pass","issues":visible,"blockers":blockers,"warnings":warnings,"checks":visible,
+            "manufacturing_gates":[issue for issue in report["issues"] if issue["scope"] == "production"]}
 
 
 def _require_pass(report):

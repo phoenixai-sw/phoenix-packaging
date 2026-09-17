@@ -137,7 +137,7 @@ def verify(output,key_path,restore_dir=None):
 if __name__=="__main__":
     parser=argparse.ArgumentParser();parser.add_argument("--output",type=Path,required=True);parser.add_argument("--key-file",type=Path,required=True);parser.add_argument("--verify-only",action="store_true")
     parser.add_argument("--restore-dir",type=Path,help="New private local recovery directory; never overwrites an existing directory")
-    parser.add_argument("--qa-credentials",type=Path,help="Explicit opt-in to local API login with a JSON email/password file; never printed")
+    parser.add_argument("--qa-credentials",type=Path,help="Explicit JSON email selector for an isolated offline test session; not Google authentication; never printed")
     args=parser.parse_args()
     if args.qa_credentials and not args.restore_dir: parser.error("--qa-credentials requires --restore-dir")
     if args.restore_dir and not args.verify_only: parser.error("--restore-dir requires --verify-only")

@@ -8,9 +8,10 @@ from sqlalchemy import select
 from ..auth import require_auth
 from ..errors import APIError
 from .models import BillingAccount, PaymentOrder, Subscription
-from .payments import BillingSettings, ProviderError, billing_account, bind_and_charge, build_provider, cancel_renewal, change_plan, confirm_order, create_order, entitlements, order_payload, reconcile_webhook, refund_order, subscription_payload
+from .payments import BillingSettings, ProviderError, billing_account, bind_and_charge, build_provider, cancel_renewal, change_plan, confirm_order, create_order, entitlements, order_payload, reconcile_webhook, refund_order, subscription_payload, sync_order
 from .policy import pricing
 from .service import create_quote, quote_payload, wallet_summary
+from .sync import payment_snapshot
 
 
 class Body(BaseModel):
@@ -47,7 +48,7 @@ class OrderBody(Body):
 class ConfirmBody(Body):
     order_id: str = Field(min_length=6, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
     payment_key: str = Field(min_length=1, max_length=200)
-    amount: int = Field(ge=0)
+    amount: int = Field(ge=0, strict=True)
 
 
 class BillingKeyBody(Body):
@@ -65,7 +66,7 @@ class ChangePlanBody(Body):
 
 
 class RefundBody(Body):
-    reason: str = Field(min_length=3, max_length=300)
+    reason: str = Field(min_length=3, max_length=200)
 
 
 def install_billing_routes(app, db_session, *, settings=None, provider=None):
@@ -84,6 +85,9 @@ def install_billing_routes(app, db_session, *, settings=None, provider=None):
 
     def result(request, data):
         return {"data": data, "request_id": request.state.request_id}
+
+    def summary(db, order, account=None):
+        return {**order_payload(order, account, settings), "payment": payment_snapshot(db, order)}
 
     def actor(request, db, owner=False, mutate=False):
         user, _ = require_auth(request, db, mutate=mutate)
@@ -114,7 +118,7 @@ def install_billing_routes(app, db_session, *, settings=None, provider=None):
         orders = db.scalars(select(PaymentOrder).where(PaymentOrder.tenant_id == user.tenant_id).order_by(PaymentOrder.created_at.desc()).limit(50)).all()
         account = db.get(BillingAccount, user.tenant_id)
         capabilities = settings.capabilities()
-        data = {"policy": pricing(), "summary": summary, "subscription": subscription_payload(subscription), "orders": [order_payload(order, account if capabilities["checkout_available"] else None, settings) for order in orders], "entitlements": access, "payment_capabilities": capabilities}
+        data = {"policy": pricing(), "summary": summary, "subscription": subscription_payload(subscription), "orders": [{**order_payload(order, account if capabilities["checkout_available"] else None, settings), "payment": payment_snapshot(db, order)} for order in orders], "entitlements": access, "payment_capabilities": capabilities}
         db.commit()
         return result(request, data)
 
@@ -145,7 +149,7 @@ def install_billing_routes(app, db_session, *, settings=None, provider=None):
         user = actor(request, db, owner=True, mutate=True)
         payment = confirm_order(db, user.tenant_id, body.order_id, body.payment_key, body.amount, provider=get_provider(), settings=settings)
         db.commit()
-        return result(request, order_payload(payment))
+        return result(request, summary(db, payment))
 
     @router.post("/billing/billing-key/confirm")
     def confirm_key(body: BillingKeyBody, request: Request, db=Depends(db_session)):
@@ -155,7 +159,7 @@ def install_billing_routes(app, db_session, *, settings=None, provider=None):
         except ProviderError:
             raise APIError(503, "BILLING_AUTH_FAILED", "결제 수단 등록을 완료하지 못했습니다. 인증부터 다시 진행해 주세요.", retryable=True) from None
         db.commit()
-        return result(request, order_payload(paid))
+        return result(request, summary(db, paid))
 
     @router.post("/billing/mock-confirm")
     def mock_confirm(body: MockBody, request: Request, db=Depends(db_session)):
@@ -171,7 +175,7 @@ def install_billing_routes(app, db_session, *, settings=None, provider=None):
         else:
             paid = confirm_order(db, user.tenant_id, order.order_id, "mock", order.amount, provider=get_provider(), settings=settings)
         db.commit()
-        return result(request, order_payload(paid))
+        return result(request, summary(db, paid))
 
     @router.post("/billing/change-plan")
     def switch_plan(body: ChangePlanBody, request: Request, db=Depends(db_session)):
@@ -195,7 +199,14 @@ def install_billing_routes(app, db_session, *, settings=None, provider=None):
         except ProviderError:
             raise APIError(503, "REFUND_QUERY_UNAVAILABLE", "환불 결과를 확인하고 있습니다. 중복 요청하지 마세요.", retryable=True) from None
         db.commit()
-        return result(request, order_payload(refunded))
+        return result(request, summary(db, refunded))
+
+    @router.post("/billing/orders/{order_id}/sync")
+    def sync(order_id: str, request: Request, db=Depends(db_session)):
+        user = actor(request, db, owner=True, mutate=True)
+        checked = sync_order(db, user.tenant_id, order_id, provider=get_provider(), settings=settings)
+        db.commit()
+        return result(request, summary(db, checked))
 
     @router.post("/billing/webhooks/toss")
     async def webhook(request: Request, db=Depends(db_session)):
@@ -209,8 +220,8 @@ def install_billing_routes(app, db_session, *, settings=None, provider=None):
             payload = await request.json()
         except ValueError:
             raise APIError(422, "WEBHOOK_INVALID", "결제 알림 형식을 확인해 주세요.") from None
-        checked = reconcile_webhook(db, payload, provider=get_provider(), settings=settings)
+        checked = reconcile_webhook(db, payload, provider=get_provider(), settings=settings, transmission_id=request.headers.get("tosspayments-webhook-transmission-id"))
         db.commit()
-        return result(request, {"received": True, "status": checked.status})
+        return result(request, {"received": True, "ignored": checked is None, "status": checked.status if checked else None})
 
     app.include_router(router)

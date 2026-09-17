@@ -40,7 +40,7 @@ export function Workspace({ children }: { children: React.ReactNode }) {
         if (!active) return;
         if (e instanceof ApiError && e.status === 401)
           router.replace(
-            `/auth?mode=login&next=${encodeURIComponent(pathname + window.location.search)}`,
+            `/auth?next=${encodeURIComponent(pathname + window.location.search)}`,
           );
         else setError(errorMessage(e));
       });

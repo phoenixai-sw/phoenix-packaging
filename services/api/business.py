@@ -1,7 +1,6 @@
 """Tenant catalog, stable variant bindings, team seats and workspace isolation."""
 from copy import deepcopy
 from datetime import timedelta
-from email.message import EmailMessage
 import secrets
 from typing import Literal
 from uuid import UUID
@@ -15,7 +14,6 @@ from .models import Asset, Job, Project, Revision, Tenant, User
 from .feature_models import Brand, Product, Variant, Workspace, WorkspaceMember, Membership, Invitation, AuditEvent
 from .billing.payments import entitlements
 from .billing.policy import aware
-from .mail import deliver, mail_available
 
 
 class Body(BaseModel):
@@ -242,7 +240,6 @@ def install_business_routes(app, db_session, project_payload, snapshot_revision)
     @router.post("/team/invitations",status_code=201)
     def invite(body:InviteBody,request:Request,db=Depends(db_session)):
         user,_=owner(request,db,True);settings=app.state.settings
-        if not mail_available(settings): raise APIError(503,"MAIL_NOT_CONFIGURED","팀 초대를 위해 이메일 발송 서비스를 먼저 연결해 주세요.")
         check_seats(db,user.tenant_id)
         email=str(body.email).lower()
         if email==user.email: raise APIError(422,"ALREADY_MEMBER","본인에게 초대할 수 없습니다.")
@@ -251,13 +248,13 @@ def install_business_routes(app, db_session, project_payload, snapshot_revision)
         for identity in body.workspace_ids: owned_record(db,Workspace,identity,user.tenant_id)
         token=secrets.token_urlsafe(48)
         row=Invitation(tenant_id=user.tenant_id,email=email,role=body.role,workspace_ids=list(map(str,body.workspace_ids)),invited_by=user.id,token_hash=hash_token(token),expires_at=utcnow()+timedelta(days=7));db.add(row);db.flush()
-        message=EmailMessage();message["From"]=settings.mail_from;message["To"]=email;message["Subject"]="Phoenix Packaging 팀 초대"
-        message.set_content(f"{user.name}님의 팀 초대입니다. 초대 이메일로 가입 또는 로그인한 뒤 아래 링크를 열어 주세요.\n\n{settings.app_url}/app/team?invite={token}\n\n유효기간은 7일이며 한 번만 사용할 수 있습니다.")
-        delivery=deliver(message,settings);audit(db,user,"team_invited",row.id);db.commit()
-        return result(request,{"id":row.id,"email":row.email,"role":row.role,"delivery":delivery,**({"token":token} if delivery=="local_outbox" else {})})
+        audit(db,user,"team_invited",row.id);db.commit()
+        return result(request,{"id":row.id,"email":row.email,"role":row.role,"delivery":"manual_share","invitation_url":f"{settings.app_url}/app/team?invite={token}"})
     @router.post("/team/invitations/accept")
     def accept(body:TokenBody,request:Request,db=Depends(db_session)):
         user,session=require_auth(request,db,mutate=True,authorize_write=False,enforce_membership=False)
+        if not user.email_verified_at or not user.google_email_authoritative:
+            raise APIError(403,"GOOGLE_TEAM_IDENTITY_REQUIRED","팀 초대는 이메일 소유권이 확인된 Gmail 또는 Google Workspace 계정으로 수락해 주세요.")
         row=db.scalar(select(Invitation).where(Invitation.token_hash==hash_token(body.token)))
         if not row or row.email!=user.email or row.accepted_at or row.revoked_at or aware(row.expires_at)<=utcnow(): raise APIError(422,"INVITATION_INVALID","초대 이메일과 유효기간을 확인해 주세요.")
         if db.get(User,user.id).tenant_id==row.tenant_id: raise APIError(409,"ALREADY_MEMBER","이미 이 팀에 속해 있습니다.")

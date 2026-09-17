@@ -11,7 +11,6 @@ import {
   Search,
 } from "lucide-react";
 import { useSession } from "@/components/workspace";
-import { AccountVerification } from "@/components/account-verification";
 import { canEdit } from "@/lib/business";
 import { packagingMedia } from "@/lib/media";
 import { ProjectPreview } from "@/components/project-preview";
@@ -54,7 +53,6 @@ export default function Dashboard() {
         <h1>{session?.user.name}님의 작업 공간</h1>
         <p>작은 아이디어가 좋은 패키지가 되는 곳.</p>
       </div>
-      <AccountVerification />
       <section className="dashboard-banner dashboard-banner-photographic">
         <div>
           <span className="pill">새로운 시작</span>

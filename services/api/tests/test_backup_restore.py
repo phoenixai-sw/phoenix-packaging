@@ -35,7 +35,7 @@ from verify_restored_app import isolated_runtime, verify_restored_app
 def recovery(tmp_path,monkeypatch):
     source=tmp_path/"source"
     source.mkdir()
-    settings=Settings(environment="test",database_url=f"sqlite:///{source/'source.db'}",storage_backend="local",storage_dir=source/"storage",mail_outbox_dir=source/"mail",ai_provider="disabled")
+    settings=Settings(environment="test",database_url=f"sqlite:///{source/'source.db'}",storage_backend="local",storage_dir=source/"storage",ai_provider="disabled")
     with TestClient(create_app(settings)) as client:
         register(client)
         item=project(client)
@@ -61,7 +61,7 @@ def recovery(tmp_path,monkeypatch):
     report=backup_script.backup(output,key)
     assert report["verified"] and report["objects_verified"]==2
     credentials=tmp_path/"explicit-qa.json"
-    credentials.write_text(json.dumps({"email":"owner@example.com","password":"safe-password-123"}),encoding="utf-8")
+    credentials.write_text(json.dumps({"email":"owner@example.com"}),encoding="utf-8")
     return source,output,key,credentials
 
 
@@ -79,6 +79,7 @@ def test_encrypted_backup_reopens_authenticated_scene_ledger_assets_and_pdf(reco
     assert logical["verified"] and logical["postgres_physical_restore_tested"] is False
     report=logical["application"]
     assert report["application_reopen_verified"] and report["ac31_scenario_covered"]
+    assert report["offline_existing_owner_session"] and not report["google_authentication_tested"]
     assert report["projects_reopened"]==1 and report["revisions_reopened"]==2
     assert report["assets_reopened"]==report["scene_asset_links_verified"]==report["export_files_reopened"]==1
     assert report["ledger_entries_preserved"]>=1 and report["ledger_api_entries_reopened"]>=1
@@ -93,8 +94,8 @@ def test_recovery_requires_valid_explicit_credentials_and_blocks_external_http(r
     _,output,key,credentials=recovery
     restored=tmp_path/"isolated-recovery"
     backup_script.verify(output,key,restored)
-    credentials.write_text(json.dumps({"email":"owner@example.com","password":"incorrect-secret"}),encoding="utf-8")
-    with pytest.raises(ValueError,match="Recovered login route failed"):
+    credentials.write_text(json.dumps({"email":"missing-owner@example.com"}),encoding="utf-8")
+    with pytest.raises(ValueError,match="Recovered account selector"):
         verify_restored_app(restored,credentials)
     assert not (restored/"application-verification.json").exists()
     monkeypatch.setenv("DATABASE_URL","postgresql://must-not-use.invalid/source")
@@ -103,7 +104,7 @@ def test_recovery_requires_valid_explicit_credentials_and_blocks_external_http(r
     monkeypatch.setenv("SMTP_HOST","must-not-contact.invalid")
     with isolated_runtime(restored) as settings:
         assert settings.database_url.startswith("sqlite:///") and settings.storage_backend=="local"
-        assert settings.ai_provider=="disabled" and settings.smtp_host==""
+        assert settings.ai_provider=="disabled" and not hasattr(settings,'smtp_host')
         with pytest.raises(RuntimeError,match="External HTTP is disabled"):
             httpx.get("https://must-not-contact.invalid")
 

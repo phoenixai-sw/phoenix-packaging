@@ -5,6 +5,7 @@ Reads gitignored provisioning files created locally. Never commits credentials.
 from pathlib import Path
 import json
 import subprocess
+import sys
 from urllib.parse import urlparse, quote
 
 import httpx
@@ -12,6 +13,8 @@ import psycopg
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCAL = ROOT / '.local'
+sys.path.insert(0, str(ROOT))
+from scripts.cloud_settings import validate_cloud_settings
 
 # Bootstrap only: never overwrite existing AI, payment or SMTP settings.
 if (LOCAL / 'cloud-env.json').exists():
@@ -28,6 +31,19 @@ pooler = urlparse((ROOT / 'supabase/.temp/pooler-url').read_text().strip())
 db_url = f'postgresql://{pooler.username}:{quote(private["database_password"], safe="")}@{pooler.hostname}:6543/postgres?sslmode=require'
 supabase_url = f'https://{project["id"]}.supabase.co'
 
+api_env = {
+    'APP_ENV': 'staging', 'DATABASE_URL': db_url,
+    'STORAGE_BACKEND': 'supabase', 'SUPABASE_URL': supabase_url,
+    'SUPABASE_SERVICE_ROLE_KEY': service_key, 'SUPABASE_STORAGE_BUCKET': 'phoenix-private',
+    'COOKIE_SECURE': 'true', 'DEMO_MODE': 'true',
+    'APP_URL': 'https://phoenix-packaging.vercel.app',
+    'ALLOWED_ORIGINS': 'https://phoenix-packaging.vercel.app',
+    'WORKER_SECRET': private['worker_secret'], 'CRON_SECRET': private['worker_secret'],
+    'STORAGE_DIR': '/tmp/phoenix-storage', 'UPLOAD_LIMIT_BYTES': '4194304',
+}
+web_env = {'API_ORIGIN': 'https://phoenix-packaging-api.vercel.app', 'WORKER_SECRET': private['worker_secret']}
+validate_cloud_settings(api_env)
+
 with psycopg.connect(db_url, prepare_threshold=None, connect_timeout=20) as db:
     version = db.execute('select current_database(), version()').fetchone()
     print('Supabase PostgreSQL connection verified:', version[0])
@@ -41,16 +57,6 @@ with httpx.Client(timeout=30) as client:
         raise RuntimeError(f'Private storage setup failed: HTTP {response.status_code}')
     print('Private Supabase Storage bucket ready.')
 
-api_env = {
-    'APP_ENV': 'staging', 'DATABASE_URL': db_url,
-    'STORAGE_BACKEND': 'supabase', 'SUPABASE_URL': supabase_url,
-    'SUPABASE_SERVICE_ROLE_KEY': service_key, 'SUPABASE_STORAGE_BUCKET': 'phoenix-private',
-    'COOKIE_SECURE': 'true', 'DEMO_MODE': 'true',
-    'ALLOWED_ORIGINS': 'https://phoenix-packaging.vercel.app',
-    'WORKER_SECRET': private['worker_secret'], 'CRON_SECRET': private['worker_secret'],
-    'STORAGE_DIR': '/tmp/phoenix-storage', 'UPLOAD_LIMIT_BYTES': '4194304',
-}
-web_env = {'API_ORIGIN': 'https://phoenix-packaging-api.vercel.app', 'WORKER_SECRET': private['worker_secret']}
 (LOCAL / 'cloud-env.json').write_text(json.dumps(api_env, indent=2), encoding='utf-8')
 for kind, values in [('api', api_env), ('web', web_env)]:
     target = read(f'vercel-{kind}-created.json')

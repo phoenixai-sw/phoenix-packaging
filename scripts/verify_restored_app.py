@@ -1,8 +1,9 @@
 """Reopen an isolated recovered app through authenticated local HTTP routes.
 
-Only an explicitly supplied email/password JSON file is read. No source database,
-SMTP, payment, AI provider or external HTTP request is used. The restored copy may
-create local login sessions and refresh expired credits just like a normal app.
+An explicit email selector chooses an existing account in the isolated copy.
+An offline test session is injected only into this local TestClient: this checks
+recovered application data, not real Google authentication. No source database,
+payment, AI provider or external HTTP request is used.
 """
 from contextlib import contextmanager
 from hashlib import sha256
@@ -16,12 +17,14 @@ from zipfile import ZipFile
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from fastapi.testclient import TestClient
+from fastapi import Response
 from PIL import Image
 from pypdf import PdfReader
 from sqlalchemy import select
 
 from services.api.config import Settings
-from services.api.models import Asset, Job, Project, Revision
+from services.api.models import Asset, Job, Project, Revision, User
+from services.api.auth import COOKIE_NAME, create_session
 from services.api.billing.models import LedgerEntry
 
 
@@ -66,12 +69,27 @@ def verify_restored_app(restore_dir,credentials_path):
     require((directory/"restored.db").is_file() and (directory/"storage").is_dir(),"A completed isolated restore is required")
     require(json.loads((directory/"verification.json").read_text(encoding="utf-8")).get("verified") is True,"Logical recovery verification must pass before reopening the app")
     credentials=json.loads(Path(credentials_path).read_text(encoding="utf-8"))
-    require(isinstance(credentials,dict) and isinstance(credentials.get("email"),str) and isinstance(credentials.get("password"),str),"QA credentials must contain email and password")
+    require(isinstance(credentials,dict) and isinstance(credentials.get("email"),str),"QA selector must contain an existing account email")
     with isolated_runtime(directory) as settings:
         from services.api.main import create_app
         app=create_app(settings)
         with TestClient(app,follow_redirects=False) as client:
-            login=_data(client.post("/v1/auth/login",json={"email":credentials["email"],"password":credentials["password"]}),"login")
+            # The operator already decrypted this isolated backup. Never deploy
+            # this identity fixture as an HTTP endpoint or hosted auth fallback.
+            with app.state.session_factory() as db:
+                user=db.scalar(select(User).where(User.email==credentials['email'].strip().lower()))
+                require(user is not None and user.is_active,"Recovered account selector is not an active existing user")
+                legacy_identity=not bool(user.google_sub)
+                if legacy_identity:
+                    user.google_sub='offline-recovery-'+user.id
+                response=Response()
+                session=create_session(db,user,response,settings)
+                db.commit()
+                client.headers['X-CSRF-Token']=session.csrf_token
+                from http.cookies import SimpleCookie
+                cookie=SimpleCookie();cookie.load(response.headers['set-cookie'])
+                client.cookies.set(COOKIE_NAME,cookie[COOKIE_NAME].value)
+            login=_data(client.get('/v1/me'),"session")
             require(login["user"]["role"]=="owner","An existing QA owner account is required")
             tenant=login["tenant"]["id"]
             with app.state.session_factory() as db:
@@ -137,13 +155,14 @@ def verify_restored_app(restore_dir,credentials_path):
                     reopened_exports+=1
             report={"application_reopen_verified":True,"transport":"local FastAPI TestClient",
                     "external_network_enabled":False,"source_database_used":False,
-                    "authenticated_existing_qa_owner":True,"projects_reopened":len(projects),
+                    "authenticated_existing_qa_owner":False,"offline_existing_owner_session":True,
+                    "google_authentication_tested":False,"legacy_identity_fixture":legacy_identity,"projects_reopened":len(projects),
                     "revisions_reopened":reopened_revisions,"scene_asset_links_verified":linked_images,
                     "assets_reopened":reopened_assets,"known_unavailable_assets":unavailable_assets,
                     "jobs_reopened":len(jobs),"export_files_reopened":reopened_exports,
                     "ledger_entries_preserved":len(ledger),"ledger_api_entries_reopened":len(credit_data["ledger"]),
                     "ac31_scenario_covered":bool(projects and ledger and reopened_exports and reopened_assets),
                     "postgres_physical_restore_tested":False,
-                    "local_application_mutations":["login_session","credit_expiry_refresh"]}
+                    "local_application_mutations":["offline_test_session","credit_expiry_refresh"]+(["legacy_identity_fixture"] if legacy_identity else [])}
     (directory/"application-verification.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
     return report

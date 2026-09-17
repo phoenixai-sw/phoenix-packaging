@@ -30,13 +30,8 @@ class Settings:
     policy_approved: bool = field(default_factory=lambda: os.getenv("OPERATING_POLICY_APPROVED", "false").lower() == "true")
     demo_mode: bool = field(default_factory=lambda: os.getenv("DEMO_MODE", "true").lower() == "true")
     app_url: str = field(default_factory=lambda: os.getenv("APP_URL", "http://localhost:3000").rstrip("/"))
-    smtp_host: str = field(default_factory=lambda: os.getenv("SMTP_HOST", ""))
-    smtp_port: int = field(default_factory=lambda: int(os.getenv("SMTP_PORT", "1025")))
-    smtp_username: str = field(default_factory=lambda: os.getenv("SMTP_USERNAME", ""))
-    smtp_password: str = field(default_factory=lambda: os.getenv("SMTP_PASSWORD", ""))
-    smtp_starttls: bool = field(default_factory=lambda: os.getenv("SMTP_STARTTLS", "false").lower() == "true")
-    mail_from: str = field(default_factory=lambda: os.getenv("MAIL_FROM", "Phoenix Packaging <noreply@phoenix.local>"))
-    mail_outbox_dir: Path = field(default_factory=lambda: Path(os.getenv("MAIL_OUTBOX_DIR", str(ROOT / '.data' / 'mail'))))
+    google_client_id: str = field(default_factory=lambda: os.getenv("GOOGLE_CLIENT_ID", "").strip())
+    admin_emails: tuple[str, ...] = field(default_factory=lambda: tuple(x.strip().lower() for x in os.getenv("ADMIN_EMAILS", "").split(",") if x.strip()))
     session_days: int = 7
     upload_limit: int = field(default_factory=lambda: int(os.getenv("UPLOAD_LIMIT_BYTES", str(20 * 1024 * 1024))))
 
@@ -54,8 +49,8 @@ class Settings:
                 raise ValueError("Hosted environments require COOKIE_SECURE=true")
             if not self.allowed_origins or any(not x.startswith("https://") for x in self.allowed_origins):
                 raise ValueError("Hosted environments require explicit HTTPS ALLOWED_ORIGINS")
-            if self.smtp_host and self.app_url not in self.allowed_origins:
-                raise ValueError("Email links require APP_URL matching an allowed HTTPS origin")
+            if self.app_url not in self.allowed_origins:
+                raise ValueError("APP_URL must match an allowed HTTPS origin")
             if self.storage_backend == "local":
                 raise ValueError("Hosted environments require durable private object storage")
         if self.environment == "production" and self.demo_mode:

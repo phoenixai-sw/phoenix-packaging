@@ -1,4 +1,5 @@
 import { after, NextRequest, NextResponse } from 'next/server';
+import { authRateHeaders } from '@/lib/auth-proxy';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -19,6 +20,14 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   }
   const suppliedOrigin = request.headers.get('origin');
   if (suppliedOrigin) headers.set('origin', suppliedOrigin);
+  if (request.method === 'GET' && path.join('/') === 'v1/auth/google/challenge') {
+    try {
+      const signed = authRateHeaders(request.headers);
+      for (const [name, value] of Object.entries(signed || {})) headers.set(name, value);
+    } catch {
+      return NextResponse.json({ code: 'AUTH_PROXY_UNAVAILABLE', message: '로그인 요청을 안전하게 전달하지 못했습니다. 잠시 후 다시 시도해 주세요.', retryable: true }, { status: 503, headers: { 'cache-control': 'no-store, private' } });
+    }
+  }
   const url = `${apiOrigin()}/${path.map(encodeURIComponent).join('/')}${request.nextUrl.search}`;
   try {
     const upstream = await fetch(url, {

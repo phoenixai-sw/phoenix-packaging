@@ -1,7 +1,8 @@
 """Vector review PDF; deliberately cannot produce manufacturing-ready files.
 
-The page is the finished face size in mm (not an A4 screenshot). Structural
-guides and review labels are deliberately visible on this non-production file.
+The TrimBox is the finished face size in mm. New basic-profile jobs include
+3mm bleed; legacy snapshots keep their original finished-size MediaBox.
+Structural guides and review labels remain visible on this non-production file.
 """
 
 from __future__ import annotations
@@ -169,7 +170,7 @@ def _draw_object(canvas: Canvas, obj: dict, face_height: float, resolver: AssetR
         effective_ppi = min(pixels[0] / (obj["width_mm"] / 25.4), pixels[1] / (obj["height_mm"] / 25.4))
         if effective_ppi < 300:
             warnings.append({"code": "LOW_PPI", "object_id": obj["id"], "effective_ppi": round(effective_ppi, 1),
-                             "message": "원본 해상도가 300ppi 미만입니다. 제조사 기준 확인이 필요합니다."})
+                             "message": "배치 크기 기준 해상도가 기본 검토 기준 300ppi 미만입니다."})
     elif kind == "barcode":
         barcode = barcode_geometry(obj["barcode_value"], obj["module_mm"], obj["bar_height_mm"])
         canvas.setFillColor(HexColor("#ffffff"))
@@ -283,43 +284,69 @@ def _draw_net(canvas: Canvas, scene: dict, geometry: dict, resolver, warnings) -
     canvas.setDash();canvas.setFont(FONT_ID,10);canvas.setFillColor(HexColor("#88452f"))
     canvas.drawString(3*mm,3*mm,"검토용 전개도 · 데모 구조 · 제조사 미승인 · 제작 사용 불가")
     canvas.showPage()
-    return {"face_id":"net","width_mm":w,"height_mm":h}
+    return {"face_id":"net","width_mm":w,"height_mm":h,"role":"assembly_reference","bleed_mm":0}
 
 
 def _render(project: dict, resolver: AssetResolver | None, production: bool) -> tuple[bytes, dict]:
+    from .public_profiles import BASIC_REVIEW_PROFILE_ID, inspect_basic_review
+    # Freeze policy on each job. Historical snapshots retain their original geometry.
+    profile_id = project.get("review_profile_id")
+    basic = None
+    if profile_id is not None:
+        if profile_id != BASIC_REVIEW_PROFILE_ID:
+            raise ExportValidationError("UNKNOWN_REVIEW_PROFILE", "지원하지 않는 검토 출력 프로필입니다.", "review_profile_id")
+        # Bound compressed image caching; a scene can contain hundreds of assets.
+        resolver = lru_cache(maxsize=2)(resolver) if resolver else None
+        basic = inspect_basic_review(project, resolver)
+    bleed_mm = 3 if basic else 0
     validation = validate_export(project, production=production)
     scene, warnings = validation["scene"], validation["warnings"]
+    if basic:
+        warnings = [warning for warning in warnings if warning["code"] != "FINISHED_SIZE"]
+        warnings += basic["issues"]
+        warnings.append({"code":"BASIC_REVIEW_BLEED","message":"면별 페이지는 재단 치수 바깥 3mm 도련을 포함합니다. 전개도는 조립 참고용입니다."})
     geometry=geometry_for_scene(scene)
     lookup={f["id"]:f for f in scene["faces"]}
     ordered_faces=[lookup[f["id"]] for f in geometry["faces"]]
     pages=[]
     output = BytesIO()
-    canvas = Canvas(output, pageCompression=1, invariant=1)
+    canvas = Canvas(output, pageCompression=1, invariant=1, pdfVersion=(1,5) if basic else (1,4))
     canvas.setTitle("Phoenix Packaging - 검토용 · 제작 사용 불가")
     canvas.setAuthor("Phoenix Packaging")
     canvas.setSubject("데모 구조 · 제조사 미승인 / Finished-size vector review PDF")
     for page, face in enumerate(ordered_faces, start=1):
         width, height = face["width_mm"] * mm, face["height_mm"] * mm
-        canvas.setPageSize((width, height))
-        canvas.setTrimBox((0, 0, width, height))
-        canvas.setBleedBox((0, 0, width, height))
+        bleed = bleed_mm * mm
+        canvas.setPageSize((width+2*bleed, height+2*bleed))
+        canvas.setTrimBox((bleed, bleed, width+bleed, height+bleed))
+        canvas.setBleedBox((0, 0, width+2*bleed, height+2*bleed))
+        canvas.saveState()
+        canvas.translate(bleed, bleed)
         canvas.setFillColor(HexColor(face["background"]))
-        canvas.rect(0, 0, width, height, fill=1, stroke=0)
+        canvas.rect(-bleed, -bleed, width+2*bleed, height+2*bleed, fill=1, stroke=0)
         for obj in sorted(face["objects"], key=lambda obj: obj["z_index"]):
             _draw_object(canvas, obj, face["height_mm"], resolver, warnings)
         _draw_holes(canvas,scene,face,guides=True)
         _draw_guides(canvas, face, page, len(ordered_faces), geometry["faces"][page-1])
+        canvas.restoreState()
         canvas.showPage()
-        pages.append({"face_id":face["id"],"width_mm":face["width_mm"],"height_mm":face["height_mm"]})
+        pages.append({"face_id":face["id"],"width_mm":face["width_mm"],"height_mm":face["height_mm"],
+                      "media_width_mm":face["width_mm"]+2*bleed_mm,"media_height_mm":face["height_mm"]+2*bleed_mm,
+                      "role":"face_review","bleed_mm":bleed_mm})
     if geometry["template_id"] != "three-side-seal":
         pages.append(_draw_net(canvas,scene,geometry,resolver,warnings))
     canvas.save()
     data = output.getvalue()
+    verification = None
+    if basic:
+        from .pdf_verification import verify_review_pdf
+        verification = verify_review_pdf(data, scene, pages, bleed_mm)
     manifest = {"schema_version": "1.0", "kind": "review", "review_only": True, "production_enabled": False,
                 "approval_status": "demo_unapproved", "template_version_id": scene.get("template_version_id") or DEMO_TEMPLATE_ID,
                 "project_id": str(project.get("id", project.get("project_id", ""))),
                 "revision": project.get("revision", project.get("revision_number", project.get("base_revision"))),
                 "revision_id": project.get("revision_id"),
+                "review_profile_id": profile_id, "basic_preflight": basic, "pdf_verification": verification,
                 "geometry_hash": geometry["geometry_hash"],
                 "generated_at": datetime.now(timezone.utc).isoformat(), "sha256": hashlib.sha256(data).hexdigest(),
                 "font": {"id": "NotoSansKR", "sha256": hashlib.sha256(FONT_PATH.read_bytes()).hexdigest(), "embedded": True, "license": "OFL-1.1"},

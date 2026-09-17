@@ -21,7 +21,7 @@ def queued_job(client):
 
 
 def make_app(tmp_path):
-    return create_app(Settings(environment="test", database_url=f"sqlite:///{tmp_path / 'jobs.db'}", storage_dir=tmp_path / "storage", mail_outbox_dir=tmp_path / "mail"))
+    return create_app(Settings(environment="test", database_url=f"sqlite:///{tmp_path / 'jobs.db'}", storage_dir=tmp_path / "storage"))
 
 
 def test_simultaneous_workers_process_distinct_tenants(tmp_path, monkeypatch):
@@ -126,7 +126,7 @@ def test_signed_storage_download_uses_bounded_ttl_and_filename(monkeypatch):
 
 
 def test_upload_limit_is_advertised_and_enforced(tmp_path):
-    app = create_app(Settings(environment="test", database_url=f"sqlite:///{tmp_path / 'limit.db'}", storage_dir=tmp_path / "storage", mail_outbox_dir=tmp_path / "mail", upload_limit=1024))
+    app = create_app(Settings(environment="test", database_url=f"sqlite:///{tmp_path / 'limit.db'}", storage_dir=tmp_path / "storage", upload_limit=1024))
     with TestClient(app) as client:
         register(client)
         assert client.get("/v1/config").json()["data"]["upload_max_bytes"] == 1024

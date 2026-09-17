@@ -13,6 +13,9 @@ if config.config_file_name:
     fileConfig(config.config_file_name)
 target_metadata = Base.metadata
 settings = Settings()
+if settings.environment in {"staging", "production"}:
+    # Fail before opening a DB connection or running any destructive migration.
+    settings.validate()
 
 
 def run_migrations_offline():

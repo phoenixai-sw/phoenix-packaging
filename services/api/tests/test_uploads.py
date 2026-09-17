@@ -33,7 +33,7 @@ class MemorySupabase(SupabaseStorage):
 @pytest.fixture
 def direct(tmp_path,monkeypatch):
     storage=MemorySupabase();monkeypatch.setattr("services.api.main.build_storage",lambda _:storage)
-    app=create_app(Settings(environment="test",database_url=f"sqlite:///{tmp_path/'upload.db'}",storage_dir=tmp_path/"storage",mail_outbox_dir=tmp_path/"mail",upload_limit=4*1024*1024))
+    app=create_app(Settings(environment="test",database_url=f"sqlite:///{tmp_path/'upload.db'}",storage_dir=tmp_path/"storage",upload_limit=4*1024*1024))
     with TestClient(app) as client:
         auth=register(client)
         yield app,client,auth,storage
