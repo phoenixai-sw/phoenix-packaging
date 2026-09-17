@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   Check,
   ImagePlus,
@@ -9,7 +10,28 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { api, errorMessage } from "@/lib/api";
+import {
+  DEFAULT_IMAGE_MODEL,
+  DEFAULT_IMAGE_QUALITY,
+  IMAGE_MODELS,
+  IMAGE_QUALITIES,
+  createImageQuoteGate,
+  creditBalanceLabel,
+  imageModelLabel,
+  imageQualityLabel,
+  initialImageSettings,
+  imageQuoteBody,
+  imageQuoteMatches,
+  imageTier,
+  type ImageMode,
+  type ImageModel,
+  type ImageQuality,
+  type ImageQuoteTicket,
+  type ImageSelection,
+  type ImageSettings,
+} from "@/lib/ai-image-settings";
 import { Feedback } from "./management";
+
 type Asset = {
   id: string;
   name?: string;
@@ -17,6 +39,11 @@ type Asset = {
   width_px?: number;
   height_px?: number;
   url?: string;
+  model?: string;
+  requested_quality?: string;
+  actual_quality?: string | null;
+  output_size?: string;
+  actual_size?: string;
 };
 type Job = {
   id: string;
@@ -25,6 +52,7 @@ type Job = {
   credit_reserved?: number;
   credit_charged?: number;
   credit_returned?: number;
+  image_settings?: ImageSettings;
   error?: { message?: string } | string;
   result?: {
     assets?: Asset[];
@@ -40,6 +68,31 @@ type Quote = {
   provider_mode?: string;
   action: string;
   requested_units: number;
+  image_settings: ImageSettings;
+};
+type Capabilities = {
+  provider: string;
+  generate: boolean;
+  edit: boolean;
+  models: Array<{
+    id: ImageModel;
+    label: string;
+    description: string;
+    enabled: boolean;
+  }>;
+  qualities: Array<{
+    id: ImageQuality;
+    label: string;
+    action_tier: "standard" | "high";
+    credit_cost: number;
+    enabled: boolean;
+  }>;
+  defaults: { model: ImageModel; quality: ImageQuality };
+};
+type ConfirmedQuote = {
+  value: Quote;
+  ticket: ImageQuoteTicket;
+  idempotencyKey: string;
 };
 const terminal = [
   "succeeded",
@@ -59,6 +112,38 @@ const statusLabels: Record<string, string> = {
   canceled: "취소됨",
   reconciliation_required: "사용량 확인 중",
 };
+
+function ImageSettingsSummary({ settings }: { settings: ImageSettings }) {
+  const pixels =
+    settings.output_width_px && settings.output_height_px
+      ? `${settings.output_width_px.toLocaleString()} × ${settings.output_height_px.toLocaleString()} px`
+      : settings.output_size;
+  return (
+    <dl className="ai-settings-summary">
+      <div>
+        <dt>모델</dt>
+        <dd>GPT Image 2.5 {imageModelLabel(settings.model)}</dd>
+      </div>
+      <div>
+        <dt>요청 품질</dt>
+        <dd>{imageQualityLabel(settings.quality)}</dd>
+      </div>
+      {pixels && (
+        <div>
+          <dt>요청 크기</dt>
+          <dd>{pixels}</dd>
+        </div>
+      )}
+      {typeof settings.output_effective_ppi === "number" && (
+        <div>
+          <dt>면 전체 배치 시</dt>
+          <dd>약 {settings.output_effective_ppi.toFixed(1)} PPI</dd>
+        </div>
+      )}
+    </dl>
+  );
+}
+
 export function AIStudio({
   projectId,
   faceId,
@@ -75,35 +160,147 @@ export function AIStudio({
   readOnly: boolean;
 }) {
   const [prompt, setPrompt] = useState("");
-  const [action, setAction] = useState("image.generate.standard");
+  const [mode, setMode] = useState<ImageMode>("generate");
+  const [model, setModel] = useState<ImageModel>(DEFAULT_IMAGE_MODEL);
+  const [quality, setQuality] = useState<ImageQuality>(DEFAULT_IMAGE_QUALITY);
   const [count, setCount] = useState(1);
   const [reference, setReference] = useState("");
-  const [quote, setQuote] = useState<Quote>();
+  const [quote, setQuote] = useState<ConfirmedQuote>();
   const [job, setJob] = useState<Job>();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [provider, setProvider] = useState("");
-  const [highEnabled, setHighEnabled] = useState(false);
+  const [capabilities, setCapabilities] = useState<Capabilities>();
+  const [capabilityError, setCapabilityError] = useState("");
+  const [capabilityRetry, setCapabilityRetry] = useState(0);
+  const [wallet, setWallet] = useState<{ balance: number }>();
+  const [walletLoading, setWalletLoading] = useState(true);
+  const [walletError, setWalletError] = useState("");
   const [retry, setRetry] = useState(0);
-  const key = useRef("");
-  const edit = action === "image.edit.standard";
+  const [now, setNow] = useState(Date.now());
+  const gate = useRef(createImageQuoteGate());
+  const operation = useRef(false);
+  const mounted = useRef(true);
+  const settingsInitialized = useRef(false);
+  const edit = mode === "edit";
+  const selection: ImageSelection = {
+    projectId,
+    faceId,
+    mode,
+    model,
+    quality,
+    prompt,
+    count,
+    reference,
+  };
+  gate.current.update(selection);
+  const referenceAvailable =
+    !edit || referenceAssets.some((asset) => asset.id === reference);
+  if (readOnly || (edit && !referenceAvailable)) gate.current.invalidate();
+  const modelOption = capabilities?.models.find((item) => item.id === model);
+  const qualityOption = capabilities?.qualities.find(
+    (item) => item.id === quality,
+  );
+  const settingsEnabled = !!(
+    modelOption?.enabled &&
+    qualityOption?.enabled &&
+    qualityOption.action_tier === imageTier(quality) &&
+    capabilities?.[mode]
+  );
+  const latest = useRef({
+    selection,
+    readOnly,
+    referenceAvailable,
+    settingsEnabled,
+  });
+  latest.current = { selection, readOnly, referenceAvailable, settingsEnabled };
+  const working = !!job && !terminal.includes(job.status);
+  const locked = busy || working || readOnly;
+  const currentQuote =
+    quote && gate.current.accepts(quote.ticket) ? quote.value : undefined;
+  const expired =
+    !!currentQuote && new Date(currentQuote.expires_at).getTime() <= now;
+  const provider = capabilities?.provider;
+
   useEffect(() => {
-    api<{ provider: string; high: { enabled: boolean } }>("/ai/capabilities")
-      .then((c) => {
-        setProvider(c.provider);
-        setHighEnabled(c.high.enabled);
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      gate.current.invalidate();
+    };
+  }, []);
+  useEffect(() => {
+    let active = true;
+    setCapabilityError("");
+    api<Capabilities>("/ai/capabilities")
+      .then((value) => {
+        if (!active) return;
+        if (!Array.isArray(value.models) || !Array.isArray(value.qualities))
+          throw new Error(
+            "모델·품질 설정을 불러오지 못했습니다. 잠시 후 다시 확인해 주세요.",
+          );
+        if (!settingsInitialized.current) {
+          const initial = initialImageSettings(value);
+          setModel(initial.model);
+          setQuality(initial.quality);
+          settingsInitialized.current = true;
+          gate.current.invalidate();
+        }
+        setCapabilities(value);
       })
-      .catch(() => {});
+      .catch((e) => {
+        if (active) {
+          setCapabilities(undefined);
+          setCapabilityError(errorMessage(e));
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [capabilityRetry]);
+  useEffect(() => {
+    let active = true;
     api<{ items: Job[] }>(`/projects/${projectId}/generations`)
-      .then((r) => {
-        setJobs(r.items);
-        const pending = r.items.find((j) => !terminal.includes(j.status));
-        if (pending) setJob(pending);
+      .then((result) => {
+        if (!active) return;
+        setJobs(result.items);
+        const pending = result.items.find(
+          (item) => !terminal.includes(item.status),
+        );
+        if (pending)
+          setJob((current) => (current?.id === pending.id ? current : pending));
       })
-      .catch((e) => setError(errorMessage(e)));
+      .catch((e) => {
+        if (active) setError(errorMessage(e));
+      });
+    setWalletLoading(true);
+    api<{ balance: number }>("/credits")
+      .then((value) => {
+        if (active) {
+          setWallet(value);
+          setWalletError("");
+        }
+      })
+      .catch((e) => {
+        if (active) {
+          setWallet(undefined);
+          setWalletError(errorMessage(e));
+        }
+      })
+      .finally(() => {
+        if (active) setWalletLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [projectId, retry]);
+  useEffect(() => {
+    if (!currentQuote) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [currentQuote?.id]);
   useEffect(() => {
     if (!job || terminal.includes(job.status)) return;
     let active = true;
@@ -131,86 +328,133 @@ export function AIStudio({
       clearTimeout(timer);
     };
   }, [job?.id, job?.status]);
+
   function change() {
+    gate.current.invalidate();
     setQuote(undefined);
     setError("");
+    setNotice("");
   }
-  async function getQuote(e: React.FormEvent) {
-    e.preventDefault();
+  function beginOperation() {
+    if (operation.current) return false;
+    operation.current = true;
     setBusy(true);
+    return true;
+  }
+  function finishOperation() {
+    operation.current = false;
+    if (mounted.current) setBusy(false);
+  }
+  function accepts(ticket: ImageQuoteTicket) {
+    return (
+      mounted.current &&
+      gate.current.accepts(ticket) &&
+      !latest.current.readOnly &&
+      latest.current.referenceAvailable &&
+      latest.current.settingsEnabled
+    );
+  }
+  async function getQuote(event: React.FormEvent) {
+    event.preventDefault();
+    if (
+      working ||
+      readOnly ||
+      !settingsEnabled ||
+      !referenceAvailable ||
+      !beginOperation()
+    )
+      return;
+    const snapshot = { ...selection };
+    const ticket = gate.current.begin();
+    setQuote(undefined);
     setError("");
+    setNotice("");
     try {
-      const base_revision = await saveCurrent();
+      const baseRevision = await saveCurrent();
+      if (!accepts(ticket)) return;
       const result = await api<Quote>("/quotes", {
         method: "POST",
-        body: JSON.stringify({
-          project_id: projectId,
-          base_revision,
-          action,
-          requested_units: edit ? 1 : count,
-          prompt,
-          face_id: faceId,
-          ...(edit ? { reference_asset_id: reference } : {}),
-        }),
+        body: JSON.stringify(imageQuoteBody(snapshot, baseRevision)),
       });
-      setQuote(result);
-      key.current = crypto.randomUUID();
+      if (!accepts(ticket)) return;
+      if (!imageQuoteMatches(result, snapshot))
+        throw new Error(
+          "선택한 모델·품질과 견적이 일치하지 않습니다. 새 견적을 확인해 주세요.",
+        );
+      setNow(Date.now());
+      setQuote({ value: result, ticket, idempotencyKey: crypto.randomUUID() });
     } catch (e) {
-      setError(errorMessage(e));
+      if (accepts(ticket)) setError(errorMessage(e));
     } finally {
-      setBusy(false);
+      finishOperation();
     }
   }
   async function start() {
-    if (!quote) return;
-    setBusy(true);
+    if (
+      !quote ||
+      working ||
+      !accepts(quote.ticket) ||
+      !imageQuoteMatches(quote.value, latest.current.selection)
+    )
+      return;
+    if (new Date(quote.value.expires_at).getTime() <= Date.now()) {
+      change();
+      setError("견적이 만료되었습니다. 다시 확인해 주세요.");
+      return;
+    }
+    if (!beginOperation()) return;
     setError("");
     try {
       const result = await api<Job>("/jobs", {
         method: "POST",
-        headers: { "Idempotency-Key": key.current },
-        body: JSON.stringify({ quote_id: quote.id }),
+        headers: { "Idempotency-Key": quote.idempotencyKey },
+        body: JSON.stringify({ quote_id: quote.value.id }),
       });
+      if (!mounted.current) return;
       setJob(result);
       setQuote(undefined);
+      gate.current.invalidate();
       setNotice("");
       setRetry((n) => n + 1);
     } catch (e) {
-      setError(errorMessage(e));
+      if (mounted.current) setError(errorMessage(e));
     } finally {
-      setBusy(false);
+      finishOperation();
     }
   }
   async function cancel() {
-    if (!job) return;
-    setBusy(true);
+    if (!job || readOnly || !beginOperation()) return;
+    setError("");
     try {
       const result = await api<Job>(`/jobs/${job.id}/cancel`, {
         method: "POST",
       });
-      setJob(result);
-      setRetry((n) => n + 1);
+      if (mounted.current) {
+        setJob(result);
+        setRetry((n) => n + 1);
+      }
     } catch (e) {
-      setError(errorMessage(e));
+      if (mounted.current) setError(errorMessage(e));
     } finally {
-      setBusy(false);
+      finishOperation();
     }
   }
   async function selectAsset(asset: Asset) {
-    setBusy(true);
-    setError("");
-    setQuote(undefined);
+    if (working || readOnly || !beginOperation()) return;
+    change();
     try {
       await onSelect(asset);
-      setNotice("현재 면에 원본 비율을 유지한 배경을 적용했습니다. 위에 있는 원본 이미지가 가린다면 레이어에서 숨겨 주세요. 텍스트와 원본 자산은 유지됩니다.");
+      if (mounted.current)
+        setNotice(
+          "현재 면에 원본 비율을 유지한 배경을 적용했습니다. 위에 있는 원본 이미지가 가린다면 레이어에서 숨겨 주세요. 텍스트와 원본 자산은 유지됩니다.",
+        );
     } catch (e) {
-      setError(errorMessage(e));
+      if (mounted.current) setError(errorMessage(e));
     } finally {
-      setBusy(false);
+      finishOperation();
     }
   }
-  const working = job && !terminal.includes(job.status);
-  const gallery = jobs.filter((j) => j.result?.assets?.length);
+  const gallery = jobs.filter((item) => item.result?.assets?.length);
   return (
     <div className="ai-studio">
       <div className="alert alert-info">
@@ -218,64 +462,176 @@ export function AIStudio({
         <span>
           {provider === "fixture"
             ? "자체 제작 예시를 사용하는 시험 모드입니다. 실제 AI 생성과 구분해 표시합니다."
-            : provider === "openai"
-              ? "배경과 일러스트는 AI로 만들고, 상품명과 표시사항은 별도 텍스트로 편집하세요."
-              : "이미지 서비스 연결 상태는 견적 요청 시 확인합니다. 연결이 없으면 작업을 시작하지 않습니다."}
+            : edit
+              ? "이미지 전체를 수정합니다. 글자를 정확히 바꾸려면 ‘이미지 글자 편집’에서 영역을 지정하고 별도 텍스트로 적용하세요."
+              : "배경과 일러스트는 AI로 만들고, 상품명과 표시사항은 별도 텍스트로 편집하세요."}
         </span>
       </div>
+      <div className="ai-credit-wallet">
+        <div>
+          <span>사용 가능</span>
+          <strong aria-live="polite">
+            {walletLoading ? "확인 중…" : creditBalanceLabel(wallet?.balance)}
+          </strong>
+        </div>
+        <Link href="/app/billing" target="_blank" rel="noopener noreferrer">
+          크레딧·충전 / 결제 안내 ↗
+        </Link>
+        {!walletLoading && wallet?.balance === 0 && (
+          <p>
+            잔액이 0입니다. 작업을 시작하려면 크레딧이 필요합니다. 충전 가능
+            여부는 결제 메뉴에서 확인하세요.
+          </p>
+        )}
+        {walletError && (
+          <p role="status">
+            {walletError}{" "}
+            <button
+              type="button"
+              className="text-button"
+              disabled={busy}
+              onClick={() => setRetry((n) => n + 1)}
+            >
+              잔액 다시 확인
+            </button>
+          </p>
+        )}
+      </div>
+      {capabilityError && (
+        <div className="ai-capability-error">
+          <Feedback error={capabilityError} />
+          <button
+            type="button"
+            className="button button-light button-sm"
+            onClick={() => setCapabilityRetry((n) => n + 1)}
+          >
+            모델 설정 다시 확인
+          </button>
+        </div>
+      )}
       <div className="ai-studio-layout">
         <form className="ai-prompt-form" onSubmit={getQuote}>
           <label className="field">
             작업 종류
             <select
-              value={action}
-              disabled={!!working || readOnly}
+              value={mode}
+              disabled={locked}
               onChange={(e) => {
-                setAction(e.target.value);
+                setMode(e.target.value as ImageMode);
                 change();
               }}
             >
-              <option value="image.generate.standard">표준 시안 만들기</option>
-              <option value="image.generate.high" disabled={!highEnabled}>
-                고해상도 시안 만들기{highEnabled ? "" : " · 제공 준비 중"}
-              </option>
-              <option value="image.edit.standard">기존 이미지 수정</option>
+              <option value="generate">이미지 생성</option>
+              <option value="edit">이미지 수정</option>
             </select>
           </label>
+          <label className="field">
+            모델
+            <select
+              value={model}
+              disabled={locked || !capabilities}
+              onChange={(e) => {
+                setModel(e.target.value as ImageModel);
+                change();
+              }}
+            >
+              {IMAGE_MODELS.map((id) => {
+                const option = capabilities?.models.find(
+                  (item) => item.id === id,
+                );
+                return (
+                  <option key={id} value={id} disabled={!option?.enabled}>
+                    {imageModelLabel(id)} ·{" "}
+                    {id.endsWith("sunburst") ? "정밀 편집" : "빠른 시안"}
+                    {option && !option.enabled ? " · 사용 불가" : ""}
+                  </option>
+                );
+              })}
+            </select>
+            <small className="field-hint">
+              GPT Image 2.5 ·{" "}
+              {modelOption?.description ||
+                "연결된 모델 설정을 확인하고 있습니다."}
+            </small>
+          </label>
+          <label className="field">
+            품질
+            <select
+              value={quality}
+              disabled={locked || !capabilities}
+              onChange={(e) => {
+                setQuality(e.target.value as ImageQuality);
+                change();
+              }}
+            >
+              {IMAGE_QUALITIES.map((id) => {
+                const option = capabilities?.qualities.find(
+                  (item) => item.id === id,
+                );
+                return (
+                  <option key={id} value={id} disabled={!option?.enabled}>
+                    {imageQualityLabel(id)}
+                    {option ? ` · ${option.credit_cost} 크레딧/장` : ""}
+                    {option && !option.enabled ? " · 사용 불가" : ""}
+                  </option>
+                );
+              })}
+            </select>
+          </label>
+          <p className="field-hint ai-quality-note">
+            {quality === "auto"
+              ? "Auto는 선택한 모델이 품질을 결정하며 장당 20크레딧입니다. 자동 선택에 따른 비용 절감은 보장하지 않습니다."
+              : "Low·Medium·High는 장당 10크레딧, XHigh·Max는 장당 20크레딧입니다."}
+            {" "}체험 크레딧은 Low·Medium·High에서 사용할 수 있습니다.
+          </p>
+          <p className="field-hint ai-quality-note">
+            품질을 높여도 300 PPI가 보장되지는 않습니다. 인쇄 밀도는 이미지 픽셀
+            수와 실제 배치 크기로 결정됩니다.
+          </p>
           {edit && (
             <label className="field">
               수정할 원본 이미지
               <select
                 required
                 value={reference}
+                disabled={locked}
                 onChange={(e) => {
                   setReference(e.target.value);
                   change();
                 }}
               >
                 <option value="">선택하세요</option>
-                {referenceAssets.map((a, i) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name || `현재 면의 이미지 ${i + 1}`}
-                  </option>
-                ))}
+                {referenceAssets
+                  .filter(
+                    (item, index, list) =>
+                      list.findIndex((other) => other.id === item.id) === index,
+                  )
+                  .map((asset, index) => (
+                    <option key={asset.id} value={asset.id}>
+                      {asset.name || `현재 면의 이미지 ${index + 1}`}
+                    </option>
+                  ))}
               </select>
             </label>
           )}
           <label className="field">
-            원하는 분위기
+            {edit ? "수정할 내용" : "원하는 분위기"}
             <textarea
               required
               minLength={5}
               maxLength={4000}
-              rows={6}
+              rows={5}
               value={prompt}
-              disabled={!!working || readOnly}
+              disabled={locked}
               onChange={(e) => {
                 setPrompt(e.target.value);
                 change();
               }}
-              placeholder="예: 차분한 포레스트 그린 배경, 섬세한 찻잎 일러스트, 중앙에 상품명을 배치할 넓은 여백. 글자와 바코드는 제외."
+              placeholder={
+                edit
+                  ? "예: 나머지 디자인은 유지하고 배경의 녹색을 차분한 보라색으로 바꿔 주세요."
+                  : "예: 차분한 포레스트 그린 배경, 섬세한 찻잎 일러스트, 중앙에 상품명을 배치할 넓은 여백. 글자와 바코드는 제외."
+              }
             />
           </label>
           {!edit && (
@@ -283,7 +639,7 @@ export function AIStudio({
               만들 시안 수
               <select
                 value={count}
-                disabled={!!working || readOnly}
+                disabled={locked}
                 onChange={(e) => {
                   setCount(Number(e.target.value));
                   change();
@@ -297,42 +653,70 @@ export function AIStudio({
               </select>
             </label>
           )}
+          {!capabilities && !capabilityError && (
+            <p className="field-hint" role="status">
+              모델·품질 설정을 불러오는 중입니다.
+            </p>
+          )}
+          {capabilities && !settingsEnabled && (
+            <p className="field-hint" role="status">
+              선택한 작업·모델·품질은 현재 사용할 수 없습니다.
+            </p>
+          )}
           <Feedback error={error} notice={notice} />
           <button
             className="button button-dark full-width"
-            disabled={busy || !!working || readOnly || (edit && !reference)}
+            disabled={locked || !settingsEnabled || !referenceAvailable}
           >
             {busy ? (
-              <LoaderCircle className="spin" size={17} />
+              <>
+                <LoaderCircle className="spin" size={17} /> 처리 중
+              </>
             ) : (
               "크레딧 견적 확인"
             )}
           </button>
           <p className="field-hint">
-            견적을 확인하고 승인하면 크레딧을 예약합니다. 성공한 결과만 차감하며
+            견적 확인 후 승인하면 크레딧을 예약합니다. 성공한 결과만 차감하며
             원본 이미지는 유지합니다.
           </p>
-          {quote && (
-            <div className="quote-confirmation">
+          {currentQuote && (
+            <div className="quote-confirmation" aria-live="polite">
               <h3>
-                {quote.requested_units}장 · {quote.credit_total} 크레딧
+                {currentQuote.requested_units}장 · {currentQuote.credit_total}{" "}
+                크레딧
               </h3>
+              <ImageSettingsSummary settings={currentQuote.image_settings} />
+              {currentQuote.image_settings.quality === "auto" && (
+                <p>
+                  자동 품질 · 장당 20크레딧 고정. 실제 품질은 결과에 제공된 경우
+                  별도로 표시합니다.
+                </p>
+              )}
               <p>
-                사용 가능 {quote.balance_before} → 예약 후 {quote.balance_after}
+                출력 크기와 인쇄 밀도는 요청 기준 예상값이며 결과 이미지에서
+                다시 확인하세요.
               </p>
               <p>
-                견적 만료{" "}
-                {new Date(quote.expires_at).toLocaleTimeString("ko-KR")}
+                이 작업에 사용 가능 {currentQuote.balance_before} → 예약 후{" "}
+                {currentQuote.balance_after}
+              </p>
+              <p>
+                {expired
+                  ? "견적이 만료되었습니다. 새 견적을 확인하세요."
+                  : `견적 만료 ${new Date(currentQuote.expires_at).toLocaleTimeString("ko-KR")}`}
               </p>
               <span className="pill">
-                {quote.provider_mode || provider || "서버 설정"}
+                {(currentQuote.provider_mode || provider) === "fixture"
+                  ? "시험 이미지"
+                  : "AI 이미지 작업"}
               </span>
               <button
                 type="button"
                 className="button button-orange full-width"
                 onClick={() => void start()}
                 disabled={
-                  busy || new Date(quote.expires_at).getTime() < Date.now()
+                  locked || expired || !settingsEnabled || !referenceAvailable
                 }
               >
                 확인하고 작업 시작
@@ -351,6 +735,9 @@ export function AIStudio({
                 )}
                 <strong>{statusLabels[job.status] || job.status}</strong>
               </div>
+              {job.image_settings && (
+                <ImageSettingsSummary settings={job.image_settings} />
+              )}
               <p>
                 예약 {job.credit_reserved ?? 0} · 차감 {job.credit_charged ?? 0}{" "}
                 · 반환 {job.credit_returned ?? 0} 크레딧
@@ -367,9 +754,9 @@ export function AIStudio({
               <small>작업 번호 {job.id}</small>
               {job.result?.units && (
                 <div className="ai-unit-status">
-                  {job.result.units.map((unit, i) => (
-                    <span className="pill" key={i}>
-                      {i + 1}번 · {statusLabels[unit.status] || unit.status}
+                  {job.result.units.map((unit, index) => (
+                    <span className="pill" key={index}>
+                      {index + 1}번 · {statusLabels[unit.status] || unit.status}
                     </span>
                   ))}
                 </div>
@@ -377,7 +764,7 @@ export function AIStudio({
               {job.cancelable && (
                 <button
                   className="button button-light button-sm"
-                  disabled={busy}
+                  disabled={busy || readOnly}
                   onClick={() => void cancel()}
                 >
                   <Square size={13} /> 대기 중인 시안 취소
@@ -386,11 +773,12 @@ export function AIStudio({
             </div>
           )}
           <div className="management-section-heading">
-            <h3>생성 결과</h3>
+            <h3>생성·수정 이력</h3>
             <button
               className="icon-button"
+              disabled={busy}
               onClick={() => setRetry((n) => n + 1)}
-              aria-label="생성 이력 새로고침"
+              aria-label="생성 이력과 크레딧 새로고침"
             >
               <RefreshCw size={16} />
             </button>
@@ -402,22 +790,50 @@ export function AIStudio({
             </div>
           ) : (
             <div className="ai-result-grid">
-              {gallery.flatMap((j) =>
-                (j.result?.assets || []).map((asset) => (
+              {gallery.flatMap((item) =>
+                (item.result?.assets || []).map((asset) => (
                   <article key={asset.id}>
                     <img
                       src={`/api/v1/assets/${asset.id}/content`}
-                      alt="생성된 패키지 배경 시안"
+                      alt="생성·수정된 패키지 이미지 시안"
                       loading="lazy"
                     />
                     <span className="pill">
                       {asset.source === "fixture"
                         ? "자체 제작 예시"
-                        : "AI 생성 이미지"}
+                        : "AI 이미지"}
                     </span>
+                    {(asset.model || item.image_settings?.model) && (
+                      <div className="ai-result-metadata">
+                        <strong>
+                          {imageModelLabel(
+                            asset.model || item.image_settings?.model,
+                          )}
+                        </strong>
+                        <span>
+                          요청{" "}
+                          {imageQualityLabel(
+                            asset.requested_quality ||
+                              item.image_settings?.quality,
+                          )}
+                        </span>
+                        <span>
+                          실제 품질 {imageQualityLabel(asset.actual_quality)}
+                          {!asset.actual_quality ? " (공급자 미반환)" : ""}
+                        </span>
+                        {asset.width_px && asset.height_px ? (
+                          <span>
+                            실제 {asset.width_px.toLocaleString()} ×{" "}
+                            {asset.height_px.toLocaleString()} px
+                          </span>
+                        ) : asset.actual_size ? (
+                          <span>실제 {asset.actual_size} px</span>
+                        ) : null}
+                      </div>
+                    )}
                     <button
                       className="button button-light button-sm"
-                      disabled={readOnly || busy}
+                      disabled={locked}
                       onClick={() => void selectAsset(asset)}
                     >
                       이 면의 배경으로 적용

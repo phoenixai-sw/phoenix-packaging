@@ -22,6 +22,7 @@ class Settings:
     ai_provider: str = field(default_factory=lambda: os.getenv("AI_PROVIDER", "fixture"))
     openai_api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
     image_model: str = field(default_factory=lambda: os.getenv("IMAGE_MODEL", "gpt-image-2.5-sunburst"))
+    ai_image_models: tuple[str, ...] = field(default_factory=lambda: tuple(x.strip() for x in os.getenv("AI_IMAGE_MODELS", "gpt-image-2.5-sunburst,gpt-image-2.5-flare").split(",") if x.strip()))
     ai_daily_units: int = field(default_factory=lambda: int(os.getenv("AI_DAILY_UNIT_LIMIT", "30")))
     ai_high_enabled: bool = field(default_factory=lambda: os.getenv("AI_HIGH_ENABLED", "false").lower() == "true")
     ai_allowed_emails: tuple[str, ...] = field(default_factory=lambda: tuple(x.strip().lower() for x in os.getenv("AI_ALLOWED_EMAILS", "").split(",") if x.strip()))
@@ -63,6 +64,8 @@ class Settings:
             raise ValueError("OpenAI image generation requires a server API key")
         if self.image_model not in {"gpt-image-2.5-sunburst", "gpt-image-2.5-flare"}:
             raise ValueError("Only explicitly supported GPT Image 2.5 presets are enabled")
+        if not self.ai_image_models or set(self.ai_image_models) - {"gpt-image-2.5-sunburst", "gpt-image-2.5-flare"} or self.image_model not in self.ai_image_models:
+            raise ValueError("AI_IMAGE_MODELS must allow supported models and include IMAGE_MODEL")
         if self.ai_daily_units < 0 or self.ai_daily_units > 10000:
             raise ValueError("AI daily unit limit is invalid")
         if self.enable_production_export and not self.policy_approved:

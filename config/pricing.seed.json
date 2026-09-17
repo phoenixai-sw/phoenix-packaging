@@ -1,5 +1,5 @@
 {
-  "version": "2026-09-16-proposal-1",
+  "version": "2026-09-18-image-quality-2",
   "currency": "KRW",
   "live_billing_enabled": false,
   "plans": [
@@ -15,6 +15,7 @@
   "actions": {
     "image.generate.standard": 10,
     "image.edit.standard": 10,
+    "image.edit.high": 20,
     "image.generate.high": 20,
     "export.production.first": 40,
     "export.production.repeat": 0,

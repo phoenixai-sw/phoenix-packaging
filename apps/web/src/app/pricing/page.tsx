@@ -92,8 +92,17 @@ export default function Pricing() {
           <div>
             <h2>작업 전에 확인하는 크레딧.</h2>
             <p>
-              표준 시안 생성 1장 {pricing.actions["image.generate.standard"]}
-              크레딧, 수정 1장 {pricing.actions["image.edit.standard"]}크레딧,
+              Low·Medium·High 품질은 생성 1장{" "}
+              {pricing.actions["image.generate.standard"]}크레딧, 수정 1장{" "}
+              {pricing.actions["image.edit.standard"]}크레딧입니다.
+              XHigh·Max·Auto 품질은 생성 1장{" "}
+              {pricing.actions["image.generate.high"]}크레딧, 수정 1장{" "}
+              {pricing.actions["image.edit.high"]}크레딧입니다. Sunburst와 Flare
+              모델에 따른 추가 요금은 없습니다. Auto는 선택한 모델이 품질을
+              결정하며 장당 {pricing.actions["image.generate.high"]}크레딧으로
+              고정됩니다. 자동 품질에 따른 비용 절감을 보장하지 않습니다.
+            </p>
+            <p>
               최초 제작 파일 준비 {pricing.actions["export.production.first"]}
               크레딧을 기준으로 합니다. 검토용 PDF는{" "}
               {pricing.actions["export.review"]}크레딧, 동일 조건의 제작 파일
@@ -103,9 +112,9 @@ export default function Pricing() {
             <p>
               예: 표준 시안 3장 + 수정 1장 + 최초 제작 파일 1건 ={" "}
               {formatNumber(sampleCredits)}크레딧입니다. 실제 AI 생성·수정은
-              Google 로그인을 마친 허용 계정에서 사용할 수 있습니다. 제작용 출력은
-              제조사 도면·인쇄 프로필 승인과 검수를 통과해야 하며, 현재는 검토용
-              PDF를 제공합니다.
+              Google 로그인을 마친 허용 계정에서 사용할 수 있습니다. 제작용
+              출력은 제조사 도면·인쇄 프로필 승인과 검수를 통과해야 하며, 현재는
+              검토용 PDF를 제공합니다.
             </p>
           </div>
           <div>

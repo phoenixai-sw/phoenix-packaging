@@ -219,7 +219,9 @@ def test_quote_expiry_revision_and_tenant_cannot_be_bypassed(ai):
 
 def test_quote_freezes_server_image_size_and_rejects_client_override(ai):
     app,client,_,item=ai
-    malicious={"output_size":"3840x3840","size_policy_version":"attacker","quality":"max","model":"unknown","width_mm":1,"height_mm":1}
+    # Model/quality now have explicit top-level choices; nested variants are
+    # rejected separately. Geometry-derived sizes remain server-owned.
+    malicious={"output_size":"3840x3840","size_policy_version":"attacker","width_mm":1,"height_mm":1}
     estimate=quote(client,item,input_data=malicious)
     with app.state.session_factory() as db:
         stored=db.get(Quote,estimate["id"])

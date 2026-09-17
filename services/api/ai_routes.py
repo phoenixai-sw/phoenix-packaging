@@ -13,7 +13,9 @@ from .billing.models import Quote, Reservation
 from .billing.service import reserve, release_unit, canonical_hash
 from .ai_jobs import summarize_job, lock_tenant_work
 from .image_provider import (get_capabilities, ProviderError, EDIT_VERSION, MAX_REFERENCE_BYTES,
-                             normalize_edit_region, edit_pixel_box, decode_edit_reference)
+                             normalize_edit_region, edit_pixel_box, decode_edit_reference,
+                             AI_SELECTION_VERSION, IMAGE_ACTIONS,
+                             resolve_image_selection)
 from .image_sizing import ImageSizeError, select_image_output
 
 
@@ -28,19 +30,28 @@ def ensure_ai_access(settings,user):
 def prepare_ai_quote(db,user,body,settings):
     ensure_ai_access(settings,user)
     action=body["action"]
-    if action not in {"image.generate.standard","image.generate.high","image.edit.standard"}: raise APIError(422,"AI_ACTION_INVALID","지원하지 않는 이미지 작업입니다.")
+    if action not in IMAGE_ACTIONS: raise APIError(422,"AI_ACTION_INVALID","지원하지 않는 이미지 작업입니다.")
+    is_edit = action.startswith("image.edit.")
     units=body.get("requested_units") or body.get("units") or 1
-    if not 1<=units<=3 or (action=="image.edit.standard" and units!=1): raise APIError(422,"AI_UNIT_LIMIT","생성은 1~3장, 수정은 한 장씩 요청해 주세요.")
-    if action=="image.generate.high" and not settings.ai_high_enabled: raise APIError(422,"HIGH_RESOLUTION_DISABLED","고해상도 생성은 원가 검증 후 제공됩니다.")
+    if not 1<=units<=3 or (is_edit and units!=1): raise APIError(422,"AI_UNIT_LIMIT","생성은 1~3장, 수정은 한 장씩 요청해 주세요.")
     if not body.get("project_id"): raise APIError(422,"PROJECT_REQUIRED","디자인 프로젝트를 먼저 선택해 주세요.")
     project=owned_record(db,Project,body["project_id"],user.tenant_id)
     if project.base_revision!=body.get("base_revision"): raise APIError(409,"REVISION_CONFLICT","디자인이 변경되었습니다. 저장 후 새 견적을 요청해 주세요.")
     submitted=body.get("input_data") or {}
+    if {"model", "quality", "requested_quality"}.intersection(submitted):
+        raise APIError(422,"AI_SELECTION_AMBIGUOUS","모델과 품질은 견적의 상위 선택 항목으로만 전달해 주세요.")
+    model = body.get("model") if body.get("model") is not None else settings.image_model
+    quality = body.get("quality") if body.get("quality") is not None else ("xhigh" if action.endswith(".high") else "high")
+    selection = {"model":model, "quality":quality, "requested_quality":quality, "ai_selection_version":AI_SELECTION_VERSION}
+    try:
+        resolve_image_selection(settings, {"action":action, **selection})
+    except ProviderError as error:
+        raise APIError(422,error.code,error.message) from None
     mode=submitted.get("edit_mode", "full")
     if not isinstance(mode,str) or mode not in {"full", "remove_text"}:
         raise APIError(422,"AI_EDIT_MODE_INVALID","지원하지 않는 이미지 수정 방식입니다.")
     edit_fields={"edit_mode", "edit_region", "confirmed_source_text"}
-    if action!="image.edit.standard" and edit_fields.intersection(submitted):
+    if not is_edit and edit_fields.intersection(submitted):
         raise APIError(422,"EDIT_ACTION_MISMATCH","글자 제거는 원본 이미지 수정 작업에서만 사용할 수 있습니다.")
     if mode=="full" and {"edit_region","confirmed_source_text"}.intersection(submitted):
         raise APIError(422,"EDIT_MODE_MISMATCH","영역을 선택한 글자 제거 방식을 지정해 주세요.")
@@ -50,15 +61,15 @@ def prepare_ai_quote(db,user,body,settings):
     face=next((face for face in project.scene["faces"] if face["id"]==face_id),None)
     if not face: raise APIError(422,"FACE_INVALID","디자인할 면을 선택해 주세요.")
     reference=body.get("reference_asset_id") or submitted.get("reference_asset_id")
-    if action=="image.edit.standard":
+    if is_edit:
         if not reference: raise APIError(422,"REFERENCE_REQUIRED","수정할 원본 이미지를 선택해 주세요.")
         from .asset_reconciliation import ensure_asset_available
         reference_asset=owned_record(db,Asset,reference,user.tenant_id)
         ensure_asset_available(reference_asset)
     elif reference: raise APIError(422,"REFERENCE_ACTION_MISMATCH","원본 이미지를 수정하려면 이미지 수정 작업을 선택해 주세요.")
-    data={"action":action,"prompt":prompt.strip(),"face_id":face_id,"width_mm":face["width_mm"],"height_mm":face["height_mm"],"reference_asset_id":str(reference) if reference else None,"workspace_id":project.workspace_id,"provider_mode":settings.ai_provider,"model":settings.image_model,"quality":"high"}
+    data={"action":action,"prompt":prompt.strip(),"face_id":face_id,"width_mm":face["width_mm"],"height_mm":face["height_mm"],"reference_asset_id":str(reference) if reference else None,"workspace_id":project.workspace_id,"provider_mode":settings.ai_provider,**selection}
     sizing_width,sizing_height=face["width_mm"],face["height_mm"]
-    if action=="image.edit.standard":
+    if is_edit:
         data["edit_mode"]=mode
     if mode=="remove_text":
         confirmed=submitted.get("confirmed_source_text","")
@@ -95,7 +106,10 @@ def prepare_ai_quote(db,user,body,settings):
         except Exception:
             raise APIError(503,"AI_REFERENCE_UNAVAILABLE","원본 이미지를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.") from None
     try:
-        data.update(select_image_output(settings.image_model, sizing_width, sizing_height))
+        data.update(select_image_output(model, sizing_width, sizing_height))
+        # Source aspect drives removal; placed-object PPI is known after apply.
+        if mode=="remove_text":
+            data["output_effective_ppi"] = None
     except ImageSizeError as error:
         raise APIError(422,"AI_SIZE_INVALID",str(error)) from None
     return {"action":action,"units":units,"project_id":project.id,"base_revision":project.base_revision,"input_data":data}
@@ -127,8 +141,12 @@ def install_ai_routes(app,db_session,job_payload,snapshot_revision):
         if existing:
             if existing.request_hash!=request_hash: raise APIError(409,"IDEMPOTENCY_CONFLICT","같은 요청 식별자로 다른 작업을 실행할 수 없습니다.")
             return result(request,job_payload(existing))
-        if quote.input_data.get("provider_mode")!=settings.ai_provider or quote.input_data.get("model")!=settings.image_model:
+        if quote.input_data.get("provider_mode")!=settings.ai_provider:
             raise APIError(409,"QUOTE_CHANGED","이미지 서비스 설정이 변경되었습니다. 견적을 다시 확인해 주세요.")
+        try:
+            resolve_image_selection(settings,quote.input_data)
+        except ProviderError as error:
+            raise APIError(409,"QUOTE_CHANGED",error.message) from None
         if quote.input_data.get("reference_asset_id"): owned_record(db,Asset,quote.input_data["reference_asset_id"],user.tenant_id)
         try:
             lock_tenant_work(db,user.tenant_id)
