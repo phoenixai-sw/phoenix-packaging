@@ -2,10 +2,36 @@
 from copy import deepcopy
 from ..geometry import GeometryValidationError, geometry_for_scene, validate_scene, TEMPLATES, normalize_mm
 from .review_pdf import _scene_from_project, _layout_text, _resolve_image
+from ..image_quality_metadata import resolver_quality_metrics
 
 CAPABILITIES={"pdf_standard":"PDF","color_space":"RGB","font_mode":"embedded","layout":"face_pages","bleed_mm":0,
               "vector_text":True,"vector_barcode":True,"pdf_x":False,"cmyk":False,"spot_colors":False,"white_ink":False,"overprint":False,"outlined_fonts":False}
 DEFAULT_CONFIRMED_FIELDS=["product_name","net_weight","ingredients","allergens","manufacturer","storage"]
+
+
+def validate_output_requirements(requirements):
+    """Shared by readiness and final preflight; advertised capabilities aren't arbitrary registry keys."""
+    issues=[]
+    def add(code,message,**details):
+        issues.append({"code":code,"message":message,"severity":"error","scope":"production",**details})
+    if not isinstance(requirements,dict):
+        add("UNSUPPORTED_OUTPUT_REQUIREMENT","출력 요구조건은 항목별 값으로 등록해야 합니다.")
+        requirements={}
+    required_capabilities={"pdf_standard":"PDF","color_space":"RGB","font_mode":"embedded"}
+    optional_capabilities={"layout":"face_pages","bleed_mm":0,"pdf_x":False,"cmyk":False,"spot_colors":False,"white_ink":False,"overprint":False,"outlined_fonts":False}
+    for key,value in {**required_capabilities,**optional_capabilities}.items():
+        if (key in required_capabilities and key not in requirements) or requirements.get(key,value)!=value:
+            add("UNSUPPORTED_OUTPUT_CAPABILITY",f"현재 출력기는 {key}={value} 조건만 지원합니다.",field=f"profile.requirements.{key}")
+    allowed=set(required_capabilities)|set(optional_capabilities)|{"min_ppi","required_fields"}
+    for key in sorted(set(requirements)-allowed):
+        add("UNSUPPORTED_OUTPUT_REQUIREMENT",f"검증되지 않은 출력 요구조건입니다: {key}",field=f"profile.requirements.{key}")
+    min_ppi=requirements.get("min_ppi",150)
+    if isinstance(min_ppi,bool) or not isinstance(min_ppi,(int,float)) or not 72<=min_ppi<=2400:
+        add("INVALID_PPI_REQUIREMENT","제조사 최소 이미지 해상도 조건을 확인해 주세요.");min_ppi=150
+    required_fields=requirements.get("required_fields",DEFAULT_CONFIRMED_FIELDS)
+    if not isinstance(required_fields,list) or not required_fields or any(not isinstance(field,str) or not field.strip() for field in required_fields):
+        add("INVALID_REQUIRED_FIELDS","제조사가 요구하는 고객 확인 필드 목록이 필요합니다.");required_fields=DEFAULT_CONFIRMED_FIELDS
+    return {"issues":issues,"min_ppi":min_ppi,"required_fields":required_fields}
 
 
 def preflight_project(project:dict, approved_conditions:dict|None=None, asset_resolver=None) -> dict:
@@ -59,20 +85,9 @@ def preflight_project(project:dict, approved_conditions:dict|None=None, asset_re
     revision_id=project.get("revision_id")
     if not revision_id or str(conditions.get("confirmed_revision_id"))!=str(revision_id):
         add("REVISION_CONFIRMATION_REQUIRED","출력할 불변 리비전을 검토하고 확정해 주세요.")
-    required_capabilities={"pdf_standard":"PDF","color_space":"RGB","font_mode":"embedded"}
-    optional_capabilities={"layout":"face_pages","bleed_mm":0,"pdf_x":False,"cmyk":False,"spot_colors":False,"white_ink":False,"overprint":False,"outlined_fonts":False}
-    for key,value in {**required_capabilities,**optional_capabilities}.items():
-        if (key in required_capabilities and key not in requirements) or requirements.get(key,value)!=value:
-            add("UNSUPPORTED_OUTPUT_CAPABILITY",f"현재 출력기는 {key}={value} 조건만 지원합니다.",field=f"profile.requirements.{key}")
-    allowed=set(required_capabilities)|set(optional_capabilities)|{"min_ppi","required_fields"}
-    for key in set(requirements)-allowed:
-        add("UNSUPPORTED_OUTPUT_REQUIREMENT",f"검증되지 않은 출력 요구조건입니다: {key}",field=f"profile.requirements.{key}")
-    min_ppi=requirements.get("min_ppi",150)
-    if isinstance(min_ppi,bool) or not isinstance(min_ppi,(int,float)) or not 72<=min_ppi<=2400:
-        add("INVALID_PPI_REQUIREMENT","제조사 최소 이미지 해상도 조건을 확인해 주세요.");min_ppi=150
-    required_fields=requirements.get("required_fields",DEFAULT_CONFIRMED_FIELDS)
-    if not isinstance(required_fields,list) or not required_fields or any(not isinstance(field,str) or not field.strip() for field in required_fields):
-        add("INVALID_REQUIRED_FIELDS","제조사가 요구하는 고객 확인 필드 목록이 필요합니다.");required_fields=DEFAULT_CONFIRMED_FIELDS
+    output_rules=validate_output_requirements(requirements)
+    issues.extend(output_rules["issues"])
+    min_ppi,required_fields=output_rules["min_ppi"],output_rules["required_fields"]
     if scene:
         expected={f["id"] for f in scene["faces"]}
         reviewed=set(conditions.get("reviewed_face_ids") or [])
@@ -94,9 +109,12 @@ def preflight_project(project:dict, approved_conditions:dict|None=None, asset_re
                     if obj["type"]=="text": _layout_text(obj)
                     elif obj["type"]=="image":
                         _,pixels=_resolve_image(obj["asset_id"],asset_resolver)
-                        ppi=min(pixels[0]*25.4/obj["width_mm"],pixels[1]*25.4/obj["height_mm"])
+                        quality=resolver_quality_metrics(asset_resolver,obj["asset_id"],pixels,obj)
+                        ppi=quality["effective_ppi"]
                         if ppi+0.001<min_ppi:
                             add("LOW_PPI",f"이미지 유효 해상도 {ppi:.1f}ppi가 제조사 최소 {min_ppi:g}ppi 미만입니다.",effective_ppi=round(ppi,2),**details)
+                        if (quality["resampled"] or quality["extended"]) and quality["original_effective_ppi"]+0.001<min_ppi:
+                            add("ORIGINAL_LOW_PPI",f"확대된 이미지의 원본 디테일 {quality['original_effective_ppi']:.1f}ppi가 제조사 최소 {min_ppi:g}ppi 미만입니다. 픽셀 확대는 원본 해상도를 복원하지 않습니다.",original_effective_ppi=round(quality["original_effective_ppi"],2),**details)
                     elif obj["type"]=="barcode":
                         if obj.get("barcode_usage")=="sample":
                             add("SAMPLE_BARCODE_PRODUCTION_FORBIDDEN","샘플 바코드는 검토 전용이며 정식 상품 번호와 사용 권한 확인 전 제작용으로 출력할 수 없습니다.",**details)

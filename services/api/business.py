@@ -193,7 +193,19 @@ def install_business_routes(app, db_session, project_payload, snapshot_revision)
         return result(request,{"items":[product_payload(db,r) for r in db.scalars(select(Product).where(Product.tenant_id==user.tenant_id).order_by(Product.name))]})
     def write_product(db,user,body,row):
         from .geometry.barcodes import validate_ean13
+        from .print_preparation import lock_catalog, ensure_unique_barcode, BARCODE_ALLOCATION_FIELDS
+        lock_catalog(db,user.tenant_id)
         if body.brand_id: owned_record(db,Brand,body.brand_id,user.tenant_id)
+        if row.id:
+            # The product was fetched before the tenant lock. Refresh its brand
+            # identity so concurrent catalog writes cannot preserve stale proof.
+            db.refresh(row)
+            if row.brand_id != (str(body.brand_id) if body.brand_id else None):
+                for existing in db.scalars(select(Variant).where(Variant.product_id==row.id,Variant.tenant_id==user.tenant_id)):
+                    if (existing.details or {}).get("barcode_registration"):
+                        existing.details={key:value for key,value in existing.details.items() if key!="barcode_registration"}
+                        existing.updated_at=utcnow()
+                        audit(db,user,"barcode_registration_invalidated",existing.id)
         row.name=body.name;row.brand_id=str(body.brand_id) if body.brand_id else None;row.description=body.description
         db.add(row);db.flush()
         seen=set()
@@ -203,7 +215,15 @@ def install_business_routes(app, db_session, project_payload, snapshot_revision)
             variant=owned_record(db,Variant,entry.id,user.tenant_id) if entry.id else Variant(tenant_id=user.tenant_id,product_id=row.id)
             if variant.product_id!=row.id or (entry.id and str(entry.id) in seen): raise APIError(422,"VARIANT_MISMATCH","상품 변형 정보가 일치하지 않습니다.")
             if entry.id: seen.add(str(entry.id))
-            variant.name=entry.name;variant.details=entry.model_dump(mode="json",exclude={"id","name"});variant.updated_at=utcnow();db.add(variant)
+            if entry.barcode: ensure_unique_barcode(db,user.tenant_id,entry.barcode,variant.id)
+            previous=variant.details or {}
+            values=entry.model_dump(mode="json",exclude={"id","name"})
+            unchanged=all(previous.get(key)==values.get(key) for key in BARCODE_ALLOCATION_FIELDS)
+            if previous.get("barcode")==entry.barcode and unchanged and previous.get("barcode_registration"):
+                values["barcode_registration"]=previous["barcode_registration"]
+            elif previous.get("barcode_registration"):
+                audit(db,user,"barcode_registration_invalidated",variant.id)
+            variant.name=entry.name;variant.details=values;variant.updated_at=utcnow();db.add(variant);db.flush()
         # Omitted variants are retained: immutable project identities must survive catalog edits.
         db.flush();audit(db,user,"product_saved",row.id);db.commit();return product_payload(db,row)
     @router.post("/products",status_code=201)

@@ -78,6 +78,13 @@ def process_production_jobs(session_factory,storage,settings,limit=1):
                         if not asset or asset.workspace_id not in (None,snapshot.get("workspace_id")):
                             raise APIError(404,"ASSET_UNAVAILABLE","출력 자산의 접근 권한을 확인해 주세요.")
                         path=temporary/f"asset-{asset.id}";path.write_bytes(storage.get(asset.storage_key));assets[identity]=path;return path
+                def asset_metadata(identity):
+                    with session_factory() as db:
+                        asset=db.scalar(select(Asset).where(Asset.id==str(identity),Asset.tenant_id==tenant_id))
+                        if not asset or asset.workspace_id not in (None,snapshot.get("workspace_id")):
+                            raise APIError(404,"ASSET_UNAVAILABLE","출력 자산의 접근 권한을 확인해 주세요.")
+                        return asset.metadata_json
+                resolver.metadata=asset_metadata
                 def recheck():
                     with session_factory() as db:return _current_conditions(db,snapshot,tenant_id)
                 bundle=temporary/"bundle";manifest=export_production_bundle(snapshot,bundle,conditions,resolver,approval_recheck=recheck)

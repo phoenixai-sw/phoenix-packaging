@@ -7,6 +7,7 @@ from copy import deepcopy
 
 from ..geometry import GeometryValidationError, geometry_for_scene, validate_scene
 from ..geometry.collisions import bounds, overlap
+from ..image_quality_metadata import resolver_quality_metrics
 
 BASIC_REVIEW_PROFILE_ID = "phoenix-basic-review-v1"
 RETRIEVED_AT = "2026-09-17"
@@ -84,10 +85,18 @@ def inspect_basic_review(project, asset_resolver=None):
                 issues.append({"code": code, "message": message, "severity": "warning", "scope": "review", **detail, **values})
             if obj["type"] == "image":
                 _, pixels = _resolve_image(obj["asset_id"], asset_resolver)
-                ppi = min(pixels[0]*25.4/obj["width_mm"], pixels[1]*25.4/obj["height_mm"])
+                quality = resolver_quality_metrics(asset_resolver, obj["asset_id"], pixels, obj)
+                ppi = quality["effective_ppi"]
                 measurements.append({"kind": "effective_ppi", **detail, "value": ppi, "minimum": profile["min_ppi"], "passed": ppi+1e-9 >= profile["min_ppi"]})
                 if ppi+1e-9 < profile["min_ppi"]:
                     warn("BASIC_LOW_PPI", f"배치 크기 기준 {ppi:.2f}ppi로 기본 검토 기준 300ppi 미만입니다.", effective_ppi=ppi, minimum_ppi=300)
+                if quality["resampled"] or quality["extended"]:
+                    native = quality["original_effective_ppi"]
+                    measurements.append({"kind": "original_effective_ppi", **detail, "value": native, "minimum": profile["min_ppi"], "passed": native+1e-9 >= profile["min_ppi"]})
+                    if native+1e-9 < profile["min_ppi"]:
+                        warn("BASIC_ORIGINAL_LOW_PPI", f"이미지 보완 후에도 원본 디테일은 {native:.2f}ppi입니다. 고해상도 원본으로 교체하거나 인쇄 크기를 줄여 주세요.", original_effective_ppi=native, effective_ppi=ppi, minimum_ppi=300)
+                if quality["extended"]:
+                    warn("BASIC_SYNTHETIC_BLEED", "이미지 가장자리를 반복·반사해 도련을 보완했습니다. 원본 촬영 영역이 아니므로 경계·무늬·투명도를 확인해 주세요.")
             if obj["type"] in {"image", "shape"}:
                 left, top, right, bottom = bounds(obj)
                 edge_shortfall = ((-3 < left <= 0) or (-3 < top <= 0) or

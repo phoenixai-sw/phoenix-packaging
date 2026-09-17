@@ -16,6 +16,7 @@ import {
 } from "@/components/management";
 import { useApiData, dateTime } from "@/lib/business";
 import { api, errorMessage } from "@/lib/api";
+import { RegistryConditionFields } from "@/components/registry-condition-fields";
 type Version = {
   id: string;
   name: string;
@@ -83,7 +84,7 @@ export default function Admin() {
   const [notes, setNotes] = useState("");
   const [approver, setApprover] = useState("");
   const [requirements, setRequirements] = useState(
-    '{"color_space":"RGB","pdf_standard":"PDF","layout":"face_pages","bleed_mm":0,"font_mode":"embedded"}',
+    '{"color_space":"RGB","pdf_standard":"PDF","layout":"face_pages","bleed_mm":0,"font_mode":"embedded","min_ppi":300}',
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -511,15 +512,15 @@ export default function Admin() {
                         placeholder="제조사가 같은 구조로 분류한 고유 코드"
                       />
                     </label>
-                    <label className="field">
-                      승인할 정확한 치수 (mm · JSON)
+                    <details className="production-requirements"><summary>고급 치수 JSON</summary><label className="field">
+                      승인할 정확한 치수 (mm)
                       <textarea
                         rows={3}
                         value={dimensions}
                         onChange={(e) => setDimensions(e.target.value)}
                         spellCheck={false}
                       />
-                    </label>
+                    </label></details>
                     <p className="field-hint">
                       width_mm, height_mm와 스탠드의 bottom_mm 또는 상자의
                       depth_mm를 입력하세요. 증빙 치수와 일치하는 조건만
@@ -558,6 +559,8 @@ export default function Admin() {
                   />{" "}
                   자체 제작 데모 (승인·제작 출력 불가)
                 </label>
+                <RegistryConditionFields kind={kind} dimensions={dimensions} requirements={requirements} onDimensions={setDimensions} onRequirements={setRequirements} showDimensions={dialog === "version"} />
+                <details className="production-requirements"><summary>고급 인쇄 조건 JSON</summary>
                 <label className="field">
                   기술 조건 JSON
                   <textarea
@@ -567,6 +570,7 @@ export default function Admin() {
                     spellCheck={false}
                   />
                 </label>
+                </details>
                 <p className="field-hint">
                   지원 capability를 넘는 PDF/X·색상 조건은 승인과 별개로 제작
                   출력이 차단됩니다.

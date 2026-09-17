@@ -17,6 +17,7 @@ import {
   type BrandData,
 } from "@/lib/business";
 import { api, errorMessage } from "@/lib/api";
+import { variantInput } from "@/lib/product-input";
 const emptyVariant = () => ({
   name: "기본 상품",
   sku: "",
@@ -63,7 +64,7 @@ export default function Products() {
           name,
           brand_id: brand || null,
           description,
-          variants,
+          variants: variants.map((variant) => variantInput(variant)),
         }),
       });
       setEditing(undefined);
