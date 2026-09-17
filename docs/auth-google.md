@@ -4,14 +4,16 @@
 
 ## 환경 설정
 
-- `GOOGLE_CLIENT_ID`: **Package Design 전용 Google Cloud 프로젝트에서 새로 생성하는 웹 애플리케이션 OAuth 클라이언트 ID**. AI브릿지 클라이언트는 재사용하지 않는다. 서버 한 곳에만 설정하며 공개 클라이언트 ID는 로그인 준비 응답으로 브라우저에 전달된다. 클라이언트 비밀키는 필요하지 않다.
+- `GOOGLE_CLIENT_ID`: **Package Design 전용 Google Cloud 프로젝트에서 발급한 웹 애플리케이션 OAuth 클라이언트 ID**. AI브릿지 클라이언트는 재사용하지 않는다. 서버 한 곳에만 설정하며 공개 클라이언트 ID는 로그인 준비 응답으로 브라우저에 전달된다. 클라이언트 비밀키는 필요하지 않다.
 - `ADMIN_EMAILS`: 현재 운영 허용목록은 `phoenixai.sw@gmail.com` 한 계정만 사용한다. 서버 전용이며 브라우저에 목록을 반환하지 않는다. 비어 있으면 운영 관리 접근을 허용하지 않는다.
 - 기존 `APP_URL`, `ALLOWED_ORIGINS`, `COOKIE_SECURE`와 저장소·DB 설정은 유지한다. 전용 클라이언트의 승인된 JavaScript 원본에 실제 프런트엔드 원본과 필요한 localhost 원본을 각각 등록해야 한다. 다른 서비스의 OAuth 설정은 변경하지 않는다.
 - 기존 `WORKER_SECRET`은 웹 프록시와 API에 같은 값으로 유지한다. Vercel 웹 프록시는 플랫폼이 제공하는 `x-vercel-forwarded-for`의 단일 IP를 검증하고 HMAC으로 익명 제한 식별자를 만든다. 식별자·시각·메서드·경로를 다시 서명하며 API는 60초 안의 유효한 서명만 수용한다. 브라우저가 보낸 제한용 헤더는 전달하지 않는다. 이 용도와 워커 인증은 서로 다른 입력 형식이며 비밀값은 응답에 포함하지 않는다.
 
 Google 설정이 없으면 로그인 준비·교환 API가 `503 GOOGLE_LOGIN_NOT_CONFIGURED`로 차단된다. 가짜 버튼, 임시 비밀번호 또는 환경변수 기반 인증 우회는 제공하지 않는다.
 
-전용 Google Cloud 프로젝트 `phoenix-packaging` / `Phoenix Packaging` 생성은 완료했다. 새 OAuth 앱의 사용자 데이터 정책 동의 확인과 클라이언트 발급은 아직 진행 중이다. AI브릿지 ID는 패키지의 로컬·Vercel 설정에서 제거했다. 새 ID는 `C:\codex\phoenix-service-keys.local.txt`의 `GOOGLE_CLIENT_ID`에 보관한 뒤 별도 환경 반영 절차에서 사용한다. 실제 Google 로그인 성공이나 운영 배포 완료로 간주하지 않는다.
+전용 Google Cloud 프로젝트 `phoenix-packaging`, OAuth 앱 `Phoenix Packaging`, 웹 클라이언트 `phoenix-packaging-web` 생성과 발급을 완료했다. 사용자 데이터 정책 동의와 운영·로컬 원본 3개 저장도 확인했다. AI브릿지 ID는 제거했고 전용 ID와 관리자 허용목록을 로컬 및 Vercel production/preview 암호화 환경에 반영했다. 로컬에서 사용자가 실제 Google 팝업 로그인을 완료해 `http://localhost:3000/app`으로 이동했으며, `Phoenix Ai_SW`·`phoenixai.sw@gmail.com` 계정과 운영 관리 링크 표시를 확인했다. 이어 `/admin`에 진입해 Google 로그인 연결 상태와 관리자 데이터 로딩도 확인했다. 새로운 클라이언트 비밀키는 사용하지 않는다.
+
+운영 DB의 `0007_google_auth` 전환과 웹·API 운영 배포를 완료했다. 초기 API 설정 오류는 `APP_URL=https://phoenix-packaging.vercel.app`을 명시한 뒤 설정 검증과 재배포로 해결했다. 운영 health·홈·로그인 준비 응답은 200이며 전용 클라이언트 ID 일치를 확인했다. 이전 비밀번호 로그인·가입 API는 410으로 차단된다. 운영 도메인의 실제 Google 팝업 로그인은 사용자 확인 대기 중이다.
 
 ## 서버 검증과 세션
 
@@ -36,7 +38,7 @@ Google 설정이 없으면 로그인 준비·교환 API가 `503 GOOGLE_LOGIN_NOT
 
 ## 마이그레이션과 운영 도구
 
-`0007_google_auth`를 배포 전에 적용한다. 기존 비밀번호 해시·메일 토큰을 제거하고 기존 세션과 DB 관리자 플래그를 초기화한다. 기존 사용자는 Google로 다시 로그인해야 한다. `password_hash` 열은 레거시 스키마 호환 목적으로 빈 값만 남기며 인증에 사용하지 않는다. 삭제한 자격 증명을 downgrade로 복원하지 않는다.
+`0007_google_auth`를 로컬과 운영 DB에 적용했다. 기존 비밀번호 해시·메일 토큰을 제거하고 기존 세션과 DB 관리자 플래그를 초기화한다. 운영 전환 시 기존 사용자 2개와 프로젝트 6개를 보존했고 public 41개 테이블 모두 RLS가 설정된 것을 확인했다. 기존 사용자는 Google로 다시 로그인해야 한다. `password_hash` 열은 레거시 스키마 호환 목적으로 빈 값만 남기며 인증에 사용하지 않는다. 삭제한 자격 증명을 downgrade로 복원하지 않는다.
 
 `python -m services.api.seed --email <기존 Google 계정>`은 로컬 개발·시험 환경의 기존 계정에 예제 프로젝트만 만든다. `scripts/manage-admin.py --email ...`은 운영 허용목록 상태를 읽기만 한다. 권한을 변경하려면 배포 환경의 `ADMIN_EMAILS`를 수정하고 재시작·재배포한다.
 
