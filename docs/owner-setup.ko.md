@@ -16,7 +16,7 @@
 
 전용 ID와 관리자 허용목록은 로컬 및 Vercel production/preview 암호화 환경에 저장했다. 로컬에서 사용자가 Google 팝업 인증을 완료한 뒤 `/app`으로 이동했고, `Phoenix Ai_SW`·`phoenixai.sw@gmail.com` 계정과 운영 관리 링크를 확인했다. `/admin` 진입 후 Google 로그인 연결 상태와 관리자 데이터도 정상 표시됐다.
 
-운영 DB 마이그레이션과 웹·API 배포를 완료했다. `APP_URL`은 `https://phoenix-packaging.vercel.app`으로 설정하고 허용 원본과의 일치를 검증했다. 운영 health·홈·로그인 준비 응답 200과 새 전용 ID 일치, 이전 비밀번호 로그인·가입 API의 410 응답을 확인했다. 운영 도메인의 실제 Google 로그인은 사용자 확인 대기 중이다.
+운영 DB 마이그레이션과 웹·API 배포를 완료했다. `APP_URL`은 `https://phoenix-packaging.vercel.app`으로 설정하고 허용 원본과의 일치를 검증했다. 운영 health·홈·로그인 준비 응답 200과 새 전용 ID 일치, 이전 비밀번호 로그인·가입 API의 410 응답을 확인했다. 운영 도메인에서도 사용자가 실제 Google 로그인을 완료했고, 계정 표시와 관리자 화면의 데이터 조회까지 확인했다.
 
 ## Toss 결제
 

@@ -8,8 +8,8 @@ from sqlalchemy import select
 from services.api.config import Settings
 from services.api.database import utcnow
 from services.api.main import create_app
-from services.api.models import User
-from services.api.feature_models import Membership,Variant,RegistryVersion,AuditEvent
+from services.api.models import User,Project
+from services.api.feature_models import Membership,Variant,RegistryVersion,AuditEvent,Invitation
 from services.api.billing.models import Subscription
 from services.api.tests.test_api import register,project,image_file
 from services.api.tests.auth_helpers import google_login
@@ -87,6 +87,92 @@ def test_external_google_email_cannot_claim_email_addressed_invitation(business)
         denied=external.post("/v1/team/invitations/accept",json={"token":token})
         assert denied.status_code==403 and denied.json()["code"]=="GOOGLE_TEAM_IDENTITY_REQUIRED"
 
+
+def test_team_lists_only_current_pending_invitations_with_status_and_expiry(business):
+    app,owner,auth,member=business
+    paid(app,auth["tenant"]["id"])
+    pending=invitation(owner,"pending@example.com")
+    joined=invitation(owner,"joined@example.com")
+    editor,_=member("joined@example.com")
+    accept(editor,joined)
+    other,other_auth=member("otherowner@example.com")
+    paid(app,other_auth["tenant"]["id"])
+    invitation(other,"foreign@example.com")
+    now=utcnow()
+    with app.state.session_factory() as db:
+        for state in ("expired","revoked"):
+            db.add(Invitation(tenant_id=auth["tenant"]["id"],email=f"{state}@example.com",role="viewer",token_hash=uuid4().hex+uuid4().hex,workspace_ids=[],invited_by=auth["user"]["id"],expires_at=now-timedelta(seconds=1) if state=="expired" else now+timedelta(days=7),revoked_at=now if state=="revoked" else None))
+        db.commit()
+    response=owner.get("/v1/team")
+    assert response.status_code==200,response.text
+    rows=response.json()["data"]["invitations"]
+    assert len(rows)==1 and rows[0]["id"]==pending["id"]
+    assert rows[0]["status"]=="pending" and rows[0]["email"]=="pending@example.com"
+    assert rows[0]["expires_at"] and set(rows[0])=={"id","email","role","status","expires_at"}
+    # Once the remaining row expires, its formerly returned status must not remain visible.
+    with app.state.session_factory() as db:
+        db.get(Invitation,pending["id"]).expires_at=now-timedelta(seconds=1)
+        db.commit()
+    assert owner.get("/v1/team").json()["data"]["invitations"]==[]
+
+
+def test_owner_can_revoke_pending_invitation_once_and_reinvite_without_losing_member(business):
+    app,owner,auth,member=business
+    paid(app,auth["tenant"]["id"])
+    invitations=[invitation(owner,f"pending{i}@example.com") for i in range(4)]
+    original=invitations[0]
+    path=f"/v1/team/invitations/{original['id']}"
+    assert owner.post("/v1/team/invitations",json={"email":"extra@example.com","role":"editor"}).status_code==403
+    revoked=owner.delete(path)
+    assert revoked.status_code==200,revoked.text
+    assert revoked.json()["data"]=={"id":original["id"],"status":"revoked"}
+    assert owner.delete(path).json()["data"]==revoked.json()["data"]
+    with app.state.session_factory() as db:
+        row=db.get(Invitation,original["id"])
+        assert row.revoked_at and not row.accepted_at
+        events=list(db.scalars(select(AuditEvent).where(AuditEvent.action=="invitation_revoked",AuditEvent.entity_id==row.id)))
+        assert len(events)==1 and events[0].tenant_id==auth["tenant"]["id"] and events[0].actor_id==auth["user"]["id"]
+        row.expires_at=utcnow()-timedelta(seconds=1)
+        db.commit()
+    assert owner.delete(path).status_code==200
+    assert original["id"] not in {i["id"] for i in owner.get("/v1/team").json()["data"]["invitations"]}
+    replacement=invitation(owner,"pending0@example.com")
+    assert replacement["id"]!=original["id"] and replacement["invitation_url"]!=original["invitation_url"]
+    editor,editor_auth=member("pending0@example.com")
+    old_token=parse_qs(urlparse(original["invitation_url"]).query)["invite"][0]
+    assert editor.post("/v1/team/invitations/accept",json={"token":old_token}).status_code==422
+    accept(editor,replacement)
+    accepted_cancel=owner.delete(f"/v1/team/invitations/{replacement['id']}")
+    assert accepted_cancel.status_code==409 and accepted_cancel.json()["code"]=="INVITATION_ACCEPTED"
+    with app.state.session_factory() as db:
+        row=db.get(Invitation,replacement["id"])
+        joined=db.scalar(select(Membership).where(Membership.tenant_id==auth["tenant"]["id"],Membership.user_id==editor_auth["user"]["id"]))
+        assert row.accepted_at and not row.revoked_at and joined.is_active
+    assert editor.get("/v1/projects").status_code==200
+
+
+def test_invitation_revoke_requires_tenant_owner_csrf_and_pending_state(business):
+    app,owner,auth,member=business
+    paid(app,auth["tenant"]["id"])
+    pending=invitation(owner,"pending@example.com")
+    path=f"/v1/team/invitations/{pending['id']}"
+    assert owner.delete(path,headers={"X-CSRF-Token":"invalid"}).status_code==403
+    other,_=member("otherowner@example.com")
+    assert other.delete(path).status_code==404
+    for role in ("editor","viewer"):
+        client,_=member(f"{role}@example.com")
+        accept(client,invitation(owner,f"{role}@example.com",role=role))
+        assert client.delete(path).status_code==403
+    with app.state.session_factory() as db:
+        row=db.get(Invitation,pending["id"])
+        assert not row.revoked_at
+        row.expires_at=utcnow()-timedelta(seconds=1)
+        db.commit()
+    expired=owner.delete(path)
+    assert expired.status_code==409 and expired.json()["code"]=="INVITATION_EXPIRED"
+    with app.state.session_factory() as db:
+        assert db.get(Invitation,pending["id"]).revoked_at is None
+
 def test_member_workspace_project_asset_and_export_isolation(business):
     app,owner,auth,member=business;paid(app,auth["tenant"]["id"])
     first,second=workspace(owner,"Client A"),workspace(owner,"Client B")
@@ -103,6 +189,32 @@ def test_member_workspace_project_asset_and_export_isolation(business):
     assert editor.post("/v1/assets",data={"project_id":b["id"]},files={"file":image_file()}).status_code==404
     scene=deepcopy(a["scene"]);scene["faces"][0]["objects"].append({"id":"foreign","type":"image","face_id":"front","x_mm":20,"y_mm":20,"width_mm":30,"height_mm":30,"asset_id":asset["id"]})
     assert editor.patch(f"/v1/projects/{a['id']}/draft",json={"base_revision":1,"scene":scene}).status_code==404
+
+
+@pytest.mark.parametrize("role",["editor","viewer"])
+def test_project_limit_applies_after_workspace_access_filter(business,role):
+    app,owner,auth,member=business
+    paid(app,auth["tenant"]["id"])
+    allowed,blocked=workspace(owner,"Allowed"),workspace(owner,"Restricted")
+    response=owner.post("/v1/projects",json={"name":"Older allowed project","product_name":"Allowed","workspace_id":allowed})
+    assert response.status_code==201,response.text
+    visible=response.json()["data"]
+    shared=project(owner)
+    now=utcnow()
+    with app.state.session_factory() as db:
+        for identity in (visible["id"],shared["id"]):
+            db.get(Project,identity).updated_at=now-timedelta(days=1)
+        for index in range(101):
+            db.add(Project(tenant_id=auth["tenant"]["id"],created_by=auth["user"]["id"],name=f"Restricted {index}",product_name="Restricted",brand_name="",template_id="three-side-seal",width_mm=visible["width_mm"],height_mm=visible["height_mm"],workspace_id=blocked,scene=deepcopy(visible["scene"]),updated_at=now+timedelta(seconds=index)))
+        db.commit()
+    editor,_=member(f"{role}@example.com")
+    accept(editor,invitation(owner,f"{role}@example.com",[allowed],role=role))
+    response=editor.get("/v1/projects")
+    assert response.status_code==200,response.text
+    assert {p["id"] for p in response.json()["data"]["items"]}=={visible["id"],shared["id"]}
+    assert editor.get(f"/v1/projects/{visible['id']}").status_code==200
+    owner_rows=owner.get("/v1/projects").json()["data"]["items"]
+    assert len(owner_rows)==100 and all(p["workspace_id"]==blocked for p in owner_rows)
 
 @pytest.mark.parametrize("reason",["expired-plan","removed-member"])
 def test_expired_or_removed_membership_can_switch_home_and_logout(business,reason):

@@ -235,7 +235,8 @@ def install_business_routes(app, db_session, project_payload, snapshot_revision)
         for m in db.scalars(select(Membership).where(Membership.tenant_id==user.tenant_id)):
             u=db.get(User,m.user_id);members.append({"id":u.id,"name":u.name,"email":u.email,"role":m.role,"is_active":m.is_active,"workspace_ids":workspaces_for(db,u.id,user.tenant_id)})
         invites=list(db.scalars(select(Invitation).where(Invitation.tenant_id==user.tenant_id,Invitation.accepted_at.is_(None),Invitation.revoked_at.is_(None),Invitation.expires_at>utcnow())))
-        data={"members":members,"seat_limit":entitlements(db,user.tenant_id)["seats"],"invitations":[{"id":i.id,"email":i.email,"role":i.role,"expires_at":aware(i.expires_at).isoformat()} for i in invites]};db.commit()
+        # This list contains only current, unconsumed invitations; terminal rows stay private history.
+        data={"members":members,"seat_limit":entitlements(db,user.tenant_id)["seats"],"invitations":[{"id":i.id,"email":i.email,"role":i.role,"status":"pending","expires_at":aware(i.expires_at).isoformat()} for i in invites]};db.commit()
         return result(request,data)
     @router.post("/team/invitations",status_code=201)
     def invite(body:InviteBody,request:Request,db=Depends(db_session)):
@@ -250,6 +251,25 @@ def install_business_routes(app, db_session, project_payload, snapshot_revision)
         row=Invitation(tenant_id=user.tenant_id,email=email,role=body.role,workspace_ids=list(map(str,body.workspace_ids)),invited_by=user.id,token_hash=hash_token(token),expires_at=utcnow()+timedelta(days=7));db.add(row);db.flush()
         audit(db,user,"team_invited",row.id);db.commit()
         return result(request,{"id":row.id,"email":row.email,"role":row.role,"delivery":"manual_share","invitation_url":f"{settings.app_url}/app/team?invite={token}"})
+    @router.delete("/team/invitations/{identity}")
+    def revoke_invitation(identity:UUID,request:Request,db=Depends(db_session)):
+        user,_=owner(request,db,True)
+        row=owned_record(db,Invitation,identity,user.tenant_id)
+        if row.accepted_at:
+            raise APIError(409,"INVITATION_ACCEPTED","이미 수락한 초대입니다. 팀원의 접근 권한은 팀원 설정에서 변경해 주세요.")
+        if row.revoked_at:
+            return result(request,{"id":row.id,"status":"revoked"})
+        now=utcnow()
+        changed=db.execute(update(Invitation).where(Invitation.id==row.id,Invitation.tenant_id==user.tenant_id,Invitation.accepted_at.is_(None),Invitation.revoked_at.is_(None),Invitation.expires_at>now).values(revoked_at=now).execution_options(synchronize_session=False))
+        if changed.rowcount!=1:
+            db.refresh(row)
+            if row.accepted_at:
+                raise APIError(409,"INVITATION_ACCEPTED","이미 수락한 초대입니다. 팀원의 접근 권한은 팀원 설정에서 변경해 주세요.")
+            if row.revoked_at:
+                return result(request,{"id":row.id,"status":"revoked"})
+            raise APIError(409,"INVITATION_EXPIRED","이미 만료된 초대입니다. 새 초대를 만들어 주세요.")
+        audit(db,user,"invitation_revoked",row.id);db.commit()
+        return result(request,{"id":row.id,"status":"revoked"})
     @router.post("/team/invitations/accept")
     def accept(body:TokenBody,request:Request,db=Depends(db_session)):
         user,session=require_auth(request,db,mutate=True,authorize_write=False,enforce_membership=False)

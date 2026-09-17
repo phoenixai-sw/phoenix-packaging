@@ -13,7 +13,7 @@ Google 설정이 없으면 로그인 준비·교환 API가 `503 GOOGLE_LOGIN_NOT
 
 전용 Google Cloud 프로젝트 `phoenix-packaging`, OAuth 앱 `Phoenix Packaging`, 웹 클라이언트 `phoenix-packaging-web` 생성과 발급을 완료했다. 사용자 데이터 정책 동의와 운영·로컬 원본 3개 저장도 확인했다. AI브릿지 ID는 제거했고 전용 ID와 관리자 허용목록을 로컬 및 Vercel production/preview 암호화 환경에 반영했다. 로컬에서 사용자가 실제 Google 팝업 로그인을 완료해 `http://localhost:3000/app`으로 이동했으며, `Phoenix Ai_SW`·`phoenixai.sw@gmail.com` 계정과 운영 관리 링크 표시를 확인했다. 이어 `/admin`에 진입해 Google 로그인 연결 상태와 관리자 데이터 로딩도 확인했다. 새로운 클라이언트 비밀키는 사용하지 않는다.
 
-운영 DB의 `0007_google_auth` 전환과 웹·API 운영 배포를 완료했다. 초기 API 설정 오류는 `APP_URL=https://phoenix-packaging.vercel.app`을 명시한 뒤 설정 검증과 재배포로 해결했다. 운영 health·홈·로그인 준비 응답은 200이며 전용 클라이언트 ID 일치를 확인했다. 이전 비밀번호 로그인·가입 API는 410으로 차단된다. 운영 도메인의 실제 Google 팝업 로그인은 사용자 확인 대기 중이다.
+운영 DB의 `0007_google_auth` 전환과 웹·API 운영 배포를 완료했다. 초기 API 설정 오류는 `APP_URL=https://phoenix-packaging.vercel.app`을 명시한 뒤 설정 검증과 재배포로 해결했다. 운영 health·홈·로그인 준비 응답은 200이며 전용 클라이언트 ID 일치를 확인했다. 이전 비밀번호 로그인·가입 API는 410으로 차단된다. 운영 도메인에서도 실제 Google 로그인, 관리자 화면 진입과 데이터 조회를 확인했다.
 
 ## 서버 검증과 세션
 

@@ -14,7 +14,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from PIL import Image, ImageDraw, UnidentifiedImageError
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, exists, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException
 
@@ -29,7 +29,7 @@ from .schemas import CreateProjectInput, DemoBackgroundInput, ExportInput, Revis
 from .storage import SupabaseStorage, build_storage
 from . import feature_models
 from .billing import models as billing_models
-from .business import enforce_item_access, workspace_access, validate_project_links
+from .business import enforce_item_access, validate_project_links
 
 logger = logging.getLogger("phoenix.api")
 
@@ -76,6 +76,8 @@ def snapshot_revision(db, project, reason):
 
 
 def initial_scene(project):
+    from .exporters.review_pdf import _layout_text
+    from .geometry import validate_scene
     w, h = project.width_mm, project.height_mm
     common = {"rotation_deg": 0, "visible": True, "print_enabled": True}
     def label(identity, face, value, y, size, color="#243A32"):
@@ -85,10 +87,30 @@ def initial_scene(project):
     back[-1]["height_mm"] = h * 0.5
     front[0]["binding_key"]="brand_name";front[1]["binding_key"]="product_name";back[0]["binding_key"]="product_name"
     scene=new_scene(project.template_id,w,h,bottom_mm=project.bottom_mm,depth_mm=project.depth_mm)
+    geometry=geometry_for_scene(scene)
     for face in scene["faces"]:
         face["objects"]=front if face["id"]=="front" else back if face["id"]=="back" else []
+        safe=next(item for item in geometry["faces"] if item["id"]==face["id"])["regions"]["safe"]
+        for index,obj in enumerate(face["objects"]):
+            if w<100 or h<120:
+                # Compact labels use disjoint slots inside this structure's safe area.
+                slots=[(.04,.18),(.27,.43),(.77,.19)] if face["id"]=="front" else [(.02,.22),(.28,.70)]
+                start,fraction=slots[index]
+                obj.update(x_mm=safe["x_mm"]+1,width_mm=safe["width_mm"]-2,
+                           y_mm=safe["y_mm"]+1+(safe["height_mm"]-2)*start,
+                           height_mm=(safe["height_mm"]-2)*fraction)
+            # Measure the original text with the same font/wrapping as the PDF.
+            # Never clip or replace customer content when the face is small.
+            obj.update(line_height=1.2,letter_spacing=0)
+            while True:
+                try:
+                    _layout_text(obj)
+                    break
+                except GeometryValidationError as exc:
+                    if exc.code!="TEXT_OVERFLOW" or obj["font_size_pt"]<=4: raise
+                    obj["font_size_pt"]=max(4,round(obj["font_size_pt"]-.5,2))
     for key in ("brand_id","product_variant_id","workspace_id"): scene[key]=getattr(project,key)
-    return scene
+    return validate_scene(scene)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -194,14 +216,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/v1/geometry/barcode")
     def barcode(body:dict, request:Request):
         from .geometry import barcode_geometry
-        if set(body)-{"value","module_mm","bar_height_mm"}: raise APIError(422,"BARCODE_FIELDS_INVALID","바코드 입력 항목을 확인해 주세요.")
-        return envelope(request,barcode_geometry(body.get("value"),module_mm=body.get("module_mm",0.33),bar_height_mm=body.get("bar_height_mm",22.85)))
+        if set(body)-{"value","module_mm","bar_height_mm","scene","face_id","x_mm","y_mm"}: raise APIError(422,"BARCODE_FIELDS_INVALID","바코드 입력 항목을 확인해 주세요.")
+        if "scene" not in body and any(key in body for key in ("face_id","x_mm","y_mm")):
+            raise APIError(422,"BARCODE_SCENE_REQUIRED","배치를 검증할 현재 디자인이 필요합니다.")
+        result=barcode_geometry(body.get("value"),module_mm=body.get("module_mm",0.33),bar_height_mm=body.get("bar_height_mm",22.85))
+        if "scene" in body:
+            from pydantic import ValidationError
+            from .schemas import Scene
+            from .geometry.barcode_placement import place_barcode
+            try:
+                scene=Scene.model_validate(body["scene"]).model_dump(mode="json",exclude_none=True)
+            except ValidationError as exc:
+                fields={"scene."+".".join(map(str,error["loc"])):error["msg"] for error in exc.errors()}
+                raise APIError(422,"BARCODE_SCENE_INVALID","현재 디자인의 면과 객체 정보를 확인해 주세요.",fields) from None
+            result["placement"]=place_barcode(scene,body.get("face_id"),result,x_mm=body.get("x_mm"),y_mm=body.get("y_mm"))
+        return envelope(request,result)
 
     @app.get("/v1/projects")
     def projects(request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db)
-        rows = db.scalars(select(Project).where(Project.tenant_id == user.tenant_id).order_by(Project.updated_at.desc()).limit(100)).all()
-        return envelope(request, {"items": [project_payload(row) for row in rows if workspace_access(db,user,row.workspace_id)]})
+        query = select(Project).where(Project.tenant_id == user.tenant_id)
+        if user.role != "owner":
+            permitted_workspace = exists(select(feature_models.WorkspaceMember.id).where(feature_models.WorkspaceMember.workspace_id == Project.workspace_id, feature_models.WorkspaceMember.user_id == user.id, feature_models.WorkspaceMember.tenant_id == user.tenant_id))
+            query = query.where(or_(Project.workspace_id.is_(None), permitted_workspace))
+        rows = db.scalars(query.order_by(Project.updated_at.desc()).limit(100)).all()
+        return envelope(request, {"items": [project_payload(row) for row in rows]})
 
     @app.post("/v1/projects", status_code=201)
     def create_project(body: CreateProjectInput, request: Request, db=Depends(db_session)):
