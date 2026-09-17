@@ -80,6 +80,7 @@ class Project(Base):
     material: Mapped[str] = mapped_column(String(120), default="", server_default="")
     base_revision: Mapped[int] = mapped_column(Integer, default=1)
     scene: Mapped[dict[str, Any]] = mapped_column(JSON)
+    structure_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -92,6 +93,7 @@ class Revision(Base):
     tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
     number: Mapped[int] = mapped_column(Integer)
     scene: Mapped[dict[str, Any]] = mapped_column(JSON)
+    structure_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     reason: Mapped[str] = mapped_column(String(80), default="manual")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -128,7 +130,7 @@ class Asset(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
-    __table_args__ = (UniqueConstraint("tenant_id", "operation_key", name="uq_job_operation_key"), Index("uq_running_export_tenant", "tenant_id", unique=True, postgresql_where=text("status = 'running' AND kind IN ('review_export', 'production_export')"), sqlite_where=text("status = 'running' AND kind IN ('review_export', 'production_export')")))
+    __table_args__ = (UniqueConstraint("tenant_id", "operation_key", name="uq_job_operation_key"), Index("uq_running_export_tenant", "tenant_id", unique=True, postgresql_where=text("status = 'running' AND kind IN ('review_export', 'production_export', 'editable_export')"), sqlite_where=text("status = 'running' AND kind IN ('review_export', 'production_export', 'editable_export')")))
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)

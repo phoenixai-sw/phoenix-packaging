@@ -1,0 +1,686 @@
+{
+  "$defs": {
+    "Assembly": {
+      "additionalProperties": false,
+      "properties": {
+        "position_mm": {
+          "maxItems": 3,
+          "minItems": 3,
+          "prefixItems": [
+            {
+              "ge": -2000,
+              "le": 2000,
+              "type": "number"
+            },
+            {
+              "ge": -2000,
+              "le": 2000,
+              "type": "number"
+            },
+            {
+              "ge": -2000,
+              "le": 2000,
+              "type": "number"
+            }
+          ],
+          "title": "Position Mm",
+          "type": "array"
+        },
+        "rotation_deg": {
+          "maxItems": 3,
+          "minItems": 3,
+          "prefixItems": [
+            {
+              "enum": [
+                -180,
+                -90,
+                0,
+                90,
+                180
+              ],
+              "type": "integer"
+            },
+            {
+              "enum": [
+                -180,
+                -90,
+                0,
+                90,
+                180
+              ],
+              "type": "integer"
+            },
+            {
+              "enum": [
+                -180,
+                -90,
+                0,
+                90,
+                180
+              ],
+              "type": "integer"
+            }
+          ],
+          "title": "Rotation Deg",
+          "type": "array"
+        },
+        "uv_rotation_deg": {
+          "default": 0,
+          "enum": [
+            0,
+            90,
+            180,
+            270
+          ],
+          "title": "Uv Rotation Deg",
+          "type": "integer"
+        },
+        "mirror_u": {
+          "default": false,
+          "title": "Mirror U",
+          "type": "boolean"
+        },
+        "mirror_v": {
+          "default": false,
+          "title": "Mirror V",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "position_mm",
+        "rotation_deg"
+      ],
+      "title": "Assembly",
+      "type": "object"
+    },
+    "Dimensions": {
+      "additionalProperties": false,
+      "properties": {
+        "width_mm": {
+          "ge": 60,
+          "gt": 0,
+          "le": 600,
+          "title": "Width Mm",
+          "type": "number"
+        },
+        "height_mm": {
+          "ge": 80,
+          "gt": 0,
+          "le": 800,
+          "title": "Height Mm",
+          "type": "number"
+        },
+        "bottom_mm": {
+          "anyOf": [
+            {
+              "ge": 30,
+              "gt": 0,
+              "le": 180,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bottom Mm"
+        },
+        "depth_mm": {
+          "anyOf": [
+            {
+              "ge": 30,
+              "gt": 0,
+              "le": 300,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Depth Mm"
+        }
+      },
+      "required": [
+        "width_mm",
+        "height_mm"
+      ],
+      "title": "Dimensions",
+      "type": "object"
+    },
+    "FixedDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "family": {
+          "enum": [
+            "three-side-seal",
+            "stand-up-pouch",
+            "folding-box"
+          ],
+          "title": "Family",
+          "type": "string"
+        },
+        "dimension_semantics": {
+          "$ref": "#/$defs/Semantics"
+        },
+        "feature_policy": {
+          "const": "none",
+          "default": "none",
+          "title": "Feature Policy",
+          "type": "string"
+        },
+        "review_bleed_mm": {
+          "const": 3,
+          "default": 3,
+          "title": "Review Bleed Mm",
+          "type": "integer"
+        },
+        "recipe_id": {
+          "const": "fixed-panel-net-v1",
+          "title": "Recipe Id",
+          "type": "string"
+        },
+        "dimensions": {
+          "$ref": "#/$defs/Dimensions"
+        },
+        "panels": {
+          "items": {
+            "$ref": "#/$defs/Panel"
+          },
+          "maxItems": 6,
+          "minItems": 2,
+          "title": "Panels",
+          "type": "array"
+        },
+        "structural_parts": {
+          "items": {
+            "$ref": "#/$defs/Part"
+          },
+          "maxItems": 24,
+          "title": "Structural Parts",
+          "type": "array"
+        },
+        "fold_lines": {
+          "items": {
+            "$ref": "#/$defs/Line"
+          },
+          "maxItems": 32,
+          "title": "Fold Lines",
+          "type": "array"
+        }
+      },
+      "required": [
+        "family",
+        "dimension_semantics",
+        "recipe_id",
+        "dimensions",
+        "panels"
+      ],
+      "title": "FixedDefinition",
+      "type": "object"
+    },
+    "Line": {
+      "additionalProperties": false,
+      "properties": {
+        "x1_mm": {
+          "ge": 0,
+          "le": 2000,
+          "title": "X1 Mm",
+          "type": "number"
+        },
+        "y1_mm": {
+          "ge": 0,
+          "le": 2000,
+          "title": "Y1 Mm",
+          "type": "number"
+        },
+        "x2_mm": {
+          "ge": 0,
+          "le": 2000,
+          "title": "X2 Mm",
+          "type": "number"
+        },
+        "y2_mm": {
+          "ge": 0,
+          "le": 2000,
+          "title": "Y2 Mm",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x1_mm",
+        "y1_mm",
+        "x2_mm",
+        "y2_mm"
+      ],
+      "title": "Line",
+      "type": "object"
+    },
+    "Margins": {
+      "additionalProperties": false,
+      "properties": {
+        "left": {
+          "default": 5,
+          "ge": 0,
+          "le": 100,
+          "title": "Left",
+          "type": "number"
+        },
+        "right": {
+          "default": 5,
+          "ge": 0,
+          "le": 100,
+          "title": "Right",
+          "type": "number"
+        },
+        "top": {
+          "default": 5,
+          "ge": 0,
+          "le": 100,
+          "title": "Top",
+          "type": "number"
+        },
+        "bottom": {
+          "default": 5,
+          "ge": 0,
+          "le": 100,
+          "title": "Bottom",
+          "type": "number"
+        }
+      },
+      "title": "Margins",
+      "type": "object"
+    },
+    "NetPlacement": {
+      "additionalProperties": false,
+      "properties": {
+        "x_mm": {
+          "ge": 0,
+          "le": 2000,
+          "title": "X Mm",
+          "type": "number"
+        },
+        "y_mm": {
+          "ge": 0,
+          "le": 2000,
+          "title": "Y Mm",
+          "type": "number"
+        },
+        "rotation_deg": {
+          "default": 0,
+          "enum": [
+            0,
+            180
+          ],
+          "title": "Rotation Deg",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x_mm",
+        "y_mm"
+      ],
+      "title": "NetPlacement",
+      "type": "object"
+    },
+    "Panel": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "enum": [
+            "front",
+            "back",
+            "left",
+            "right",
+            "top",
+            "bottom"
+          ],
+          "title": "Id",
+          "type": "string"
+        },
+        "width_mm": {
+          "ge": 20,
+          "gt": 0,
+          "le": 800,
+          "title": "Width Mm",
+          "type": "number"
+        },
+        "height_mm": {
+          "ge": 20,
+          "gt": 0,
+          "le": 800,
+          "title": "Height Mm",
+          "type": "number"
+        },
+        "net": {
+          "$ref": "#/$defs/NetPlacement"
+        },
+        "assembly": {
+          "$ref": "#/$defs/Assembly"
+        },
+        "safe_inset_mm": {
+          "$ref": "#/$defs/Margins"
+        },
+        "no_print": {
+          "items": {
+            "$ref": "#/$defs/Rect"
+          },
+          "maxItems": 24,
+          "title": "No Print",
+          "type": "array"
+        },
+        "fold": {
+          "items": {
+            "$ref": "#/$defs/Line"
+          },
+          "maxItems": 16,
+          "title": "Fold",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "width_mm",
+        "height_mm",
+        "net",
+        "assembly"
+      ],
+      "title": "Panel",
+      "type": "object"
+    },
+    "Part": {
+      "additionalProperties": false,
+      "properties": {
+        "x_mm": {
+          "ge": 0,
+          "le": 2000,
+          "title": "X Mm",
+          "type": "number"
+        },
+        "y_mm": {
+          "ge": 0,
+          "le": 2000,
+          "title": "Y Mm",
+          "type": "number"
+        },
+        "width_mm": {
+          "gt": 0,
+          "le": 2000,
+          "title": "Width Mm",
+          "type": "number"
+        },
+        "height_mm": {
+          "gt": 0,
+          "le": 2000,
+          "title": "Height Mm",
+          "type": "number"
+        },
+        "id": {
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "glue_tab",
+            "flap"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "attached_face_id": {
+          "enum": [
+            "front",
+            "back",
+            "left",
+            "right",
+            "top",
+            "bottom"
+          ],
+          "title": "Attached Face Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "x_mm",
+        "y_mm",
+        "width_mm",
+        "height_mm",
+        "id",
+        "kind",
+        "attached_face_id"
+      ],
+      "title": "Part",
+      "type": "object"
+    },
+    "Range": {
+      "additionalProperties": false,
+      "properties": {
+        "minimum": {
+          "gt": 0,
+          "le": 2000,
+          "title": "Minimum",
+          "type": "number"
+        },
+        "maximum": {
+          "gt": 0,
+          "le": 2000,
+          "title": "Maximum",
+          "type": "number"
+        }
+      },
+      "required": [
+        "minimum",
+        "maximum"
+      ],
+      "title": "Range",
+      "type": "object"
+    },
+    "Rect": {
+      "additionalProperties": false,
+      "properties": {
+        "x_mm": {
+          "ge": 0,
+          "le": 2000,
+          "title": "X Mm",
+          "type": "number"
+        },
+        "y_mm": {
+          "ge": 0,
+          "le": 2000,
+          "title": "Y Mm",
+          "type": "number"
+        },
+        "width_mm": {
+          "gt": 0,
+          "le": 2000,
+          "title": "Width Mm",
+          "type": "number"
+        },
+        "height_mm": {
+          "gt": 0,
+          "le": 2000,
+          "title": "Height Mm",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x_mm",
+        "y_mm",
+        "width_mm",
+        "height_mm"
+      ],
+      "title": "Rect",
+      "type": "object"
+    },
+    "Semantics": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "enum": [
+            "finished_outer",
+            "panel",
+            "inner",
+            "outer"
+          ],
+          "title": "Basis",
+          "type": "string"
+        },
+        "bottom_definition": {
+          "anyOf": [
+            {
+              "const": "expanded_gusset",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bottom Definition"
+        },
+        "material_thickness_mm": {
+          "anyOf": [
+            {
+              "ge": 0,
+              "le": 20,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Material Thickness Mm"
+        },
+        "glue_allowance_mm": {
+          "anyOf": [
+            {
+              "ge": 0,
+              "le": 100,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Glue Allowance Mm"
+        },
+        "compensation": {
+          "default": "none",
+          "enum": [
+            "none",
+            "included_in_fixed_panels"
+          ],
+          "title": "Compensation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "basis"
+      ],
+      "title": "Semantics",
+      "type": "object"
+    },
+    "SeparatedDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "2.0",
+          "default": "2.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "family": {
+          "const": "three-side-seal",
+          "default": "three-side-seal",
+          "title": "Family",
+          "type": "string"
+        },
+        "dimension_semantics": {
+          "$ref": "#/$defs/Semantics"
+        },
+        "feature_policy": {
+          "const": "none",
+          "default": "none",
+          "title": "Feature Policy",
+          "type": "string"
+        },
+        "review_bleed_mm": {
+          "const": 3,
+          "default": 3,
+          "title": "Review Bleed Mm",
+          "type": "integer"
+        },
+        "recipe_id": {
+          "const": "three-side-seal-separated-v1",
+          "title": "Recipe Id",
+          "type": "string"
+        },
+        "width_range_mm": {
+          "$ref": "#/$defs/Range"
+        },
+        "height_range_mm": {
+          "$ref": "#/$defs/Range"
+        },
+        "seals_mm": {
+          "$ref": "#/$defs/Margins"
+        },
+        "safe_margin_mm": {
+          "default": 5,
+          "ge": 1,
+          "le": 20,
+          "title": "Safe Margin Mm",
+          "type": "number"
+        },
+        "panel_gap_mm": {
+          "default": 15,
+          "ge": 0,
+          "le": 100,
+          "title": "Panel Gap Mm",
+          "type": "number"
+        },
+        "preview_depth_mm": {
+          "default": 6,
+          "gt": 0,
+          "le": 100,
+          "title": "Preview Depth Mm",
+          "type": "number"
+        }
+      },
+      "required": [
+        "dimension_semantics",
+        "recipe_id",
+        "width_range_mm",
+        "height_range_mm",
+        "seals_mm"
+      ],
+      "title": "SeparatedDefinition",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "fixed-panel-net-v1": "#/$defs/FixedDefinition",
+      "three-side-seal-separated-v1": "#/$defs/SeparatedDefinition"
+    },
+    "propertyName": "recipe_id"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/FixedDefinition"
+    },
+    {
+      "$ref": "#/$defs/SeparatedDefinition"
+    }
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://phoenix-packaging.invalid/contracts/structure-definition-2.0.schema.json"
+}

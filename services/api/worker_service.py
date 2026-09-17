@@ -5,6 +5,7 @@ from .billing import models as billing_models
 from .jobs import process_pending_jobs
 from .ai_jobs import process_ai_jobs
 from .production_jobs import process_production_jobs
+from .editable_exports import process_editable_jobs
 
 
 def process_all_jobs(sessions,storage,settings):
@@ -14,7 +15,7 @@ def process_all_jobs(sessions,storage,settings):
     except Exception as exc:
         logging.getLogger("phoenix.worker").error("outbox_dispatch_failed error_type=%s",type(exc).__name__)
         counts["outbox"]="retry_pending"
-    for kind,run in (("review",lambda:process_pending_jobs(sessions,storage,limit=1)),("production",lambda:process_production_jobs(sessions,storage,settings,limit=1)),("images",lambda:process_ai_jobs(sessions,storage,settings,limit=1))):
+    for kind,run in (("review",lambda:process_pending_jobs(sessions,storage,limit=1)),("editable",lambda:process_editable_jobs(sessions,storage,limit=1)),("production",lambda:process_production_jobs(sessions,storage,settings,limit=1)),("images",lambda:process_ai_jobs(sessions,storage,settings,limit=1))):
         try: counts[kind]=run()
         except Exception as exc:
             logging.getLogger("phoenix.worker").error("worker_dispatch_failed kind=%s error_type=%s",kind,type(exc).__name__)

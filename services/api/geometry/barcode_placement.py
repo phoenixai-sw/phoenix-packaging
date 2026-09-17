@@ -7,9 +7,9 @@ from .validation import normalize_mm
 MAX_CANDIDATES = 1024
 
 
-def place_barcode(scene, face_id, barcode, *, x_mm=None, y_mm=None):
-    scene = validate_scene(scene)
-    geometry = geometry_for_scene(scene)
+def place_barcode(scene, face_id, barcode, *, x_mm=None, y_mm=None, structure_snapshot=None):
+    scene = validate_scene(scene, structure_snapshot=structure_snapshot)
+    geometry = geometry_for_scene(scene, structure_snapshot=structure_snapshot)
     face = next((item for item in scene["faces"] if item["id"] == face_id), None)
     if face is None:
         raise GeometryValidationError("INVALID_FACE", "바코드를 놓을 면을 선택해 주세요.", "face_id")
@@ -31,7 +31,7 @@ def place_barcode(scene, face_id, barcode, *, x_mm=None, y_mm=None):
     if x_mm is not None:
         obj.update(x_mm=normalize_mm(x_mm,"mm","x_mm"),y_mm=normalize_mm(y_mm,"mm","y_mm"))
         face["objects"].append(obj)
-        validate_scene(scene)
+        validate_scene(scene, structure_snapshot=structure_snapshot)
         return {"x_mm":obj["x_mm"],"y_mm":obj["y_mm"],"mode":"manual"}
     width,height = barcode["width_mm"],barcode["height_mm"]
     min_x,min_y = safe["x_mm"],safe["y_mm"]
@@ -58,7 +58,7 @@ def place_barcode(scene, face_id, barcode, *, x_mm=None, y_mm=None):
             candidate=deepcopy(scene)
             target=next(item for item in candidate["faces"] if item["id"]==face_id)
             target["objects"].append({**obj,"x_mm":x,"y_mm":y})
-            try: validate_scene(candidate)
+            try: validate_scene(candidate, structure_snapshot=structure_snapshot)
             except GeometryValidationError: continue
             return {"x_mm":x,"y_mm":y,"mode":"automatic"}
         if attempts>MAX_CANDIDATES: break

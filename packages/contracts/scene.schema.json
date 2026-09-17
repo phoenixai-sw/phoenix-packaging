@@ -571,6 +571,40 @@
       ],
       "title": "SceneObject",
       "type": "object"
+    },
+    "StructureRef": {
+      "additionalProperties": false,
+      "properties": {
+        "template_version_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Template Version Id",
+          "type": "string"
+        },
+        "definition_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Definition Hash",
+          "type": "string"
+        },
+        "engine_version": {
+          "const": "structure-v2.1",
+          "title": "Engine Version",
+          "type": "string"
+        },
+        "geometry_hash": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Geometry Hash",
+          "type": "string"
+        }
+      },
+      "required": [
+        "template_version_id",
+        "definition_hash",
+        "engine_version",
+        "geometry_hash"
+      ],
+      "title": "StructureRef",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -610,6 +644,17 @@
       ],
       "default": null,
       "title": "Template Kind"
+    },
+    "structure_ref": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StructureRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "bottom_mm": {
       "anyOf": [

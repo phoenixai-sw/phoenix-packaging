@@ -10,9 +10,47 @@ import {
   imageQuoteBody,
   imageQuoteMatches,
   imageQualityLabel,
+  imageLayoutSummary,
   initialImageSettings,
   imageTier,
 } from "../src/lib/ai-image-settings.ts";
+
+test("legacy jobs do not invent layout guidance; valid frozen palette and placement remain distinct", () => {
+  assert.equal(imageLayoutSummary(undefined), null);
+  const summary = imageLayoutSummary({
+    package_kind: "stand-up-pouch",
+    face_id: "back",
+    brand_colors: ["#ffaa00", "#FFAA00", "not-a-color"],
+    reserved_object_count: 3,
+    quiet_region_source: "placed_editable_objects",
+  });
+  assert.equal(summary.packageLabel, "스탠드 파우치");
+  assert.equal(summary.faceLabel, "뒷면");
+  assert.deepEqual(summary.colors, ["#FFAA00"]);
+  assert.equal(summary.quietMessage, "글자·바코드 자리 3곳에 공간 확보");
+});
+
+test("empty-layout guidance and merged object regions never imply individually preserved results", () => {
+  const context = {
+    package_kind: "folding-box",
+    face_id: "top",
+    brand_colors: [],
+    reserved_object_count: 30,
+    quiet_region_source: "combined_editable_objects",
+  };
+  assert.equal(
+    imageLayoutSummary(context).quietMessage,
+    "글자·바코드 자리 30곳을 묶어 공간 확보",
+  );
+  assert.equal(
+    imageLayoutSummary({
+      ...context,
+      quiet_region_source: "empty_layout_default",
+      reserved_object_count: 0,
+    }).quietMessage,
+    "안전영역 중심에 문구 공간 확보",
+  );
+});
 
 test("initial selection honors enabled server defaults and falls back after model withdrawal", () => {
   const capabilities = {

@@ -302,32 +302,35 @@ def test_concurrent_restore_and_save_allow_one_new_revision(app, client):
 
 def test_additive_migration_preserves_scenes_and_rolls_back_only_leases(tmp_path, monkeypatch):
     from pathlib import Path
-    from sqlalchemy import create_engine
+    from sqlalchemy import create_engine, MetaData, Table
     monkeypatch.setenv("APP_ENV", "test")
     url = f"sqlite:///{tmp_path / 'migrated.db'}"
     monkeypatch.setenv("DATABASE_URL", url)
     cfg = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     command.upgrade(cfg, "0007_google_auth")
     engine = create_engine(url)
+    # Reflect the historical tables: later ORM columns must not be inserted
+    # into or selected from the deliberately older 0007/0008 schema.
+    historical = MetaData()
+    projects = Table("projects", historical, autoload_with=engine)
+    revisions = Table("project_revisions", historical, autoload_with=engine)
     saved_scene = {"schema_version": "1.0", "faces": [{"id": "front", "objects": [{"id": "text", "text": "원본 한글\n보존"}]}]}
     with Session(engine) as db:
         tenant = Tenant(name="Legacy"); db.add(tenant); db.flush()
         user = User(tenant_id=tenant.id, name="Owner", email="old@example.com"); db.add(user); db.flush()
-        item = Project(tenant_id=tenant.id, created_by=user.id, name="Old project", product_name="Product", brand_name="Brand", template_id="three-side-seal", width_mm=160, height_mm=230, scene=saved_scene)
-        db.add(item); db.flush()
-        revision = Revision(project_id=item.id, tenant_id=tenant.id, number=1, scene=saved_scene)
-        db.add(revision); db.flush()
-        project_id, revision_id = item.id, revision.id
+        project_id, revision_id = str(uuid4()), str(uuid4())
+        db.execute(projects.insert().values(id=project_id, tenant_id=tenant.id, created_by=user.id, name="Old project", product_name="Product", brand_name="Brand", description="", template_id="three-side-seal", width_mm=160, height_mm=230, base_revision=1, scene=saved_scene, created_at=utcnow(), updated_at=utcnow(), material=""))
+        db.execute(revisions.insert().values(id=revision_id, project_id=project_id, tenant_id=tenant.id, number=1, scene=saved_scene, reason="manual", created_at=utcnow()))
         db.commit()
     command.upgrade(cfg, "0008_editor_sessions")
     assert "project_edit_leases" in inspect(engine).get_table_names()
     with Session(engine) as db:
-        assert db.get(Project, project_id).scene == saved_scene
-        assert db.get(Revision, revision_id).scene == saved_scene
+        assert db.scalar(select(projects.c.scene).where(projects.c.id == project_id)) == saved_scene
+        assert db.scalar(select(revisions.c.scene).where(revisions.c.id == revision_id)) == saved_scene
         assert not list(db.execute(text("PRAGMA foreign_key_check")))
     command.downgrade(cfg, "0007_google_auth")
     assert "project_edit_leases" not in inspect(engine).get_table_names()
     with Session(engine) as db:
-        assert db.get(Project, project_id).scene == saved_scene
-        assert db.get(Revision, revision_id).scene == saved_scene
+        assert db.scalar(select(projects.c.scene).where(projects.c.id == project_id)) == saved_scene
+        assert db.scalar(select(revisions.c.scene).where(revisions.c.id == revision_id)) == saved_scene
     engine.dispose()

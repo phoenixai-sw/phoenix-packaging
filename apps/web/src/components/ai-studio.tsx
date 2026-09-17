@@ -10,6 +10,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { api, errorMessage } from "@/lib/api";
+import styles from "./ai-layout-context.module.css";
 import {
   DEFAULT_IMAGE_MODEL,
   DEFAULT_IMAGE_QUALITY,
@@ -18,6 +19,7 @@ import {
   createImageQuoteGate,
   creditBalanceLabel,
   imageModelLabel,
+  imageLayoutSummary,
   imageQualityLabel,
   initialImageSettings,
   imageQuoteBody,
@@ -29,6 +31,7 @@ import {
   type ImageQuoteTicket,
   type ImageSelection,
   type ImageSettings,
+  type ImageLayoutContext,
 } from "@/lib/ai-image-settings";
 import { Feedback } from "./management";
 
@@ -113,34 +116,67 @@ const statusLabels: Record<string, string> = {
   reconciliation_required: "사용량 확인 중",
 };
 
+function LayoutContextSummary({
+  context,
+}: {
+  context?: ImageLayoutContext | null;
+}) {
+  const summary = imageLayoutSummary(context);
+  if (!summary) return null;
+  return (
+    <div className={styles.context}>
+      <strong>생성 지시에 반영</strong>
+      <p>
+        {summary.packageLabel} · {summary.faceLabel}
+      </p>
+      {summary.colors.length > 0 && (
+        <div className={styles.palette} aria-label="자동 반영한 브랜드 색상">
+          <span>브랜드 색상</span>
+          {summary.colors.map((color) => (
+            <span className={styles.color} key={color}>
+              <i aria-hidden="true" style={{ backgroundColor: color }} />
+              {color}
+            </span>
+          ))}
+        </div>
+      )}
+      <p>{summary.quietMessage}</p>
+      <small>AI 결과의 실제 색상과 여백은 적용 전에 확인해 주세요.</small>
+    </div>
+  );
+}
+
 function ImageSettingsSummary({ settings }: { settings: ImageSettings }) {
   const pixels =
     settings.output_width_px && settings.output_height_px
       ? `${settings.output_width_px.toLocaleString()} × ${settings.output_height_px.toLocaleString()} px`
       : settings.output_size;
   return (
-    <dl className="ai-settings-summary">
-      <div>
-        <dt>모델</dt>
-        <dd>GPT Image 2.5 {imageModelLabel(settings.model)}</dd>
-      </div>
-      <div>
-        <dt>요청 품질</dt>
-        <dd>{imageQualityLabel(settings.quality)}</dd>
-      </div>
-      {pixels && (
+    <>
+      <dl className="ai-settings-summary">
         <div>
-          <dt>요청 크기</dt>
-          <dd>{pixels}</dd>
+          <dt>모델</dt>
+          <dd>GPT Image 2.5 {imageModelLabel(settings.model)}</dd>
         </div>
-      )}
-      {typeof settings.output_effective_ppi === "number" && (
         <div>
-          <dt>면 전체 배치 시</dt>
-          <dd>약 {settings.output_effective_ppi.toFixed(1)} PPI</dd>
+          <dt>요청 품질</dt>
+          <dd>{imageQualityLabel(settings.quality)}</dd>
         </div>
-      )}
-    </dl>
+        {pixels && (
+          <div>
+            <dt>요청 크기</dt>
+            <dd>{pixels}</dd>
+          </div>
+        )}
+        {typeof settings.output_effective_ppi === "number" && (
+          <div>
+            <dt>면 전체 배치 시</dt>
+            <dd>약 {settings.output_effective_ppi.toFixed(1)} PPI</dd>
+          </div>
+        )}
+      </dl>
+      <LayoutContextSummary context={settings.layout_context} />
+    </>
   );
 }
 
@@ -581,8 +617,8 @@ export function AIStudio({
           <p className="field-hint ai-quality-note">
             {quality === "auto"
               ? "Auto는 선택한 모델이 품질을 결정하며 장당 20크레딧입니다. 자동 선택에 따른 비용 절감은 보장하지 않습니다."
-              : "Low·Medium·High는 장당 10크레딧, XHigh·Max는 장당 20크레딧입니다."}
-            {" "}체험 크레딧은 Low·Medium·High에서 사용할 수 있습니다.
+              : "Low·Medium·High는 장당 10크레딧, XHigh·Max는 장당 20크레딧입니다."}{" "}
+            체험 크레딧은 Low·Medium·High에서 사용할 수 있습니다.
           </p>
           <p className="field-hint ai-quality-note">
             품질을 높여도 300 PPI가 보장되지는 않습니다. 인쇄 밀도는 이미지 픽셀
@@ -831,6 +867,9 @@ export function AIStudio({
                         ) : null}
                       </div>
                     )}
+                    <LayoutContextSummary
+                      context={item.image_settings?.layout_context}
+                    />
                     <button
                       className="button button-light button-sm"
                       disabled={locked}

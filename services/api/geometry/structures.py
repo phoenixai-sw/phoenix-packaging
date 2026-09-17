@@ -93,7 +93,12 @@ def build_geometry(template_id, width, height, unit="mm", *, bottom_mm=None, dep
     return geometry
 
 
-def geometry_for_scene(scene):
+def geometry_for_scene(scene, *, structure_snapshot=None):
+    if structure_snapshot is not None:
+        from .snapshots import geometry_from_snapshot
+        return geometry_from_snapshot(scene, structure_snapshot)
+    if scene.get("structure_ref") is not None:
+        raise GeometryValidationError("STRUCTURE_SNAPSHOT_REQUIRED", "등록 구조의 서버 스냅샷이 필요합니다.", "structure_ref")
     version=scene.get("template_version_id") or TEMPLATES["three-side-seal"]
     kind=scene.get("template_kind") or next((k for k,v in TEMPLATES.items() if v==version),None)
     if kind not in TEMPLATES:

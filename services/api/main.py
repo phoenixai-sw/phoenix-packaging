@@ -40,9 +40,10 @@ def envelope(request, data):
 
 
 def project_payload(project):
-    geometry = geometry_for_scene(project.scene)
+    from .geometry.snapshots import project_geometry
+    geometry = project_geometry(project)
     keys=("id","name","product_name","brand_name","description","width_mm","height_mm","bottom_mm","depth_mm","template_id","template_version_id","print_profile_version_id","brand_id","product_variant_id","workspace_id","material","base_revision")
-    return {**{key:getattr(project,key) for key in keys}, "scene":project.scene,"geometry":geometry,"created_at":project.created_at.isoformat(),"updated_at":project.updated_at.isoformat(),"approval_status":"requires_preflight" if project.template_version_id else "demo_unapproved","review_only":not bool(project.template_version_id and project.print_profile_version_id)}
+    return {**{key:getattr(project,key) for key in keys}, "scene":project.scene,"geometry":geometry,"structure_snapshot":getattr(project,"structure_snapshot",None),"created_at":project.created_at.isoformat(),"updated_at":project.updated_at.isoformat(),"approval_status":"registered_review_only" if getattr(project,"structure_snapshot",None) else "requires_preflight" if project.template_version_id else "demo_unapproved","review_only":bool(getattr(project,"structure_snapshot",None)) or not bool(project.template_version_id and project.print_profile_version_id)}
 
 
 def asset_payload(asset):
@@ -78,7 +79,7 @@ def ensure_revision(project, number):
 def snapshot_revision(db, project, reason):
     revision = db.scalar(select(Revision).where(Revision.project_id == project.id, Revision.number == project.base_revision))
     if revision is None:
-        revision = Revision(project_id=project.id, tenant_id=project.tenant_id, number=project.base_revision, scene=project.scene, reason=reason)
+        revision = Revision(project_id=project.id, tenant_id=project.tenant_id, number=project.base_revision, scene=project.scene, structure_snapshot=getattr(project,"structure_snapshot",None), reason=reason)
         db.add(revision)
         db.flush()
     return revision
@@ -92,8 +93,16 @@ def normalize_draft_scene(db, user, project, body_scene, *, links=None):
     scene["depth_mm"] = project.depth_mm
     for key in ("brand_id", "product_variant_id", "workspace_id"):
         scene[key] = (links or {}).get(key, getattr(project, key))
-    scene["geometry_hash"] = geometry_for_scene(scene)["geometry_hash"]
-    expected = build_geometry(project.template_id, project.width_mm, project.height_mm, bottom_mm=project.bottom_mm, depth_mm=project.depth_mm)
+    structure_snapshot=getattr(project,"structure_snapshot",None)
+    if structure_snapshot is not None:
+        from .geometry.snapshots import structure_ref
+        scene["structure_ref"]=structure_ref(structure_snapshot)
+        scene["geometry_hash"]=structure_snapshot["geometry_hash"]
+        expected=geometry_for_scene(scene,structure_snapshot=structure_snapshot)
+    else:
+        scene.pop("structure_ref",None)
+        scene["geometry_hash"] = geometry_for_scene(scene)["geometry_hash"]
+        expected = build_geometry(project.template_id, project.width_mm, project.height_mm, bottom_mm=project.bottom_mm, depth_mm=project.depth_mm)
     expected_faces = {face["id"]: face for face in expected["faces"]}
     if set(face["id"] for face in scene["faces"]) != set(expected_faces):
         raise APIError(422, "FACE_SET_MISMATCH", "모든 편집 면을 포함해 주세요.")
@@ -246,10 +255,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return envelope(request,build_geometry(body.get("template_id","three-side-seal"),body.get("width_mm"),body.get("height_mm"),body.get("unit","mm"),bottom_mm=body.get("bottom_mm"),depth_mm=body.get("depth_mm"),holes=body.get("holes",[]),pouch_features=body.get("pouch_features")))
 
     @app.post("/v1/geometry/barcode")
-    def barcode(body:dict, request:Request):
+    def barcode(body:dict, request:Request, db=Depends(db_session)):
         from .geometry import barcode_geometry
         from .geometry.barcodes import sample_ean13
-        if set(body)-{"value","module_mm","bar_height_mm","scene","face_id","x_mm","y_mm","barcode_usage"}: raise APIError(422,"BARCODE_FIELDS_INVALID","바코드 입력 항목을 확인해 주세요.")
+        if set(body)-{"value","module_mm","bar_height_mm","scene","face_id","x_mm","y_mm","barcode_usage","project_id","base_revision"}: raise APIError(422,"BARCODE_FIELDS_INVALID","바코드 입력 항목을 확인해 주세요.")
         if "scene" not in body and any(key in body for key in ("face_id","x_mm","y_mm")):
             raise APIError(422,"BARCODE_SCENE_REQUIRED","배치를 검증할 현재 디자인이 필요합니다.")
         usage=body.get("barcode_usage","retail")
@@ -265,7 +274,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except ValidationError as exc:
                 fields={"scene."+".".join(map(str,error["loc"])):error["msg"] for error in exc.errors()}
                 raise APIError(422,"BARCODE_SCENE_INVALID","현재 디자인의 면과 객체 정보를 확인해 주세요.",fields) from None
-            result["placement"]=place_barcode(scene,body.get("face_id"),result,x_mm=body.get("x_mm"),y_mm=body.get("y_mm"))
+            structure_snapshot=None
+            if scene.get("structure_ref"):
+                user,_=require_auth(request,db)
+                project=owned(db,Project,body.get("project_id"),user.tenant_id)
+                ensure_revision(project,body.get("base_revision"))
+                structure_snapshot=project.structure_snapshot
+            result["placement"]=place_barcode(scene,body.get("face_id"),result,x_mm=body.get("x_mm"),y_mm=body.get("y_mm"),structure_snapshot=structure_snapshot)
         return envelope(request,result)
 
     @app.get("/v1/projects")
@@ -402,6 +417,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def create_export(body: ExportInput, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
         project = owned(db, Project, body.project_id, user.tenant_id)
+        if body.kind == "editable":
+            from .editable_exports import create_editable_export
+            return envelope(request, job_payload(create_editable_export(db, user, body, request, project, project_payload, snapshot_revision)))
         enforce_edit_lease(db, project, request)
         if body.kind=="production":
             from .production_routes import create_production_export
@@ -417,7 +435,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if existing.request_hash != request_hash:
                 raise APIError(409, "IDEMPOTENCY_CONFLICT", "같은 요청 식별자로 다른 작업을 보낼 수 없습니다.")
             return envelope(request, job_payload(existing))
-        count = db.scalar(select(func.count()).select_from(Job).where(Job.tenant_id == user.tenant_id,Job.kind=="review_export", Job.created_at > utcnow() - timedelta(hours=1)))
+        count = db.scalar(select(func.count()).select_from(Job).where(Job.tenant_id == user.tenant_id,Job.kind.in_(["review_export", "editable_export"]), Job.created_at > utcnow() - timedelta(hours=1)))
         if count >= 30:
             raise APIError(429, "EXPORT_RATE_LIMIT", "검토 파일 요청이 많습니다. 잠시 후 다시 시도해 주세요.", retryable=True)
         try:
@@ -443,9 +461,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def retry_job(job_id: UUID, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
         job = owned(db, Job, job_id, user.tenant_id)
-        if job.status != "failed" or job.kind!="review_export":
+        if job.status != "failed" or job.kind not in {"review_export", "editable_export"}:
             raise APIError(409, "JOB_NOT_RETRYABLE", "실패한 작업만 다시 시도할 수 있습니다.")
-        changed = db.execute(update(Job).where(Job.id == job.id, Job.status == "failed").values(status="queued", lease_id=None, error=None, updated_at=utcnow()).execution_options(synchronize_session=False))
+        retry_values = {"status": "queued", "lease_id": None, "error": None, "updated_at": utcnow()}
+        if job.kind == "editable_export":
+            from .editable_exports import check_archive_access
+            enforce_edit_lease(db, owned(db, Project, job.project_id, user.tenant_id), request)
+            check_archive_access(db, user, job.snapshot, creating=True)
+            retry_values["snapshot"] = {**job.snapshot, "actor_id": user.id}
+            db.add(feature_models.AuditEvent(tenant_id=user.tenant_id, actor_id=user.id, action="editable_export_retried", entity_id=job.id, details={"revision_id": job.revision_id}))
+        changed = db.execute(update(Job).where(Job.id == job.id, Job.status == "failed").values(**retry_values).execution_options(synchronize_session=False))
         if changed.rowcount != 1:
             raise APIError(409, "JOB_NOT_RETRYABLE", "다른 요청에서 이미 재시도했습니다.")
         db.commit()
@@ -456,16 +481,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def exports(project_id: UUID, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db)
         owned(db, Project, project_id, user.tenant_id)
-        rows = db.scalars(select(Job).where(Job.tenant_id == user.tenant_id, Job.project_id == str(project_id),Job.kind.in_(["review_export","production_export"])).order_by(Job.created_at.desc()).limit(100)).all()
+        rows = db.scalars(select(Job).where(Job.tenant_id == user.tenant_id, Job.project_id == str(project_id),Job.kind.in_(["review_export","production_export","editable_export"])).order_by(Job.created_at.desc()).limit(100)).all()
         return envelope(request, {"items": [job_payload(row) for row in rows]})
 
     @app.get("/v1/exports/{job_id}/download")
     def download(job_id: UUID, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db)
         job = owned(db, Job, job_id, user.tenant_id)
+        if job.kind not in {"review_export", "production_export", "editable_export"}:
+            raise APIError(404, "NOT_FOUND", "요청한 출력 파일을 찾을 수 없습니다.")
         if job.status != "succeeded" or not job.result or not job.result.get("storage_key"):
             raise APIError(409, "EXPORT_NOT_READY", "검토 파일을 준비하고 있습니다.", retryable=True)
-        extension="zip" if job.kind=="production_export" else "pdf"
+        if job.kind == "editable_export":
+            from .editable_exports import check_archive_access
+            check_archive_access(db, user, job.snapshot)
+        extension="zip" if job.kind in {"production_export", "editable_export"} else "pdf"
         name=f"phoenix-{job.kind}-{job.id}.{extension}"
         if isinstance(storage, SupabaseStorage):
             return RedirectResponse(storage.signed_url(job.result["storage_key"], ttl=60, download_name=name), status_code=307)
@@ -501,6 +531,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_billing_routes(app,db_session)
     install_business_routes(app,db_session,project_payload,snapshot_revision)
     install_registry_routes(app,db_session,project_payload,snapshot_revision)
+    from .structure_routes import install_structure_routes
+    install_structure_routes(app,db_session,project_payload,snapshot_revision)
     install_ai_routes(app,db_session,job_payload,snapshot_revision)
     install_production_routes(app,db_session,owned,project_payload,snapshot_revision)
     from .uploads import install_upload_routes

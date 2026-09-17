@@ -17,6 +17,11 @@ import {
 import { useApiData, dateTime } from "@/lib/business";
 import { api, errorMessage } from "@/lib/api";
 import { RegistryConditionFields } from "@/components/registry-condition-fields";
+import { RegisteredStructureAdmin } from "@/components/registered-structure-admin";
+import {
+  ProviderBudgetSummary,
+  type ProviderBudget,
+} from "@/components/provider-budget-summary";
 type Version = {
   id: string;
   name: string;
@@ -27,6 +32,8 @@ type Version = {
   license?: string;
   geometry_template_id?: string;
   approval?: unknown;
+  structure_definition?: unknown;
+  review_available?: boolean;
 };
 type Overview = {
   readiness: Array<{
@@ -45,6 +52,7 @@ type Overview = {
     entity_id?: string;
   }>;
   provider_costs: Array<Record<string, unknown>>;
+  provider_budget?: ProviderBudget;
   intake_stats: Array<{ status: string; category: string; count: number }>;
   intake_metrics?: {
     manufacturer: IntakeMetrics;
@@ -207,12 +215,22 @@ export default function Admin() {
                 </div>
               ))}
             </div>
+            <RegisteredStructureAdmin
+              items={versions.data?.items || []}
+              onRegistered={(message) => {
+                setNotice(message);
+                versions.refresh();
+                overview.refresh();
+              }}
+            />
             {(
               [
                 {
                   title: "제조사 템플릿",
                   type: "version",
-                  items: versions.data?.items,
+                  items: versions.data?.items.filter(
+                    (item) => !item.structure_definition,
+                  ),
                 },
                 {
                   title: "인쇄 프로파일",
@@ -316,6 +334,7 @@ export default function Admin() {
             </section>
             <section className="management-card">
               <h2>공급자 비용과 입고 확인</h2>
+              <ProviderBudgetSummary budget={overview.data.provider_budget} />
               <p className="field-hint">
                 사용자에게 무료인 실패·취소 작업의 공급자 비용도 함께
                 확인합니다.
@@ -512,15 +531,18 @@ export default function Admin() {
                         placeholder="제조사가 같은 구조로 분류한 고유 코드"
                       />
                     </label>
-                    <details className="production-requirements"><summary>고급 치수 JSON</summary><label className="field">
-                      승인할 정확한 치수 (mm)
-                      <textarea
-                        rows={3}
-                        value={dimensions}
-                        onChange={(e) => setDimensions(e.target.value)}
-                        spellCheck={false}
-                      />
-                    </label></details>
+                    <details className="production-requirements">
+                      <summary>고급 치수 JSON</summary>
+                      <label className="field">
+                        승인할 정확한 치수 (mm)
+                        <textarea
+                          rows={3}
+                          value={dimensions}
+                          onChange={(e) => setDimensions(e.target.value)}
+                          spellCheck={false}
+                        />
+                      </label>
+                    </details>
                     <p className="field-hint">
                       width_mm, height_mm와 스탠드의 bottom_mm 또는 상자의
                       depth_mm를 입력하세요. 증빙 치수와 일치하는 조건만
@@ -559,17 +581,25 @@ export default function Admin() {
                   />{" "}
                   자체 제작 데모 (승인·제작 출력 불가)
                 </label>
-                <RegistryConditionFields kind={kind} dimensions={dimensions} requirements={requirements} onDimensions={setDimensions} onRequirements={setRequirements} showDimensions={dialog === "version"} />
-                <details className="production-requirements"><summary>고급 인쇄 조건 JSON</summary>
-                <label className="field">
-                  기술 조건 JSON
-                  <textarea
-                    rows={5}
-                    value={requirements}
-                    onChange={(e) => setRequirements(e.target.value)}
-                    spellCheck={false}
-                  />
-                </label>
+                <RegistryConditionFields
+                  kind={kind}
+                  dimensions={dimensions}
+                  requirements={requirements}
+                  onDimensions={setDimensions}
+                  onRequirements={setRequirements}
+                  showDimensions={dialog === "version"}
+                />
+                <details className="production-requirements">
+                  <summary>고급 인쇄 조건 JSON</summary>
+                  <label className="field">
+                    기술 조건 JSON
+                    <textarea
+                      rows={5}
+                      value={requirements}
+                      onChange={(e) => setRequirements(e.target.value)}
+                      spellCheck={false}
+                    />
+                  </label>
                 </details>
                 <p className="field-hint">
                   지원 capability를 넘는 PDF/X·색상 조건은 승인과 별개로 제작

@@ -73,10 +73,18 @@ export type SceneObject = {
   barcode_usage?: "retail" | "sample";
 };
 
+export type StructureRef = {
+  template_version_id: string;
+  definition_hash: string;
+  engine_version: "structure-v2.1";
+  geometry_hash: string;
+};
+
 export type Scene = {
   schema_version?: "1.0";
   template_version_id?: string | null;
   template_kind?: "three-side-seal" | "stand-up-pouch" | "folding-box" | null;
+  structure_ref?: StructureRef | null;
   bottom_mm?: number | null;
   depth_mm?: number | null;
   holes?: Array<Hole>;

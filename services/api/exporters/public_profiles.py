@@ -72,8 +72,8 @@ def inspect_basic_review(project, asset_resolver=None):
     profile = public_profile(project.get("review_profile_id", BASIC_REVIEW_PROFILE_ID))
     if profile["kind"] != "review_policy":
         raise GeometryValidationError("SUPPLIER_REFERENCE_NOT_EXPORT_PROFILE", "공개 업체 안내는 승인된 출력 프로필이 아닙니다.", "review_profile_id")
-    scene = validate_scene(_scene_from_project(project))
-    geometry = geometry_for_scene(scene)
+    scene = validate_scene(_scene_from_project(project), structure_snapshot=project.get("structure_snapshot"))
+    geometry = geometry_for_scene(scene, structure_snapshot=project.get("structure_snapshot"))
     issues, measurements = [], []
     for face in scene["faces"]:
         structural = next(f for f in geometry["faces"] if f["id"] == face["id"])

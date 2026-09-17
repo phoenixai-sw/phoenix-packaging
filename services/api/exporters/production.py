@@ -54,11 +54,11 @@ def _ticket_pdf(path,ticket):
     canvas.save()
 
 
-def _decode_barcodes(document,scene,*,bleed_mm=0):
+def _decode_barcodes(document,scene,*,bleed_mm=0,structure_snapshot=None):
     """Decode the actual final PDF, independently of the encoder, before publishing."""
     import zxingcpp
     lookup={f["id"]:f for f in scene["faces"]};checks=[]
-    for index,structural in enumerate(geometry_for_scene(scene)["faces"]):
+    for index,structural in enumerate(geometry_for_scene(scene,structure_snapshot=structure_snapshot)["faces"]):
         face=lookup[structural["id"]]
         for obj in face["objects"]:
             if obj["type"]!="barcode" or not obj["visible"] or not obj["print_enabled"]:continue

@@ -44,6 +44,7 @@ import { assetImageDimensions, uploadAsset } from "@/lib/assets";
 import { Dialog } from "@/components/management";
 import { AIStudio } from "@/components/ai-studio";
 import { StructureTools } from "@/components/structure-tools";
+import { RegisteredStructureTools } from "@/components/registered-structure-tools";
 import { BindingTools } from "@/components/binding-tools";
 import { ExportTools } from "@/components/export-tools";
 import { ImageCropTools } from "@/components/image-crop-tools";
@@ -113,6 +114,7 @@ export default function EditorPage({
   const [panel, setPanel] = useState<
     | "ai"
     | "structure"
+    | "registered-structure"
     | "bindings"
     | "exports"
     | "3d"
@@ -137,9 +139,17 @@ export default function EditorPage({
   const lease = useEditorLease(id, roleCanEdit, !!project);
   const [leaseSynced, setLeaseSynced] = useState(false),
     [leaseSyncTick, setLeaseSyncTick] = useState(0);
-  const readOnly = !roleCanEdit || !lease.owned || !leaseSynced;
+  const [structureApplying, setStructureApplying] = useState(false);
+  const authorityReadOnly = !roleCanEdit || !lease.owned || !leaseSynced;
+  const authorityReadOnlyRef = useRef(authorityReadOnly);
+  authorityReadOnlyRef.current = authorityReadOnly;
+  const readOnly = authorityReadOnly || structureApplying;
   const readOnlyRef = useRef(readOnly);
   readOnlyRef.current = readOnly;
+  function setStructureApplyingState(value: boolean) {
+    readOnlyRef.current = authorityReadOnlyRef.current || value;
+    setStructureApplying(value);
+  }
   const loseLeaseRef = useRef(lease.lose);
   loseLeaseRef.current = lease.lose;
   function selectMany(ids: string[]) {
@@ -1019,17 +1029,19 @@ export default function EditorPage({
         role="status"
       >
         <span>
-          {lease.busy
-            ? "편집 권한 확인 중…"
-            : !roleCanEdit
-              ? "열람 권한 · 변경할 수 없습니다."
-              : lease.owned
-                ? leaseSynced
-                  ? "이 창에서 편집 중 · 다른 창은 읽기 전용입니다."
-                  : "최신 저장본을 확인하는 동안 읽기 전용입니다."
-                : lease.lease?.holder
-                  ? `${lease.lease.holder.name} 님이 다른 창에서 편집 중입니다. 읽기 전용으로 열었습니다.`
-                  : "읽기 전용 · 편집 이어가기로 권한을 확인하세요."}
+          {structureApplying
+            ? "등록 구조 적용 중 · 완료할 때까지 편집을 잠시 멈춥니다."
+            : lease.busy
+              ? "편집 권한 확인 중…"
+              : !roleCanEdit
+                ? "열람 권한 · 변경할 수 없습니다."
+                : lease.owned
+                  ? leaseSynced
+                    ? "이 창에서 편집 중 · 다른 창은 읽기 전용입니다."
+                    : "최신 저장본을 확인하는 동안 읽기 전용입니다."
+                  : lease.lease?.holder
+                    ? `${lease.lease.holder.name} 님이 다른 창에서 편집 중입니다. 읽기 전용으로 열었습니다.`
+                    : "읽기 전용 · 편집 이어가기로 권한을 확인하세요."}
           {lease.error && ` ${lease.error}`}
         </span>
         {roleCanEdit && lease.owned && !leaseSynced && (
@@ -1040,7 +1052,9 @@ export default function EditorPage({
         {roleCanEdit &&
           (lease.owned ? (
             <button
-              disabled={lease.busy || status !== "saved" || editing}
+              disabled={
+                lease.busy || status !== "saved" || editing || structureApplying
+              }
               onClick={() => void lease.release()}
             >
               편집 권한 반납
@@ -1218,6 +1232,9 @@ export default function EditorPage({
               </button>
               <button onClick={() => setPanel("structure")}>
                 <Barcode size={17} /> 바코드와 가공
+              </button>
+              <button onClick={() => setPanel("registered-structure")}>
+                <Box size={17} /> 등록 구조 검토
               </button>
               <button onClick={() => setPanel("preparation")}>
                 <ShieldCheck size={17} /> 인쇄 준비·상품 바코드
@@ -2064,6 +2081,7 @@ export default function EditorPage({
                   : {
                       ai: "AI 디자인 스튜디오",
                       structure: "바코드와 가공 요소",
+                      "registered-structure": "등록 구조 검토 · 제작 승인 아님",
                       bindings: "상품 연결과 복제",
                       exports: "제조 조건과 출력 검수",
                       "3d": "3D 조립 미리보기",
@@ -2116,6 +2134,8 @@ export default function EditorPage({
           )}
           {panel === "structure" && (
             <StructureTools
+              projectId={project.id}
+              saveCurrent={saveCurrent}
               scene={scene}
               faceId={face.id}
               initialBarcode={barcodePreset}
@@ -2132,6 +2152,24 @@ export default function EditorPage({
               onFaceSelect={(faceId) => {
                 setFaceId(faceId);
                 setSelected(null);
+                setPanel(null);
+              }}
+            />
+          )}
+          {panel === "registered-structure" && (
+            <RegisteredStructureTools
+              project={project}
+              scene={scene}
+              saveCurrent={saveCurrent}
+              onServerProject={(value) => {
+                if (mounted.current && activeProjectId.current === value.id)
+                  onServerProject(value);
+              }}
+              onApplyingChange={setStructureApplyingState}
+              readOnly={readOnly}
+              onFaceSelect={(id, objectId) => {
+                setFaceId(id);
+                setSelected(objectId || null);
                 setPanel(null);
               }}
             />
@@ -2194,6 +2232,7 @@ export default function EditorPage({
           )}
           {panel === "exports" && (
             <ExportTools
+              onOpenStructures={() => setPanel("registered-structure")}
               project={project}
               scene={scene}
               saveCurrent={saveCurrent}

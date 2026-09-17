@@ -38,6 +38,8 @@ def prepare_ai_quote(db,user,body,settings):
     project=owned_record(db,Project,body["project_id"],user.tenant_id)
     if project.base_revision!=body.get("base_revision"): raise APIError(409,"REVISION_CONFLICT","디자인이 변경되었습니다. 저장 후 새 견적을 요청해 주세요.")
     submitted=body.get("input_data") or {}
+    if {"design_context", "provider_prompt", "prompt_version"}.intersection(submitted):
+        raise APIError(422,"AI_CONTEXT_SERVER_ONLY","브랜드·배치 정보는 저장된 프로젝트에서 자동으로 가져옵니다.")
     if {"model", "quality", "requested_quality"}.intersection(submitted):
         raise APIError(422,"AI_SELECTION_AMBIGUOUS","모델과 품질은 견적의 상위 선택 항목으로만 전달해 주세요.")
     model = body.get("model") if body.get("model") is not None else settings.image_model
@@ -112,6 +114,16 @@ def prepare_ai_quote(db,user,body,settings):
             data["output_effective_ppi"] = None
     except ImageSizeError as error:
         raise APIError(422,"AI_SIZE_INVALID",str(error)) from None
+    # Freeze the exact prompt alongside the quoted scene and selected model.
+    # Later brand edits cannot silently alter an already reserved generation.
+    from .feature_models import Brand
+    from .image_context import build_image_context
+    from .image_provider import design_prompt, edit_prompt
+    if mode != "remove_text":
+        brand=owned_record(db,Brand,project.brand_id,user.tenant_id) if project.brand_id else None
+        data["design_context"]=build_image_context(project,face,brand.colors if brand else [])
+    data["prompt_version"]=("packaging-remove-text-v1" if mode=="remove_text" else "packaging-reference-edit-v2") if is_edit else "packaging-background-v2"
+    data["provider_prompt"]=edit_prompt(data) if is_edit else design_prompt(data)
     return {"action":action,"units":units,"project_id":project.id,"base_revision":project.base_revision,"input_data":data}
 
 
