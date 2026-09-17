@@ -132,6 +132,8 @@ def validate_scene(scene: dict, *, check_safe_area: bool = True) -> dict:
     if not isinstance(faces,list) or not faces or any(not isinstance(f,dict) for f in faces):
         raise GeometryValidationError("INVALID_FACES", "구조의 모든 면을 포함해 주세요.", "faces")
     geometry = geometry_for_scene(normalized)
+    if geometry.get("pouch_features") is not None:
+        normalized["pouch_features"] = deepcopy(geometry["pouch_features"])
     expected = {f["id"]: f for f in geometry["faces"]}
     if len(faces)!=len(expected) or {f.get("id") for f in faces}!=set(expected):
         raise GeometryValidationError("INVALID_FACES", "구조의 모든 면은 각각 한 번씩 필요합니다.", "faces")
@@ -187,6 +189,9 @@ def validate_scene(scene: dict, *, check_safe_area: bool = True) -> dict:
                 obj["font_id"] = obj.get("font_id") or "NotoSansKR"
                 if obj["font_id"] != "NotoSansKR":
                     raise GeometryValidationError("UNSUPPORTED_FONT", "검증된 NotoSansKR 글꼴을 선택해 주세요.", f"{field}.font_id")
+                obj.setdefault("font_weight",400)
+                if obj["font_weight"] not in (400,700):
+                    raise GeometryValidationError("UNSUPPORTED_FONT_WEIGHT", "글꼴 두께는 일반 400 또는 굵게 700을 선택해 주세요.", f"{field}.font_weight")
                 obj["align"] = obj.get("align") or "left"
                 if obj["align"] not in ("left", "center", "right"):
                     raise GeometryValidationError("INVALID_ALIGNMENT", "텍스트 정렬을 확인해 주세요.", f"{field}.align")

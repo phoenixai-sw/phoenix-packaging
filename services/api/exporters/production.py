@@ -11,7 +11,7 @@ from reportlab.pdfgen.canvas import Canvas
 from reportlab.lib.colors import HexColor
 from reportlab.lib.units import mm
 from .preflight import preflight_project,CAPABILITIES
-from .review_pdf import ExportValidationError,_scene_from_project,_font,FONT_ID,FONT_PATH,_draw_object
+from .review_pdf import ExportValidationError,_scene_from_project,_font,FONT_ID,FONT_PATH,_draw_object,_font_manifest
 from ..geometry import validate_scene,geometry_for_scene
 from ..geometry.collisions import bounds
 
@@ -73,7 +73,9 @@ def _decode_barcodes(document,scene,*,bleed_mm=0):
                         raise ExportValidationError("BARCODE_DECODE_FAILED","최종 PDF 바코드 디지털 판독에 실패했습니다.",f"objects.{obj['id']}")
                 finally:bitmap.close()
             finally:page.close()
-            checks.append({"face_id":face["id"],"object_id":obj["id"],"value":obj["barcode_value"],"digital_decode":"passed","tool":"zxing-cpp","raster_dpi":300,"physical_print_scan":"manufacturer_confirmation_required"})
+            usage=obj.get("barcode_usage","retail")
+            checks.append({"face_id":face["id"],"object_id":obj["id"],"value":obj["barcode_value"],"digital_decode":"passed","tool":"zxing-cpp","raster_dpi":300,
+                           "barcode_usage":usage,"physical_print_scan":"not_for_real_world_use" if usage=="sample" else "manufacturer_confirmation_required"})
     return checks
 
 
@@ -123,6 +125,7 @@ def export_production_bundle(project:dict,output_dir:Path,approved_conditions:di
         manifest={"schema_version":"1.0","kind":"production","adapter":"rgb-face-pages-v1","generated_at":datetime.now(timezone.utc).isoformat(),
                   "project_id":ticket["project_id"],"revision_id":ticket["revision_id"],"geometry_hash":geometry["geometry_hash"],"template_id":ticket["template_id"],"profile_id":ticket["profile_id"],
                   "font":{"id":"NotoSansKR","embedded":True,"sha256":hashlib.sha256(FONT_PATH.read_bytes()).hexdigest()},"capabilities":CAPABILITIES,
+                  "font_weights":_font_manifest(scene),
                   "files":[{"name":p.name,"bytes":p.stat().st_size,"sha256":hashlib.sha256(p.read_bytes()).hexdigest()} for p in sorted(staging.iterdir())],
                   "manifest_hash_policy":"The manifest hashes the five payload files; it does not claim a self hash."}
         _json(staging/"manifest.json",manifest)

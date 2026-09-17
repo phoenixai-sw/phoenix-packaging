@@ -27,6 +27,7 @@ class SceneObject(StrictModel):
     text: str | None = Field(default=None, max_length=12000)
     font_size_pt: float | None = Field(default=None, ge=4, le=400, allow_inf_nan=False)
     font_id: Literal["NotoSansKR"] | None = None
+    font_weight: Literal[400, 700] = 400
     color: Color | None = None
     align: Literal["left", "center", "right"] | None = None
     asset_id: UUID | None = None
@@ -46,6 +47,7 @@ class SceneObject(StrictModel):
     module_mm: float | None = Field(default=None, ge=0.264, le=0.66)
     bar_height_mm: float | None = Field(default=None, ge=18.28, le=100)
     barcode_owned: bool = False
+    barcode_usage: Literal["retail", "sample"] = "retail"
 
     @field_validator("x_mm", "y_mm", "width_mm", "height_mm", "rotation_deg")
     @classmethod
@@ -61,6 +63,8 @@ class SceneObject(StrictModel):
         if self.type == "barcode":
             from .geometry.barcodes import validate_ean13
             validate_ean13(self.barcode_value)
+            if self.barcode_usage == "sample":
+                self.barcode_owned = False
         return self
 
 
@@ -87,6 +91,27 @@ class Hole(StrictModel):
     diameter_mm: float = Field(ge=4, le=10, allow_inf_nan=False)
 
 
+class PouchFeatures(StrictModel):
+    """Optional physical pouch finishing, measured down from the top cut edge."""
+    model_config = ConfigDict(extra="forbid", validate_default=True)
+    header_height_mm: float = Field(default=30, ge=20, le=100, allow_inf_nan=False)
+    zipper_enabled: bool = Field(default=True, strict=True)
+    zipper_y_mm: float = Field(default=35, ge=10, le=200, allow_inf_nan=False)
+    zipper_band_mm: float = Field(default=6, ge=2, le=15, allow_inf_nan=False)
+    tear_enabled: bool = Field(default=True, strict=True)
+    tear_y_mm: float = Field(default=24, ge=12, le=100, allow_inf_nan=False)
+    notch_depth_mm: float = Field(default=3, ge=1, le=5, allow_inf_nan=False)
+    notch_height_mm: float = Field(default=4, ge=2, le=8, allow_inf_nan=False)
+    notch_shape: Literal["round", "v"] = "round"
+
+    @field_validator("header_height_mm", "zipper_y_mm", "zipper_band_mm", "tear_y_mm", "notch_depth_mm", "notch_height_mm", mode="before")
+    @classmethod
+    def normalize_features_mm(cls, value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("가공 치수는 숫자로 입력해 주세요.")
+        return round(value, 4)
+
+
 class Scene(StrictModel):
     schema_version: Literal["1.0"] = "1.0"
     template_version_id: str | None = Field(default=None,max_length=100)
@@ -94,6 +119,7 @@ class Scene(StrictModel):
     bottom_mm: float | None = Field(default=None,ge=30,le=180)
     depth_mm: float | None = Field(default=None,ge=30,le=300)
     holes: list[Hole] = Field(default_factory=list,max_length=8)
+    pouch_features: PouchFeatures | None = None
     confirmed_fields: list[str] = Field(default_factory=list,max_length=30)
     reviewed_face_ids: list[FaceId] = Field(default_factory=list,max_length=6)
     brand_id: UUID | None = None
@@ -107,6 +133,8 @@ class Scene(StrictModel):
     def unique_faces_objects(self):
         expected = {"three-side-seal":{"front","back"},"stand-up-pouch":{"front","back","bottom"},"folding-box":{"front","back","left","right","top","bottom"}}
         kind=self.template_kind or next((key for key in expected if self.template_version_id==key+"-demo-v1"),"three-side-seal")
+        if self.pouch_features is not None and kind == "folding-box":
+            raise ValueError("파우치 개봉부·지퍼 가공은 봉투와 스탠드 파우치에서만 사용할 수 있습니다.")
         if len(self.faces)!=len(expected[kind]) or {face.id for face in self.faces}!=expected[kind] or self.active_face_id not in expected[kind]:
             raise ValueError("포장 구조의 모든 면을 각각 한 번씩 포함해 주세요.")
         ids = [obj.id for face in self.faces for obj in face.objects]

@@ -18,6 +18,18 @@ export type Hole = {
   diameter_mm: number;
 };
 
+export type PouchFeatures = {
+  header_height_mm?: number;
+  zipper_enabled?: boolean;
+  zipper_y_mm?: number;
+  zipper_band_mm?: number;
+  tear_enabled?: boolean;
+  tear_y_mm?: number;
+  notch_depth_mm?: number;
+  notch_height_mm?: number;
+  notch_shape?: "round" | "v";
+};
+
 export type SceneObject = {
   id: string;
   type: "text" | "image" | "shape" | "barcode";
@@ -31,6 +43,7 @@ export type SceneObject = {
   text?: string | null;
   font_size_pt?: number | null;
   font_id?: "NotoSansKR" | null;
+  font_weight?: 400 | 700;
   color?: string | null;
   align?: "left" | "center" | "right" | null;
   asset_id?: string | null;
@@ -49,6 +62,7 @@ export type SceneObject = {
   module_mm?: number | null;
   bar_height_mm?: number | null;
   barcode_owned?: boolean;
+  barcode_usage?: "retail" | "sample";
 };
 
 export type Scene = {
@@ -58,6 +72,7 @@ export type Scene = {
   bottom_mm?: number | null;
   depth_mm?: number | null;
   holes?: Array<Hole>;
+  pouch_features?: PouchFeatures | null;
   confirmed_fields?: Array<string>;
   reviewed_face_ids?: Array<"front" | "back" | "bottom" | "left" | "right" | "top">;
   brand_id?: string | null;

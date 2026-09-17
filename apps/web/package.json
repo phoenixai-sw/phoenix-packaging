@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "node --experimental-strip-types --test ../../packages/editor/tests/model.test.mjs tests/auth-proxy.test.mjs tests/billing-state.test.mjs tests/export-state.test.mjs"
+    "test": "node --experimental-strip-types --test ../../packages/editor/tests/model.test.mjs ../../packages/editor/tests/text-history.test.mjs ../../packages/editor/tests/structure.test.mjs tests/auth-proxy.test.mjs tests/billing-state.test.mjs tests/export-state.test.mjs"
   },
   "dependencies": {
     "konva": "10.5.0",

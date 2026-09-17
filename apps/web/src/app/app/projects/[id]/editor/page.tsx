@@ -32,6 +32,7 @@ import {
   Box,
   Barcode,
   Link2,
+  History,
 } from "lucide-react";
 import { api, ApiError, errorMessage } from "@/lib/api";
 import { useSession } from "@/components/workspace";
@@ -42,7 +43,9 @@ import { AIStudio } from "@/components/ai-studio";
 import { StructureTools } from "@/components/structure-tools";
 import { BindingTools } from "@/components/binding-tools";
 import { ExportTools } from "@/components/export-tools";
+import { TextHistory } from "@/components/text-history";
 import type { PackagingPreviewProps } from "@preview3d/PackagingPreview";
+import type { FaceStructure } from "@editor/structure";
 import { readRecovery, writeRecovery, type Recovery } from "@/lib/recovery";
 import {
   addText,
@@ -82,7 +85,7 @@ export default function EditorPage({
   const readOnly = !canEdit(session);
   const uploadConfig = useApiData<{ upload_max_bytes: number }>("/config");
   const [panel, setPanel] = useState<
-    "ai" | "structure" | "bindings" | "exports" | "3d" | null
+    "ai" | "structure" | "bindings" | "exports" | "3d" | "history" | null
   >(null);
   const [project, setProject] = useState<Project | null>(null);
   const [scene, setScene] = useState<Scene | null>(null);
@@ -633,33 +636,7 @@ export default function EditorPage({
   const geometry = project.geometry as unknown as
     | PackagingPreviewProps["geometry"]
     | undefined;
-  const geometryFace = (
-    project.geometry?.faces as
-      | Array<{
-          id: string;
-          regions?: {
-            safe?: {
-              x_mm: number;
-              y_mm: number;
-              width_mm: number;
-              height_mm: number;
-            };
-            no_print?: Array<{
-              x_mm: number;
-              y_mm: number;
-              width_mm: number;
-              height_mm: number;
-            }>;
-            fold?: Array<{
-              x1_mm: number;
-              y1_mm: number;
-              x2_mm: number;
-              y2_mm: number;
-            }>;
-          };
-        }>
-      | undefined
-  )?.find((f) => f.id === face.id);
+  const geometryFace = (project.geometry?.faces as FaceStructure[] | undefined)?.find((f) => f.id === face.id);
   const object = face.objects.find((o) => o.id === selected);
   const warnings = safeWarnings(face, geometryFace?.regions?.safe);
   const saveLabel = {
@@ -915,6 +892,9 @@ export default function EditorPage({
               </button>
               <button onClick={() => setPanel("bindings")}>
                 <Link2 size={17} /> 상품 연결·복제
+              </button>
+              <button onClick={() => setPanel("history")}>
+                <History size={17} /> 텍스트 변경 기록
               </button>
               <button onClick={() => setPanel("3d")} disabled={!geometry}>
                 <Box size={17} /> 3D 조립 미리보기
@@ -1180,6 +1160,14 @@ export default function EditorPage({
                           <option>NotoSansKR</option>
                         </select>
                       </label>
+                      <label className="field property-field">
+                        글자 굵기
+                        <select value={object.font_weight ?? 400} onChange={(event) => change(object.id, { font_weight: Number(event.target.value) as 400 | 700 })}>
+                          <option value={400}>보통 · Regular</option>
+                          <option value={700}>굵게 · Bold</option>
+                        </select>
+                        <small>캔버스·3D·PDF에 같은 굵기 글꼴을 사용합니다.</small>
+                      </label>
                       <div className="property-row">
                         <label className="field property-field">
                           크기 (pt)
@@ -1233,6 +1221,7 @@ export default function EditorPage({
                       EAN-13 {object.barcode_value}
                       <br />
                       모듈 {object.module_mm} mm · 비율 고정
+                      {object.barcode_usage === "sample" && <><br />SAMPLE / 검토용 · 실제 상품 번호가 아닙니다.</>}
                     </p>
                   )}
                   {object.type !== "image" && object.type !== "barcode" && (
@@ -1500,6 +1489,7 @@ export default function EditorPage({
               bindings: "상품 연결과 복제",
               exports: "제조 조건과 출력 검수",
               "3d": "3D 조립 미리보기",
+              history: "면별 텍스트 변경 기록",
             }[panel]
           }
           onClose={() => setPanel(null)}
@@ -1522,6 +1512,9 @@ export default function EditorPage({
               faceId={face.id}
               onCommit={commit}
               readOnly={readOnly}
+              geometry={project.geometry as { faces: FaceStructure[] } | undefined}
+              onGeometry={(geometry) => setProject((current) => current ? { ...current, geometry } : current)}
+              onFaceSelect={(faceId) => { setFaceId(faceId); setSelected(null); setPanel(null); }}
             />
           )}
           {panel === "bindings" && (
@@ -1532,6 +1525,7 @@ export default function EditorPage({
               readOnly={readOnly}
             />
           )}
+          {panel === "history" && <TextHistory projectId={id} saveCurrent={saveCurrent} readOnly={readOnly} />}
           {panel === "exports" && (
             <ExportTools
               project={project}

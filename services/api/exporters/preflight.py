@@ -81,6 +81,8 @@ def preflight_project(project:dict, approved_conditions:dict|None=None, asset_re
         for field in required_fields:
             if field not in (scene.get("confirmed_fields") or []):
                 add("FIELD_CONFIRMATION_REQUIRED","법정 표시·제품 정보를 고객이 확인해야 합니다.",field=field)
+        if scene.get("pouch_features") is not None:
+            add("POUCH_FEATURES_PRODUCTION_UNSUPPORTED","개봉부·지퍼·뜯는 노치는 검토 PDF에서 확인할 수 있습니다. 제조사 가공 출력 규격 검증 전 제작용 출력은 지원하지 않습니다.")
         if scene.get("holes"):
             # PDF spot cut contours are not implemented; fail closed rather than erase circles and claim a cut file.
             add("HOLE_PRODUCTION_UNSUPPORTED","걸이 구멍의 제조사 칼선·가공 출력은 현재 기본 RGB 출력기에서 지원하지 않습니다.")
@@ -95,8 +97,11 @@ def preflight_project(project:dict, approved_conditions:dict|None=None, asset_re
                         ppi=min(pixels[0]*25.4/obj["width_mm"],pixels[1]*25.4/obj["height_mm"])
                         if ppi+0.001<min_ppi:
                             add("LOW_PPI",f"이미지 유효 해상도 {ppi:.1f}ppi가 제조사 최소 {min_ppi:g}ppi 미만입니다.",effective_ppi=round(ppi,2),**details)
-                    elif obj["type"]=="barcode" and obj.get("barcode_owned") is not True:
-                        add("BARCODE_OWNERSHIP_REQUIRED","GS1 발급 번호와 사용 권한을 고객이 확인해야 합니다.",**details)
+                    elif obj["type"]=="barcode":
+                        if obj.get("barcode_usage")=="sample":
+                            add("SAMPLE_BARCODE_PRODUCTION_FORBIDDEN","샘플 바코드는 검토 전용이며 정식 상품 번호와 사용 권한 확인 전 제작용으로 출력할 수 없습니다.",**details)
+                        elif obj.get("barcode_owned") is not True:
+                            add("BARCODE_OWNERSHIP_REQUIRED","GS1 발급 번호와 사용 권한을 고객이 확인해야 합니다.",**details)
                 except GeometryValidationError as exc:
                     add(exc.code,exc.message,"review",field=exc.field,**details)
     basic_review = None

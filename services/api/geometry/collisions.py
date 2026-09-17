@@ -72,10 +72,17 @@ def collision_report(scene,geometry):
                 if math.hypot(x-max(left,min(x,right)),y-max(top,min(y,bottom)))<radius+2:
                     issue("HOLE_OBJECT_COLLISION","구멍과 2mm 보호 여백이 중요 문구 또는 바코드와 겹칩니다.",fid,obj["id"],hole.get("id"))
             for region in regions["no_print"]:
-                if region.get("kind")=="hole_guard": continue
+                if region.get("kind") in {"hole_guard", "header_guard"}: continue
                 left,top=region["x_mm"],region["y_mm"]
                 if math.hypot(x-max(left,min(x,left+region["width_mm"])),y-max(top,min(y,top+region["height_mm"])))<radius+2:
                     issue("HOLE_SEAL_COLLISION","구멍 보호 여백이 실링·인쇄 금지영역과 겹칩니다.",fid,hole_id=hole.get("id"))
+        for obj in visible:
+            if obj["type"] not in {"text", "barcode"}: continue
+            for region in regions.get("structural_guards", []):
+                area=(region["x_mm"],region["y_mm"],region["x_mm"]+region["width_mm"],region["y_mm"]+region["height_mm"])
+                if overlap(bounds(obj),area):
+                    issue("POUCH_FEATURE_OBJECT_COLLISION", "중요 문구 또는 바코드가 개봉부·지퍼·뜯는 선의 보호 영역과 겹칩니다.",fid,obj["id"])
+                    break
         for barcode in [o for o in visible if o["type"]=="barcode"]:
             for fold in regions.get("fold",[]):
                 fold_bounds=(min(fold["x1_mm"],fold["x2_mm"])-2,min(fold["y1_mm"],fold["y2_mm"])-2,max(fold["x1_mm"],fold["x2_mm"])+2,max(fold["y1_mm"],fold["y2_mm"])+2)
