@@ -71,7 +71,7 @@ export function AIStudio({
   faceId: string;
   referenceAssets: Asset[];
   saveCurrent: () => Promise<number>;
-  onSelect: (asset: Asset) => void;
+  onSelect: (asset: Asset) => void | Promise<void>;
   readOnly: boolean;
 }) {
   const [prompt, setPrompt] = useState("");
@@ -190,6 +190,19 @@ export function AIStudio({
       });
       setJob(result);
       setRetry((n) => n + 1);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function selectAsset(asset: Asset) {
+    setBusy(true);
+    setError("");
+    setQuote(undefined);
+    try {
+      await onSelect(asset);
+      setNotice("현재 면에 원본 비율을 유지한 배경을 적용했습니다. 위에 있는 원본 이미지가 가린다면 레이어에서 숨겨 주세요. 텍스트와 원본 자산은 유지됩니다.");
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -404,14 +417,8 @@ export function AIStudio({
                     </span>
                     <button
                       className="button button-light button-sm"
-                      disabled={readOnly}
-                      onClick={() => {
-                        setQuote(undefined);
-                        onSelect(asset);
-                        setNotice(
-                          "현재 면에 새 배경 레이어를 추가했습니다. 텍스트와 원본 자산은 유지됩니다.",
-                        );
-                      }}
+                      disabled={readOnly || busy}
+                      onClick={() => void selectAsset(asset)}
                     >
                       이 면의 배경으로 적용
                     </button>

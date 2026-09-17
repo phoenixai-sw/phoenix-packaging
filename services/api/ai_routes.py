@@ -13,6 +13,7 @@ from .billing.models import Quote, Reservation
 from .billing.service import reserve, release_unit, canonical_hash
 from .ai_jobs import summarize_job, lock_tenant_work
 from .image_provider import get_capabilities
+from .image_sizing import ImageSizeError, select_image_output
 
 
 def ensure_ai_access(settings,user):
@@ -46,6 +47,10 @@ def prepare_ai_quote(db,user,body,settings):
         ensure_asset_available(owned_record(db,Asset,reference,user.tenant_id))
     elif reference: raise APIError(422,"REFERENCE_ACTION_MISMATCH","원본 이미지를 수정하려면 이미지 수정 작업을 선택해 주세요.")
     data={"action":action,"prompt":prompt.strip(),"face_id":face_id,"width_mm":face["width_mm"],"height_mm":face["height_mm"],"reference_asset_id":str(reference) if reference else None,"workspace_id":project.workspace_id,"provider_mode":settings.ai_provider,"model":settings.image_model,"quality":"high"}
+    try:
+        data.update(select_image_output(settings.image_model, face["width_mm"], face["height_mm"]))
+    except ImageSizeError as error:
+        raise APIError(422,"AI_SIZE_INVALID",str(error)) from None
     return {"action":action,"units":units,"project_id":project.id,"base_revision":project.base_revision,"input_data":data}
 
 
