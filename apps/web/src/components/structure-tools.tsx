@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Barcode, Plus, Trash2, LoaderCircle, ScanLine } from "lucide-react";
 import { api, errorMessage } from "@/lib/api";
 import { Feedback } from "./management";
@@ -19,21 +19,30 @@ export function StructureTools({
   const [moduleMm, setModuleMm] = useState(0.33);
   const [height, setHeight] = useState(22.85);
   const [owned, setOwned] = useState(false);
-  const [x, setX] = useState(20);
-  const [y, setY] = useState(20);
+  const [x, setX] = useState("");
+  const [y, setY] = useState("");
   const [holeX, setHoleX] = useState(50);
   const [holeY, setHoleY] = useState(20);
   const [diameter, setDiameter] = useState(6);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const latestScene = useRef(scene);
+  latestScene.current = scene;
+  const active = useRef(true);
+  useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
   const face = scene.faces.find((f) => f.id === faceId)!;
   async function addBarcode(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError("");
     try {
-      const data = await api<{ width_mm: number; height_mm: number }>(
+      if ((x === "") !== (y === ""))
+        throw new Error("직접 배치할 때는 X와 Y 좌표를 모두 입력해 주세요.");
+      const data = await api<{ width_mm: number; height_mm: number; placement: { x_mm: number; y_mm: number } }>(
         "/geometry/barcode",
         {
           method: "POST",
@@ -41,6 +50,9 @@ export function StructureTools({
             value: code,
             module_mm: moduleMm,
             bar_height_mm: height,
+            scene,
+            face_id: faceId,
+            ...(x !== "" ? { x_mm: Number(x), y_mm: Number(y) } : {}),
           }),
         },
       );
@@ -48,12 +60,12 @@ export function StructureTools({
         id: crypto.randomUUID(),
         type: "barcode",
         face_id: faceId,
-        x_mm: x,
-        y_mm: y,
+        x_mm: data.placement.x_mm,
+        y_mm: data.placement.y_mm,
         width_mm: data.width_mm,
         height_mm: data.height_mm,
         rotation_deg: 0,
-        z_index: Math.max(0, ...face.objects.map((o) => o.z_index)) + 1,
+        z_index: Math.min(10000, Math.max(0, ...face.objects.map((o) => o.z_index)) + 1),
         barcode_value: code,
         module_mm: moduleMm,
         bar_height_mm: height,
@@ -61,6 +73,9 @@ export function StructureTools({
         visible: true,
         print_enabled: true,
       };
+      if (!active.current) return;
+      if (latestScene.current !== scene)
+        throw new Error("검증 중 디자인이 변경되었습니다. 현재 디자인에서 다시 추가해 주세요.");
       onCommit({
         ...scene,
         faces: scene.faces.map((f) =>
@@ -68,7 +83,7 @@ export function StructureTools({
         ),
       });
       setNotice(
-        "검증된 EAN-13을 추가했습니다. 여백과 가공 영역은 출력 검수에서 다시 확인합니다.",
+        `여백과 충돌을 확인하고 X ${data.placement.x_mm} / Y ${data.placement.y_mm}mm에 바코드를 추가했습니다.`,
       );
     } catch (e) {
       setError(errorMessage(e));
@@ -135,8 +150,8 @@ export function StructureTools({
               막대 높이 (mm)
               <input
                 type="number"
-                min={18}
-                max={100}
+                min={18.28}
+                max={45.7}
                 step={0.01}
                 value={height}
                 onChange={(e) => setHeight(Number(e.target.value))}
@@ -148,7 +163,8 @@ export function StructureTools({
                 type="number"
                 step={0.1}
                 value={x}
-                onChange={(e) => setX(Number(e.target.value))}
+                placeholder="비워 두면 자동 배치"
+                onChange={(e) => setX(e.target.value)}
               />
             </label>
             <label className="field">
@@ -157,7 +173,8 @@ export function StructureTools({
                 type="number"
                 step={0.1}
                 value={y}
-                onChange={(e) => setY(Number(e.target.value))}
+                placeholder="비워 두면 자동 배치"
+                onChange={(e) => setY(e.target.value)}
               />
             </label>
           </div>
@@ -170,6 +187,7 @@ export function StructureTools({
             이 상품에 사용할 수 있는 소유 번호입니다.
           </label>
           <p className="field-hint">
+            X·Y를 비워 두면 문구와 가공 영역을 피해 자동으로 배치합니다.{" "}
             번호를 발급하지 않습니다. 소유 미확인 번호는 제작 출력이 제한됩니다.
           </p>
           <button

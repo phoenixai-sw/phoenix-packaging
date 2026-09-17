@@ -11,6 +11,7 @@ import {
 import {
   useApiData,
   roleOf,
+  dateTime,
   type Role,
   type WorkspaceData,
 } from "@/lib/business";
@@ -26,7 +27,13 @@ type Member = {
 };
 type Team = {
   members: Member[];
-  invitations: Array<{ id: string; email: string; role: Role; status: string }>;
+  invitations: Array<{
+    id: string;
+    email: string;
+    role: Role;
+    status: "pending";
+    expires_at: string;
+  }>;
   seat_limit: number;
 };
 export default function TeamPage() {
@@ -45,6 +52,7 @@ export default function TeamPage() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [invitationUrl, setInvitationUrl] = useState("");
+  const [latestInvitationId, setLatestInvitationId] = useState("");
   const [formError, setFormError] = useState("");
   useEffect(() => {
     const value = new URLSearchParams(window.location.search).get("invite");
@@ -74,7 +82,7 @@ export default function TeamPage() {
         window.location.assign("/app");
         return;
       } else {
-        const invitation = await api<{ invitation_url: string }>(
+        const invitation = await api<{ id: string; invitation_url: string }>(
           "/team/invitations",
           {
             method: "POST",
@@ -82,6 +90,7 @@ export default function TeamPage() {
           },
         );
         setInvitationUrl(invitation.invitation_url);
+        setLatestInvitationId(invitation.id);
         setNotice(
           "초대 링크를 만들었습니다. 지정한 이메일의 사용자에게 직접 전달해 주세요.",
         );
@@ -109,6 +118,24 @@ export default function TeamPage() {
           ...patch,
         }),
       });
+      refresh();
+    } catch (e) {
+      setFormError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function revokeInvitation(id: string) {
+    setBusy(true);
+    setFormError("");
+    setNotice("");
+    try {
+      await api(`/team/invitations/${id}`, { method: "DELETE" });
+      if (latestInvitationId === id) {
+        setInvitationUrl("");
+        setLatestInvitationId("");
+      }
+      setNotice("초대를 취소했습니다. 같은 이메일로 새 초대를 만들 수 있습니다.");
       refresh();
     } catch (e) {
       setFormError(errorMessage(e));
@@ -153,6 +180,7 @@ export default function TeamPage() {
           <p className="field-hint">
             이 링크는 지금만 표시됩니다. 지정한 Gmail 또는 Google Workspace
             계정으로 로그인한 분이 7일 안에 한 번 수락할 수 있습니다.
+            링크를 잃어버렸다면 대기 중인 초대를 취소한 뒤 다시 초대해 주세요.
           </p>
           <label className="field">
             직접 전달할 링크
@@ -317,15 +345,37 @@ export default function TeamPage() {
           </section>
           {!!data?.invitations.length && (
             <section className="management-card">
-              <h2>보낸 초대</h2>
+              <h2>수락 대기 중인 초대</h2>
               <div className="management-table-wrap">
                 <table className="management-table">
+                  <thead>
+                    <tr>
+                      <th>이메일</th>
+                      <th>역할</th>
+                      <th>상태</th>
+                      <th>만료일</th>
+                      {owner && <th>관리</th>}
+                    </tr>
+                  </thead>
                   <tbody>
                     {data.invitations.map((invite) => (
                       <tr key={invite.id}>
                         <td>{invite.email}</td>
-                        <td>{invite.role}</td>
-                        <td>{invite.status}</td>
+                        <td>{invite.role === "editor" ? "편집자" : "열람자"}</td>
+                        <td>{invite.status === "pending" ? "수락 대기" : ""}</td>
+                        <td>{dateTime(invite.expires_at)}</td>
+                        {owner && (
+                          <td>
+                            <button
+                              className="button button-light button-sm"
+                              disabled={busy}
+                              onClick={() => void revokeInvitation(invite.id)}
+                              aria-label={`${invite.email} 초대 취소`}
+                            >
+                              초대 취소
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>

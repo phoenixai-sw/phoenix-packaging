@@ -2,8 +2,9 @@
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { CheckCircle2, LoaderCircle } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock3, LoaderCircle } from "lucide-react";
 import { api, errorMessage } from "@/lib/api";
+import { paymentOutcome, type PaymentOrderResult, type PaymentOutcome } from "@/lib/billing-state";
 function PaymentReturn() {
   const params = useSearchParams();
   const hasPaymentResult = Boolean(
@@ -15,7 +16,7 @@ function PaymentReturn() {
         Number(params.get("amount")) > 0),
   );
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
+  const [outcome, setOutcome] = useState<PaymentOutcome>();
   const [error, setError] = useState(
     params.get("failed")
       ? "결제가 완료되지 않았습니다. 결제 내역에서 주문 상태를 확인해 주세요."
@@ -25,8 +26,9 @@ function PaymentReturn() {
     setBusy(true);
     setError("");
     try {
+      let order: PaymentOrderResult;
       if (params.get("authKey"))
-        await api("/billing/billing-key/confirm", {
+        order = await api<PaymentOrderResult>("/billing/billing-key/confirm", {
           method: "POST",
           body: JSON.stringify({
             order_id: params.get("order_id"),
@@ -35,7 +37,7 @@ function PaymentReturn() {
           }),
         });
       else
-        await api("/billing/confirm", {
+        order = await api<PaymentOrderResult>("/billing/confirm", {
           method: "POST",
           body: JSON.stringify({
             order_id: params.get("orderId"),
@@ -43,7 +45,7 @@ function PaymentReturn() {
             amount: Number(params.get("amount")),
           }),
         });
-      setDone(true);
+      setOutcome(paymentOutcome(order));
       window.history.replaceState({}, "", "/app/billing/return");
     } catch (e) {
       setError(errorMessage(e));
@@ -53,24 +55,22 @@ function PaymentReturn() {
   }
   return (
     <div className="payment-return">
-      <CheckCircle2 size={38} />
-      <h1>{done ? "결제를 확인했습니다." : "결제 결과를 확인해 주세요."}</h1>
+      {outcome?.state === "paid" ? <CheckCircle2 size={38} /> : outcome?.state === "failed" || error ? <AlertCircle size={38} /> : <Clock3 size={38} />}
+      <h1>{outcome?.title || "결제 결과를 확인해 주세요."}</h1>
       <p>
-        {done
-          ? "잔액과 결제 내역에 결과가 반영됩니다."
-          : "결제 서비스에서 돌아온 결과를 서버에서 검증한 뒤 지급합니다."}
+        {outcome?.message || "결제 서비스에서 돌아온 결과를 서버에서 검증한 뒤 지급합니다."}
       </p>
       {error && (
         <div role="alert" className="alert alert-error">
           {error}
         </div>
       )}
-      {!done && !params.get("failed") && !hasPaymentResult && (
+      {!outcome && !params.get("failed") && !hasPaymentResult && (
         <p className="field-hint">
           확인할 결제 결과가 없습니다. 주문 내역에서 진행 상태를 확인해 주세요.
         </p>
       )}
-      {!done && !params.get("failed") && hasPaymentResult && (
+      {!outcome && !params.get("failed") && hasPaymentResult && (
         <button
           className="button button-dark"
           onClick={() => void confirm()}

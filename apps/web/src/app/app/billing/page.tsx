@@ -11,6 +11,7 @@ import { useApiData, roleOf, money, dateTime } from "@/lib/business";
 import { api, errorMessage } from "@/lib/api";
 import { useSession } from "@/components/workspace";
 import { openTossPayment } from "@/lib/payments";
+import { paymentOutcome, planSelection, refundOutcome, type PaymentOrderResult } from "@/lib/billing-state";
 const creditLabels: Record<string, string> = {
   trial: "무료 체험",
   subscription: "월 지급",
@@ -77,6 +78,7 @@ type Billing = {
     }>;
   };
   orders: Order[];
+  entitlements: { active_subscription: boolean };
   payment_capabilities: {
     provider: string;
     test_mode: boolean;
@@ -129,10 +131,15 @@ export default function BillingPage() {
     setFormError("");
     try {
       if (data.payment_capabilities.mock_available) {
-        await api("/billing/mock-confirm", {
+        const result = await api<PaymentOrderResult>("/billing/mock-confirm", {
           method: "POST",
           body: JSON.stringify({ order_id: order.order_id }),
         });
+        if (result.status !== "paid") {
+          setFormError(paymentOutcome(result).message);
+          refresh();
+          return;
+        }
         setNotice(
           "모의 결제가 확인되었습니다. 실제 금액은 결제되지 않았습니다.",
         );
@@ -189,14 +196,15 @@ export default function BillingPage() {
     e.preventDefault();
     if (!refund) return;
     setBusy(true);
+    setFormError("");
     try {
-      await api(`/billing/orders/${refund.order_id || refund.id}/refund`, {
+      const result = await api<PaymentOrderResult>(`/billing/orders/${refund.order_id || refund.id}/refund`, {
         method: "POST",
         body: JSON.stringify({ reason }),
       });
       setRefund(undefined);
       setReason("");
-      setNotice("환불 처리를 확인했습니다.");
+      setNotice(refundOutcome(result).message);
       refresh();
     } catch (e) {
       setFormError(errorMessage(e));
@@ -299,14 +307,14 @@ export default function BillingPage() {
                     disabled={
                       !owner ||
                       busy ||
-                      data.subscription?.plan_id === plan.id ||
+                      planSelection(data.subscription, data.entitlements.active_subscription, plan.id) === "current" ||
                       !(
                         data.payment_capabilities.checkout_available ||
                         data.payment_capabilities.mock_available
                       )
                     }
                     onClick={() =>
-                      data.subscription
+                      planSelection(data.subscription, data.entitlements.active_subscription, plan.id) === "change"
                         ? void changePlan(plan.id)
                         : void createOrder({
                             kind: "subscription",
@@ -314,9 +322,9 @@ export default function BillingPage() {
                           })
                     }
                   >
-                    {data.subscription?.plan_id === plan.id
+                    {planSelection(data.subscription, data.entitlements.active_subscription, plan.id) === "current"
                       ? "이용 중"
-                      : data.subscription
+                      : planSelection(data.subscription, data.entitlements.active_subscription, plan.id) === "change"
                         ? "변경 조건 확인"
                         : "구독 주문 확인"}
                   </button>
@@ -526,7 +534,7 @@ export default function BillingPage() {
               <textarea
                 required
                 minLength={3}
-                maxLength={300}
+                maxLength={200}
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 rows={3}

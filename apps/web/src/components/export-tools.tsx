@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Check, Download, LoaderCircle, ShieldCheck } from "lucide-react";
 import { api, errorMessage } from "@/lib/api";
+import { canRetryReviewExport } from "@/lib/export-state";
 import { useApiData } from "@/lib/business";
 import { Feedback } from "./management";
 import type { Project, Scene } from "@editor/model";
@@ -37,6 +38,7 @@ type Quote = {
 };
 type Job = {
   id: string;
+  kind?: string;
   status: string;
   download_url?: string;
   error?: { message?: string } | string;
@@ -230,7 +232,7 @@ export function ExportTools({
     }
   }
   async function retryJob() {
-    if (!job) return;
+    if (!job || !canRetryReviewExport(job)) return;
     setBusy(true);
     setError("");
     try {
@@ -556,7 +558,7 @@ export function ExportTools({
                 <Download size={16} /> 파일 다운로드
               </a>
             )}
-            {job.status === "failed" && (
+            {canRetryReviewExport(job) && (
               <button
                 className="button button-light"
                 disabled={busy || readOnly}
@@ -564,6 +566,11 @@ export function ExportTools({
               >
                 출력 다시 시도
               </button>
+            )}
+            {job.status === "failed" && job.kind === "production_export" && (
+              <p className="field-hint">
+                제작 출력은 현재 디자인을 다시 검수하고 새 견적을 확인한 뒤 요청해 주세요.
+              </p>
             )}
             <Link
               className="text-link"

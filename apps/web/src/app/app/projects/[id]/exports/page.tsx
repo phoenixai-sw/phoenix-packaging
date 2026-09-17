@@ -10,6 +10,7 @@ import {
   RotateCcw,
 } from "lucide-react";
 import { api, errorMessage } from "@/lib/api";
+import { canRetryReviewExport, isExportInProgress } from "@/lib/export-state";
 import { Dialog } from "@/components/management";
 import { PrinterIntake } from "@/components/printer-intake";
 import { useSession } from "@/components/workspace";
@@ -30,6 +31,7 @@ const statusLabel: Record<string, string> = {
   succeeded: "출력 완료",
   failed: "출력 실패",
   canceled: "취소됨",
+  reconciliation_required: "결과 확인 필요",
 };
 export default function Exports({
   params,
@@ -60,9 +62,7 @@ export default function Exports({
         setJobs(result.items);
         setError("");
         if (
-          result.items.some((job) =>
-            ["queued", "running", "validating"].includes(job.status),
-          )
+          result.items.some((job) => isExportInProgress(job.status))
         )
           timer = setTimeout(load, 2500);
       } catch (e) {
@@ -183,7 +183,7 @@ export default function Exports({
                     <Download size={16} /> 다운로드
                   </a>
                 </div>
-              ) : job.status === "failed" ? (
+              ) : canRetryReviewExport(job) ? (
                 <button
                   className="button button-light button-sm"
                   onClick={() => void retryExport(job.id)}
@@ -196,10 +196,16 @@ export default function Exports({
                   )}{" "}
                   다시 출력
                 </button>
-              ) : (
+              ) : job.status === "failed" ? (
+                <Link className="button button-light button-sm" href={`/app/projects/${id}/editor`}>
+                  디자인 검수와 새 견적
+                </Link>
+              ) : isExportInProgress(job.status) ? (
                 <span className="export-history-pending">
                   <LoaderCircle className="spin" size={17} /> 작업 중
                 </span>
+              ) : (
+                <span className="pill">{statusLabel[job.status] || job.status}</span>
               )}
             </article>
           ))}
