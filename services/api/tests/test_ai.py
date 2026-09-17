@@ -19,6 +19,7 @@ from services.api.config import Settings
 from services.api.database import utcnow
 from services.api.feature_models import AiUnit, Membership, ProviderAttempt, WorkspaceMember
 from services.api.image_provider import ImageResult, ProviderError, generate_image
+from services.api.image_sizing import select_image_output
 from services.api.main import create_app
 from services.api.models import Asset, Job, User
 from services.api.tests.test_api import register, project, image_file
@@ -214,6 +215,56 @@ def test_quote_expiry_revision_and_tenant_cannot_be_bypassed(ai):
         stolen=other.post("/v1/jobs",headers={"Idempotency-Key":"stolen"},json={"quote_id":fresh["id"]})
         assert stolen.status_code==404
     assert credits(client)["available"]==30 and credits(client)["reserved"]==0
+
+
+def test_quote_freezes_server_image_size_and_rejects_client_override(ai):
+    app,client,_,item=ai
+    malicious={"output_size":"3840x3840","size_policy_version":"attacker","quality":"max","model":"unknown","width_mm":1,"height_mm":1}
+    estimate=quote(client,item,input_data=malicious)
+    with app.state.session_factory() as db:
+        stored=db.get(Quote,estimate["id"])
+        expected=select_image_output(app.state.settings.image_model,item["width_mm"],item["height_mm"])
+        assert stored.input_data["output_size"]==expected["output_size"] and stored.input_data["quality"]=="high"
+        original_hash=stored.input_hash
+        data=deepcopy(stored.input_data)
+        data["output_size"]="1024x1024"
+        stored.input_data=data
+        db.commit()
+    denied=client.post("/v1/jobs",headers={"Idempotency-Key":"tampered-size"},json={"quote_id":estimate["id"]})
+    assert denied.status_code==409 and denied.json()["code"]=="QUOTE_CHANGED"
+    assert credits(client)["reserved"]==0 and credits(client)["available"]==30
+    valid=quote(client,item)
+    assert valid["input_hash"]==original_hash
+    top_level=client.post("/v1/quotes",json={"project_id":item["id"],"base_revision":1,"action":"image.generate.standard","requested_units":1,"prompt":"Detailed packaging art","output_size":"3840x3840"})
+    assert top_level.status_code==422
+
+
+def test_front_back_reference_edits_and_front_reedit_use_exact_ratio_and_thirty_credits(ai):
+    app,client,_,_=ai
+    response=client.post("/v1/projects",json={"name":"King Kong reference review","product_name":"Dog treats","template_id":"stand-up-pouch","width_mm":240,"height_mm":330,"bottom_mm":120})
+    assert response.status_code==201,response.text
+    item=response.json()["data"]
+    references=[client.post("/v1/assets",data={"project_id":item["id"]},files={"file":image_file()}).json()["data"]["id"] for _ in range(2)]
+    previous=None
+    for index,face in enumerate(("front","back","front")):
+        reference=references[index] if index<2 else previous
+        estimate=quote(client,item,action="image.edit.standard",face_id=face,reference_asset_id=reference)
+        assert estimate["credit_total"]==10
+        submitted=client.post("/v1/jobs",headers={"Idempotency-Key":f"reference-{index}"},json={"quote_id":estimate["id"]})
+        assert submitted.status_code==202,submitted.text
+        created=submitted.json()["data"]
+        with app.state.session_factory() as db:
+            snapshot=db.get(Job,created["id"]).snapshot
+            assert snapshot["output_size"]=="2432x3344" and snapshot["output_experimental"] is True
+        def provider(settings,data,source):
+            assert source and data["face_id"]==face and data["reference_asset_id"]==reference
+            assert data["output_size"]=="2432x3344"
+            return image_result()
+        assert run(app,provider,limit=1)==1
+        done=state(client,created["id"])
+        assert done["status"]=="succeeded" and done["credit_charged"]==10
+        previous=done["result"]["assets"][0]["id"]
+    assert credits(client)["available"]==0 and credits(client)["consumed"]==30
 
 
 def test_reference_assets_obey_workspace_access(ai):

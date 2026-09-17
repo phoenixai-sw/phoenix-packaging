@@ -36,7 +36,7 @@ import {
 import { api, ApiError, errorMessage } from "@/lib/api";
 import { useSession } from "@/components/workspace";
 import { canEdit, useApiData } from "@/lib/business";
-import { uploadAsset } from "@/lib/assets";
+import { assetImageDimensions, uploadAsset } from "@/lib/assets";
 import { Dialog } from "@/components/management";
 import { AIStudio } from "@/components/ai-studio";
 import { StructureTools } from "@/components/structure-tools";
@@ -46,7 +46,12 @@ import type { PackagingPreviewProps } from "@preview3d/PackagingPreview";
 import { readRecovery, writeRecovery, type Recovery } from "@/lib/recovery";
 import {
   addText,
+  applyImageBackground,
+  containImage,
+  faceSafeRegion,
+  initialImagePlacement,
   moveLayer,
+  sendLayerToBack,
   removeObject,
   updateObject,
   safeWarnings,
@@ -94,6 +99,7 @@ export default function EditorPage({
   const [historyCount, setHistoryCount] = useState({ past: 0, future: 0 });
   const [editing, setEditing] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [fittingImage, setFittingImage] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState("");
   const [exportId, setExportId] = useState<string | null>(null);
@@ -108,6 +114,8 @@ export default function EditorPage({
   const saving = useRef<Promise<Project | null> | null>(null);
   const conflict = useRef(false);
   const mounted = useRef(true);
+  const activeProjectId = useRef(id);
+  activeProjectId.current = id;
   const uploadInput = useRef<HTMLInputElement>(null);
   const recoveryKey = `${session?.user.id}:${id}`;
   useEffect(() => {
@@ -280,48 +288,15 @@ export default function EditorPage({
     setHistoryCount({ past: 0, future: 0 });
     void writeRecovery(recoveryKey, null);
   }
-  function useGeneratedAsset(asset: { id: string }) {
-    if (!current.current) return;
-    const target = current.current.faces.find((f) => f.id === faceId)!;
-    const layer: SceneObject = {
-      id: crypto.randomUUID(),
-      type: "image",
-      face_id: faceId,
-      asset_id: asset.id,
-      x_mm: 0,
-      y_mm: 0,
-      width_mm: target.width_mm,
-      height_mm: target.height_mm,
-      rotation_deg: 0,
-      z_index: Math.min(0, ...target.objects.map((o) => o.z_index)) - 1,
-      visible: true,
-      print_enabled: true,
-      locked: true,
-    };
-    commit({
-      ...current.current,
-      faces: current.current.faces.map((f) =>
-        f.id === faceId
-          ? {
-              ...f,
-              objects: [
-                ...f.objects.filter(
-                  (o) =>
-                    !(
-                      o.type === "image" &&
-                      o.locked &&
-                      o.x_mm === 0 &&
-                      o.y_mm === 0 &&
-                      o.width_mm === f.width_mm &&
-                      o.height_mm === f.height_mm
-                    ),
-                ),
-                layer,
-              ],
-            }
-          : f,
-      ),
-    });
+  async function useGeneratedAsset(asset: { id: string; width_px?: number; height_px?: number }) {
+    if (!current.current || readOnly) return;
+    const targetFaceId = faceId;
+    const dimensions = asset.width_px && asset.height_px
+      ? { width_px: asset.width_px, height_px: asset.height_px }
+      : await assetImageDimensions(asset.id);
+    if (!mounted.current || activeProjectId.current !== id || !current.current || !current.current.faces.some((f) => f.id === targetFaceId)) return;
+    // Preserve intervening edits; only the target face's previous AI background is replaced.
+    commit(applyImageBackground(current.current, targetFaceId, { id: asset.id, ...dimensions }));
   }
   useEffect(() => {
     if (
@@ -398,10 +373,33 @@ export default function EditorPage({
   }
   function addTextLayer() {
     if (!current.current) return;
-    const result = addText(current.current, faceId);
-    commit(result.scene);
-    setSelected(result.id);
-    setMobilePane("properties");
+    try {
+      const result = addText(current.current, faceId, geometryFace?.regions?.safe);
+      commit(result.scene);
+      setSelected(result.id);
+      setMobilePane("properties");
+    } catch (e) {
+      setSaveError(errorMessage(e));
+    }
+  }
+  async function fitImageLayer(objectId: string) {
+    if (!current.current || readOnly || fittingImage) return;
+    const targetFaceId = faceId;
+    const original = current.current.faces.find((face) => face.id === targetFaceId)?.objects.find((object) => object.id === objectId);
+    if (original?.type !== "image" || !original.asset_id) return;
+    setFittingImage(objectId);
+    setSaveError("");
+    try {
+      const dimensions = await assetImageDimensions(original.asset_id);
+      const target = current.current?.faces.find((face) => face.id === targetFaceId);
+      const latest = target?.objects.find((object) => object.id === objectId);
+      if (!mounted.current || activeProjectId.current !== id || !target || !latest || latest.asset_id !== original.asset_id) return;
+      change(objectId, containImage({ x_mm: 0, y_mm: 0, width_mm: target.width_mm, height_mm: target.height_mm }, dimensions.width_px, dimensions.height_px));
+    } catch (e) {
+      if (mounted.current) setSaveError(errorMessage(e));
+    } finally {
+      if (mounted.current) setFittingImage(null);
+    }
   }
   function addShape() {
     if (!current.current) return;
@@ -481,21 +479,17 @@ export default function EditorPage({
     setSaveError("");
     try {
       const asset = await uploadAsset(file, id);
+      const dimensions = asset.width_px && asset.height_px
+        ? { width_px: asset.width_px, height_px: asset.height_px }
+        : await assetImageDimensions(asset.id);
+      if (!mounted.current || activeProjectId.current !== id || !current.current) return;
       const face = current.current.faces.find((f) => f.id === faceId)!;
-      const width = Math.min(90, face.width_mm - 40);
       const object: SceneObject = {
         id: crypto.randomUUID(),
         type: "image",
         face_id: faceId,
-        x_mm: 20,
-        y_mm: 20,
-        width_mm: width,
-        height_mm: Math.min(
-          face.height_mm - 40,
-          (width * (asset.height_px || 1)) / (asset.width_px || 1),
-        ),
-        rotation_deg: 0,
-        z_index: Math.max(0, ...face.objects.map((o) => o.z_index)) + 1,
+        ...initialImagePlacement(faceSafeRegion(current.current, face, geometryFace?.regions?.safe), dimensions.width_px, dimensions.height_px),
+        z_index: Math.min(10000, Math.max(0, ...face.objects.map((o) => o.z_index)) + 1),
         asset_id: asset.id,
         visible: true,
         print_enabled: true,
@@ -1219,6 +1213,21 @@ export default function EditorPage({
                       </div>
                     </>
                   )}
+                  {object.type === "image" && object.asset_id && (
+                    <div className="field property-field">
+                      <button
+                        type="button"
+                        className="button button-light button-sm full-width"
+                        style={{ whiteSpace: "normal" }}
+                        disabled={!!fittingImage}
+                        onClick={() => void fitImageLayer(object.id)}
+                      >
+                        {fittingImage === object.id && <LoaderCircle className="spin" size={15} />}
+                        비율 유지하여 면 안에 맞춤
+                      </button>
+                      <small>이미지 전체를 중앙에 놓고 회전을 0°로 맞춥니다. 비율에 따라 여백이 남습니다.</small>
+                    </div>
+                  )}
                   {object.type === "barcode" && (
                     <p className="panel-hint">
                       EAN-13 {object.barcode_value}
@@ -1333,6 +1342,15 @@ export default function EditorPage({
                       </div>
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    className="button button-light button-sm full-width"
+                    onClick={() => {
+                      if (current.current) commit(sendLayerToBack(current.current, object.id));
+                    }}
+                  >
+                    <ArrowDown size={15} /> 맨 뒤로 보내기
+                  </button>
                   <label className="guide-toggle print-toggle">
                     <input
                       type="checkbox"

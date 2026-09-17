@@ -5,6 +5,7 @@ from io import BytesIO
 import hashlib
 import httpx
 from PIL import Image, ImageDraw
+from .image_sizing import ImageSizeError, frozen_image_output, size_capabilities
 
 
 @dataclass
@@ -25,8 +26,9 @@ class ProviderError(Exception):
 def get_capabilities(settings):
     return {"provider": settings.ai_provider, "model": settings.image_model if settings.ai_provider == "openai" else "fixture-v1",
             "generate": settings.ai_provider != "disabled", "edit": settings.ai_provider != "disabled", "mask": False,
-            "standard": {"size": "1024x1024", "quality": "high"},
-            "high": {"enabled": settings.ai_high_enabled, "size": "1536x1024", "quality": "high"},
+            "standard": {"size": "face_aspect_max", "quality": "high", "experimental": True},
+            "high": {"enabled": settings.ai_high_enabled, "size": "face_aspect_max", "quality": "high", "experimental": True},
+            "size_policy": size_capabilities(),
             "high_edit": False, "max_units": 3, "preservation_guaranteed": False}
 
 
@@ -49,19 +51,24 @@ def generate_image(settings, data, reference=None, *, transport=None):
         raise ProviderError("HIGH_RESOLUTION_DISABLED", "고해상도 생성은 아직 제공되지 않습니다.")
     if (action == "image.edit.standard") != (reference is not None):
         raise ProviderError("AI_REFERENCE_MISMATCH", "이미지 수정에는 원본 이미지가 필요합니다.")
+    try:
+        output = frozen_image_output(settings.image_model, data)
+    except ImageSizeError as error:
+        raise ProviderError("AI_SIZE_INVALID", str(error)) from None
+    size = output["output_size"]
     if settings.ai_provider == "fixture":
         if settings.environment == "production":
             raise ProviderError("FIXTURE_FORBIDDEN", "운영 환경에서 데모 이미지를 사용할 수 없습니다.")
         color = hashlib.sha256(data["prompt"].encode()).digest()
-        image = Image.new("RGB", (1024, 1024), tuple(215 + x % 35 for x in color[:3]))
+        width, height = output["output_width_px"], output["output_height_px"]
+        image = Image.new("RGB", (width, height), tuple(215 + x % 35 for x in color[:3]))
         draw = ImageDraw.Draw(image)
-        draw.ellipse((500, 650, 1300, 1450), fill=tuple(40+x%100 for x in color[3:6]))
-        draw.ellipse((-120, -160, 250, 200), fill=tuple(110+x%80 for x in color[6:9]))
-        output = BytesIO(); image.save(output, format="PNG")
-        return ImageResult(output.getvalue(), 1024, 1024, {"provider":"fixture", "model":"fixture-v1", "demo":True, "usage":{}, "cost_usd":0, "cost_is_estimate":False})
+        draw.ellipse((width*.49, height*.63, width*1.27, height*1.42), fill=tuple(40+x%100 for x in color[3:6]))
+        draw.ellipse((-width*.12, -height*.16, width*.24, height*.2), fill=tuple(110+x%80 for x in color[6:9]))
+        buffer = BytesIO(); image.save(buffer, format="PNG")
+        return ImageResult(buffer.getvalue(), width, height, {"provider":"fixture", "model":"fixture-v1", "demo":True, "usage":{}, "cost_usd":0, "cost_is_estimate":False, **output})
     if not settings.openai_api_key:
         raise ProviderError("AI_AUTH", "이미지 제공자 인증 설정이 필요합니다.")
-    size = "1536x1024" if data["action"] == "image.generate.high" else "1024x1024"
     payload = {"model":settings.image_model, "prompt":design_prompt(data), "quality":"high", "size":size, "n":1, "output_format":"png"}
     headers = {"Authorization": "Bearer " + settings.openai_api_key}
     try:
@@ -100,7 +107,8 @@ def generate_image(settings, data, reference=None, *, transport=None):
         image_tokens=details.get("image_tokens",0)
         text_tokens=details.get("text_tokens",max(0,usage.get("input_tokens",0)-image_tokens))
         cost=((text_tokens*5 + image_tokens*8 + usage.get("output_tokens",0)*30)/1_000_000) if known else None
-        return ImageResult(raw,width,height,{"provider":"openai", "model":settings.image_model,"quality":"high","size":size,
+        return ImageResult(raw,width,height,{"provider":"openai", "model":settings.image_model,"quality":"high","size":size, **output,
+            "actual_size":f"{width}x{height}", "output_size_mismatch":(width,height)!=(output["output_width_px"],output["output_height_px"]),
             "prompt_version":"packaging-background-v1","provider_request_id":request_id,"usage":usage,"cost_usd":cost,"cost_is_estimate":True,
             "warning":"AI 이미지의 임의 글자·형태를 확인하세요. 상품 문구와 바코드는 편집 객체로 입력해야 합니다."})
     except (ValueError,KeyError,IndexError,TypeError,OSError,Image.DecompressionBombError):
