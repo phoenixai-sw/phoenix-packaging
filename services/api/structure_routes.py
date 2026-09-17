@@ -62,6 +62,9 @@ def _candidate(project,snapshot):
         lookup[face["id"]].update({key:face[key] for key in ("width_mm","height_mm")})
     scene.update(template_version_id=snapshot["template_version_id"],structure_ref=structure_ref(snapshot),geometry_hash=snapshot["geometry_hash"],
                  bottom_mm=inputs.get("bottom_mm"),depth_mm=inputs.get("depth_mm"),confirmed_fields=[],reviewed_face_ids=[])
+    if snapshot.get("definition",{}).get("feature_policy")=="pouch-finishing-v1":
+        scene["holes"]=deepcopy(geometry.get("holes",[]))
+        scene["pouch_features"]=deepcopy(geometry.get("pouch_features"))
     return validate_scene(scene,structure_snapshot=snapshot)
 
 
@@ -77,7 +80,11 @@ def install_structure_routes(app,db_session,project_payload,snapshot_revision):
         definition=parse_definition(body.structure_definition)
         inputs=body.inputs.model_dump(exclude_none=True) if body.inputs else definition.get("dimensions") or {"width_mm":definition["width_range_mm"]["minimum"],"height_mm":definition["height_range_mm"]["minimum"]}
         snapshot=compile_structure(definition,inputs,"registration-validation")
-        return result(request,{"normalized_definition":definition,"geometry":snapshot["geometry"],"definition_hash":snapshot["definition_hash"],"review_only":True,"production_enabled":False})
+        value={"normalized_definition":definition,"geometry":snapshot["geometry"],"definition_hash":snapshot["definition_hash"],"review_only":True,"production_enabled":False,"approved_dimensions":snapshot["normalized_inputs"]}
+        if definition.get("feature_policy")=="pouch-finishing-v1":
+            from .geometry.finishing import finishing_approval_for_geometry
+            value["approved_finishing"]=finishing_approval_for_geometry(snapshot["geometry"])
+        return result(request,value)
 
     @router.get("/structures", response_model=Envelope[C.Items[G.RegisteredStructure]], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def listing(request:Request,db=Depends(db_session)):

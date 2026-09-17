@@ -8,6 +8,7 @@ from pydantic import Field, JsonValue
 from .base import ContractModel
 from .business import BarcodeRegistration, VerificationLinks
 from ..geometry.definitions import StructureDefinitionV2
+from ..geometry.finishing import FinishingApproval
 
 
 class RegistryApproval(ContractModel):
@@ -20,6 +21,7 @@ class RegistryApproval(ContractModel):
     license: str
     notes: str
     structure_definition_hash: str | None = None
+    finishing_hash: str | None = None
 
 
 class UnapprovedEvidence(ContractModel):
@@ -38,6 +40,7 @@ class RegistryVersionData(ContractModel):
     billing_family_key: str | None = None
     requirements: dict[str, JsonValue] = Field(default_factory=dict, description='Supplier-declared requirements; unsupported keys remain visible and fail preflight.')
     approved_dimensions: dict[str, float | None] = Field(default_factory=dict)
+    approved_finishing: FinishingApproval | None = None
     source: str = ''
     license: str = ''
     material: str = ''
@@ -45,6 +48,14 @@ class RegistryVersionData(ContractModel):
     structure_definition_hash: str | None = None
     review_available: bool = False
     approval: RegistryApproval | UnapprovedEvidence | None
+
+
+class FinishingApprovalDraft(ContractModel):
+    project_id: str
+    base_revision: int
+    geometry_template_id: str
+    approved_dimensions: dict[str,float]
+    approved_finishing: FinishingApproval
 
 
 class MissingRegistryVersion(ContractModel):

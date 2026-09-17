@@ -449,6 +449,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/template-finishing/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finishing Preview */
+        post: operations["finishing_preview_v1_admin_template_finishing_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/{collection}": {
         parameters: {
             query?: never;
@@ -1246,6 +1263,23 @@ export interface paths {
         };
         /** Get Job */
         get: operations["get_job_v1_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/jobs/{job_id}/printer-intakes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Intake History */
+        get: operations["export_intake_history_v1_jobs__job_id__printer_intakes_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2119,6 +2153,7 @@ export interface components {
     schemas: {
         /** AIGenerationJob */
         AIGenerationJob: {
+            availability?: components["schemas"]["ExportAvailability"] | null;
             /** Cancelable */
             cancelable: boolean;
             /** Created At */
@@ -2784,6 +2819,58 @@ export interface components {
              */
             plan_id: "starter" | "pro" | "partner";
         };
+        /** CheckoutTerms */
+        CheckoutTerms: {
+            /** Amount Inc Vat */
+            amount_inc_vat: number;
+            /** Automatic Renewal */
+            automatic_renewal: boolean;
+            /**
+             * Checkout Kind
+             * @enum {string}
+             */
+            checkout_kind: "payment" | "billing_auth";
+            /** Credits */
+            credits: number;
+            /**
+             * Currency
+             * @constant
+             */
+            currency: "KRW";
+            /** First Period Discount Inc Vat */
+            first_period_discount_inc_vat: number;
+            /** Plan Id */
+            plan_id: "pro" | null;
+            /** Policy Version */
+            policy_version: string;
+            /** Pricing Version */
+            pricing_version: string;
+            /**
+             * Proposal Only
+             * @constant
+             */
+            proposal_only: true;
+            /** Renewal Amount Inc Vat */
+            renewal_amount_inc_vat: number | null;
+            /** Renewal Interval */
+            renewal_interval: "month" | null;
+            /** Seats */
+            seats: number | null;
+            /**
+             * Service Code
+             * @enum {string}
+             */
+            service_code: "file_review" | "onboarding" | "pilot_pro_first_month";
+            /** Terms Version */
+            terms_version: string;
+            /** Upgrade Proration Basis */
+            upgrade_proration_basis: "paid_first_period_amount" | null;
+            /**
+             * Vat Included
+             * @constant
+             */
+            vat_included: true;
+        };
         /** CircleHole */
         CircleHole: {
             /** Center X Mm */
@@ -3248,6 +3335,7 @@ export interface components {
         };
         /** EditableExportJob */
         EditableExportJob: {
+            availability?: components["schemas"]["ExportAvailability"] | null;
             /** Cancelable */
             cancelable: boolean;
             /** Created At */
@@ -3526,6 +3614,12 @@ export interface components {
             /** Request Id */
             request_id: string;
         };
+        /** Envelope[FinishingApprovalDraft] */
+        Envelope_FinishingApprovalDraft_: {
+            data: components["schemas"]["FinishingApprovalDraft"];
+            /** Request Id */
+            request_id: string;
+        };
         /** Envelope[FontData] */
         Envelope_FontData_: {
             data: components["schemas"]["FontData"];
@@ -3715,6 +3809,12 @@ export interface components {
         /** Envelope[PrinterIntakeData] */
         Envelope_PrinterIntakeData_: {
             data: components["schemas"]["PrinterIntakeData"];
+            /** Request Id */
+            request_id: string;
+        };
+        /** Envelope[PrinterIntakeHistory] */
+        Envelope_PrinterIntakeHistory_: {
+            data: components["schemas"]["PrinterIntakeHistory"];
             /** Request Id */
             request_id: string;
         };
@@ -3931,6 +4031,28 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** ExportAvailability */
+        ExportAvailability: {
+            /** Checked At */
+            checked_at: string | null;
+            /** Confirmed At */
+            confirmed_at: string | null;
+            /** Credit Restored */
+            credit_restored: number;
+            /** Message */
+            message: string;
+            /** Next Check At */
+            next_check_at: string | null;
+            /** Reason */
+            reason: string | null;
+            /** Retry Allowed */
+            retry_allowed: boolean;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "unchecked" | "available" | "suspect" | "temporarily_unverified" | "unavailable" | "compensated" | "deleted";
+        };
         /** ExportCurrentApproval */
         ExportCurrentApproval: {
             /** Checked At */
@@ -3942,6 +4064,15 @@ export interface components {
             status: "approved" | "revoked" | "unavailable";
             /** Versions */
             versions: components["schemas"]["ExportApprovalVersion"][];
+        };
+        /** ExportCurrentIntake */
+        ExportCurrentIntake: {
+            manufacturer: components["schemas"]["IntakeSourceSummary"];
+            test: components["schemas"]["IntakeSourceSummary"];
+            /** Total Count */
+            total_count: number;
+            /** Unclassified Count */
+            unclassified_count: number;
         };
         /** ExportInput */
         ExportInput: {
@@ -3984,6 +4115,218 @@ export interface components {
             /** Width Mm */
             width_mm: number;
         };
+        /** FinishingApproval */
+        FinishingApproval: {
+            /** Geometry Hash */
+            geometry_hash: string;
+            /** Holes */
+            holes?: components["schemas"]["PhysicalHole"][];
+            /** Pouch Features */
+            pouch_features?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Schema Version
+             * @default 1.0
+             * @constant
+             */
+            schema_version: "1.0";
+        };
+        /** FinishingApprovalDraft */
+        FinishingApprovalDraft: {
+            /** Approved Dimensions */
+            approved_dimensions: {
+                [key: string]: number;
+            };
+            approved_finishing: components["schemas"]["FinishingApproval"];
+            /** Base Revision */
+            base_revision: number;
+            /** Geometry Template Id */
+            geometry_template_id: string;
+            /** Project Id */
+            project_id: string;
+        };
+        /** FinishingDefinition */
+        FinishingDefinition: {
+            /** Holes */
+            holes?: components["schemas"]["Hole"][];
+            pouch_features?: components["schemas"]["PouchFeatures"] | null;
+        };
+        /** FinishingHole */
+        FinishingHole: {
+            /** Center X Mm */
+            center_x_mm: number;
+            /** Center Y Mm */
+            center_y_mm: number;
+            /** Diameter Mm */
+            diameter_mm: number;
+            /** Face Id */
+            face_id: string;
+        };
+        /** FinishingManifest */
+        FinishingManifest: {
+            /**
+             * Artwork Knockouts
+             * @constant
+             */
+            artwork_knockouts: true;
+            /**
+             * Coordinate System
+             * @constant
+             */
+            coordinate_system: "top-left-mm";
+            /** Cubic Tolerance Mm */
+            cubic_tolerance_mm: number;
+            /**
+             * Cut File
+             * @constant
+             */
+            cut_file: "cut.pdf";
+            /**
+             * Delivery
+             * @constant
+             */
+            delivery: "separate_process_pdf_v1";
+            /**
+             * Fold File
+             * @constant
+             */
+            fold_file: "fold.pdf";
+            /**
+             * Manufacturer Approval Inferred
+             * @constant
+             */
+            manufacturer_approval_inferred: false;
+            /**
+             * Outer Bleed Preserved
+             * @constant
+             */
+            outer_bleed_preserved: true;
+            /** Pages */
+            pages: components["schemas"]["FinishingPage"][];
+            physical_specification: components["schemas"]["FinishingApproval"];
+            /** Physical Specification Hash */
+            physical_specification_hash: string;
+            /**
+             * Process File
+             * @constant
+             */
+            process_file: "process.pdf";
+            /**
+             * Schema Version
+             * @constant
+             */
+            schema_version: "1.0";
+            /**
+             * Tear Line Role
+             * @constant
+             */
+            tear_line_role: "reference_only_not_perforation";
+        };
+        /** FinishingNotch */
+        FinishingNotch: {
+            /** Depth Mm */
+            depth_mm: number;
+            /** Edge Endpoints Mm */
+            edge_endpoints_mm: number[];
+            /** Face Id */
+            face_id: string;
+            /** Height Mm */
+            height_mm: number;
+            /**
+             * Shape
+             * @enum {string}
+             */
+            shape: "round" | "v";
+            /**
+             * Side
+             * @enum {string}
+             */
+            side: "left" | "right";
+        };
+        /** FinishingPage */
+        FinishingPage: {
+            /** Cut */
+            cut: number[][];
+            /** Cut Curves */
+            cut_curves: number[][];
+            /** Face Id */
+            face_id: string;
+            /** Fold */
+            fold: number[][];
+            /** Height Mm */
+            height_mm: number;
+            /** Holes */
+            holes: components["schemas"]["FinishingHole"][];
+            /** Notches */
+            notches: components["schemas"]["FinishingNotch"][];
+            /** Process */
+            process: components["schemas"]["FinishingProcess"][];
+            /** Width Mm */
+            width_mm: number;
+        };
+        /** FinishingPathCheck */
+        FinishingPathCheck: {
+            /** Cubic Count */
+            cubic_count: number;
+            /** Face Id */
+            face_id: string;
+            /** Line Count */
+            line_count: number;
+            /**
+             * Passed
+             * @constant
+             */
+            passed: true;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "cut" | "fold" | "process";
+            /** Tolerance Mm */
+            tolerance_mm: number;
+        };
+        /** FinishingPreviewBody */
+        FinishingPreviewBody: {
+            /** Base Revision */
+            base_revision: number;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+        };
+        /** FinishingProcess */
+        FinishingProcess: {
+            /** Face Id */
+            face_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "header_reference" | "zipper_band" | "tear_reference" | "zipper_center" | "seal_region";
+            /** Line Mm */
+            line_mm?: number[] | null;
+            /** Polygon Mm */
+            polygon_mm?: number[] | null;
+        };
+        /** FinishingVerification */
+        FinishingVerification: {
+            /** Cubic Tolerance Mm */
+            cubic_tolerance_mm: number;
+            /**
+             * Cut Duplicate Check
+             * @constant
+             */
+            cut_duplicate_check: "passed";
+            /** Path Checks */
+            path_checks: components["schemas"]["FinishingPathCheck"][];
+            /**
+             * Physical Tooling Tested
+             * @constant
+             */
+            physical_tooling_tested: false;
+        };
         /** FixedDefinition */
         FixedDefinition: {
             dimension_semantics: components["schemas"]["Semantics"];
@@ -3996,9 +4339,10 @@ export interface components {
             /**
              * Feature Policy
              * @default none
-             * @constant
+             * @enum {string}
              */
-            feature_policy: "none";
+            feature_policy: "none" | "pouch-finishing-v1";
+            finishing?: components["schemas"]["FinishingDefinition"] | null;
             /** Fold Lines */
             fold_lines?: components["schemas"]["services__api__geometry__definitions__Line"][];
             /** Panels */
@@ -4854,6 +5198,17 @@ export interface components {
             /** Verification */
             verification: string;
         };
+        /** IntakeSourceSummary */
+        IntakeSourceSummary: {
+            /** Last Recorded At */
+            last_recorded_at: string | null;
+            /** Record Count */
+            record_count: number;
+            /** Status */
+            status: ("submitted" | "accepted" | "rejected") | null;
+            /** Technical Rejected */
+            technical_rejected: boolean;
+        };
         /** IntakeStatistic */
         IntakeStatistic: {
             /** Category */
@@ -5224,9 +5579,16 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "subscription" | "topup";
+            kind: "subscription" | "topup" | "service";
             /** Plan Id */
             plan_id?: ("starter" | "pro" | "partner") | null;
+            recurring_consent?: components["schemas"]["RecurringConsent"] | null;
+            /** Service Base Revision */
+            service_base_revision?: number | null;
+            /** Service Order Id */
+            service_order_id?: string | null;
+            /** Service Quote Id */
+            service_quote_id?: string | null;
         };
         /** OriginalText */
         OriginalText: {
@@ -5391,6 +5753,14 @@ export interface components {
             plan_id: string | null;
             /** Pricing Version */
             pricing_version: string;
+            /** Service Code */
+            service_code?: string | null;
+            /** Service Name */
+            service_name?: string | null;
+            /** Service Order Id */
+            service_order_id?: string | null;
+            /** Service Quote Id */
+            service_quote_id?: string | null;
             /** Status */
             status: string;
         };
@@ -5414,6 +5784,15 @@ export interface components {
             synced_at: string;
             /** Total Amount */
             total_amount: number;
+        };
+        /** PhysicalHole */
+        PhysicalHole: {
+            /** Center X Mm */
+            center_x_mm: number;
+            /** Center Y Mm */
+            center_y_mm: number;
+            /** Diameter Mm */
+            diameter_mm: number;
         };
         /** PixelDimensions */
         PixelDimensions: {
@@ -5692,6 +6071,12 @@ export interface components {
              */
             cut_name: "CUT";
             /**
+             * Finishing Delivery
+             * @default none
+             * @enum {string}
+             */
+            finishing_delivery: "none" | "separate_process_pdf_v1";
+            /**
              * Fold Name
              * @default FOLD
              * @constant
@@ -5815,6 +6200,7 @@ export interface components {
             engine: components["schemas"]["PrintEngineVersion"];
             /** Files */
             files: components["schemas"]["BundleFile"][];
+            finishing?: components["schemas"]["FinishingManifest"] | null;
             /** Fonts */
             fonts: components["schemas"]["FontInfo"][];
             /** Generated At */
@@ -5942,7 +6328,7 @@ export interface components {
              * Role
              * @enum {string}
              */
-            role: "artwork" | "cut" | "fold";
+            role: "artwork" | "cut" | "fold" | "process";
             /**
              * Text Outlined
              * @constant
@@ -5997,6 +6383,12 @@ export interface components {
              * @constant
              */
             cut_name: "CUT";
+            /**
+             * Finishing Delivery
+             * @default none
+             * @enum {string}
+             */
+            finishing_delivery: "none" | "separate_process_pdf_v1";
             /**
              * Fold Name
              * @default FOLD
@@ -6090,6 +6482,7 @@ export interface components {
         PrintVerification: {
             /** Barcodes */
             barcodes: components["schemas"]["BarcodeCheck"][];
+            finishing?: components["schemas"]["FinishingVerification"] | null;
             /**
              * Manufacturer Approval
              * @constant
@@ -6125,6 +6518,47 @@ export interface components {
              */
             verification: "self_reported" | "test_record";
         };
+        /** PrinterIntakeHistory */
+        PrinterIntakeHistory: {
+            /** Items */
+            items: components["schemas"]["PrinterIntakeHistoryItem"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+            /** Total */
+            total: number;
+        };
+        /** PrinterIntakeHistoryItem */
+        PrinterIntakeHistoryItem: {
+            /** Category */
+            category: string;
+            /** Created At */
+            created_at: string;
+            /** Evidence Attached */
+            evidence_attached: boolean;
+            /** Id */
+            id: string;
+            /** Manufacturer */
+            manufacturer: string;
+            /** Notes */
+            notes: string;
+            /**
+             * Record Source
+             * @enum {string}
+             */
+            record_source: "manufacturer" | "test" | "legacy";
+            /** Rejection Kind */
+            rejection_kind: ("technical" | "aesthetic") | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "submitted" | "accepted" | "rejected";
+            /**
+             * Verification
+             * @enum {string}
+             */
+            verification: "self_reported" | "test_record" | "unclassified";
+        };
         /** ProductBody */
         ProductBody: {
             /** Brand Id */
@@ -6154,6 +6588,7 @@ export interface components {
         };
         /** ProductionExportJob */
         ProductionExportJob: {
+            availability?: components["schemas"]["ExportAvailability"] | null;
             /** Cancelable */
             cancelable: boolean;
             /** Created At */
@@ -6165,6 +6600,7 @@ export interface components {
             /** Credit Returned */
             credit_returned: number;
             current_approval?: components["schemas"]["ExportCurrentApproval"] | null;
+            current_intake?: components["schemas"]["ExportCurrentIntake"] | null;
             /** Download Url */
             download_url: string | null;
             /** Error */
@@ -6633,6 +7069,30 @@ export interface components {
             /** Ready */
             ready: boolean;
         };
+        /** RecurringConsent */
+        RecurringConsent: {
+            /**
+             * Automatic Renewal
+             * @constant
+             */
+            automatic_renewal: true;
+            /**
+             * Currency
+             * @constant
+             */
+            currency: "KRW";
+            /** First Amount Inc Vat */
+            first_amount_inc_vat: number;
+            /**
+             * Plan Id
+             * @constant
+             */
+            plan_id: "pro";
+            /** Renewal Amount Inc Vat */
+            renewal_amount_inc_vat: number;
+            /** Terms Version */
+            terms_version: string;
+        };
         /** RefundBody */
         RefundBody: {
             /** Reason */
@@ -6718,6 +7178,8 @@ export interface components {
             evidence_asset_id: string;
             /** Evidence Sha256 */
             evidence_sha256: string;
+            /** Finishing Hash */
+            finishing_hash?: string | null;
             /** License */
             license: string;
             /** Notes */
@@ -6735,6 +7197,7 @@ export interface components {
             approved_dimensions?: {
                 [key: string]: number | null;
             };
+            approved_finishing?: components["schemas"]["FinishingApproval"] | null;
             /** Billing Family Key */
             billing_family_key?: string | null;
             /** Geometry Template Id */
@@ -6969,6 +7432,7 @@ export interface components {
         };
         /** ReviewExportJob */
         ReviewExportJob: {
+            availability?: components["schemas"]["ExportAvailability"] | null;
             /** Cancelable */
             cancelable: boolean;
             /** Created At */
@@ -6979,6 +7443,7 @@ export interface components {
             credit_reserved: number;
             /** Credit Returned */
             credit_returned: number;
+            current_intake?: components["schemas"]["ExportCurrentIntake"] | null;
             /** Download Url */
             download_url: string | null;
             /** Error */
@@ -7378,9 +7843,10 @@ export interface components {
             /**
              * Feature Policy
              * @default none
-             * @constant
+             * @enum {string}
              */
-            feature_policy: "none";
+            feature_policy: "none" | "pouch-finishing-v1";
+            finishing?: components["schemas"]["FinishingDefinition"] | null;
             height_range_mm: components["schemas"]["Range"];
             /**
              * Panel Gap Mm
@@ -7422,15 +7888,13 @@ export interface components {
             /**
              * Automatic Renewal
              * @default false
-             * @constant
              */
-            automatic_renewal: false;
+            automatic_renewal: boolean;
             /**
              * Checkout Enabled
              * @default false
-             * @constant
              */
-            checkout_enabled: false;
+            checkout_enabled: boolean;
             /**
              * Code
              * @enum {string}
@@ -7439,9 +7903,8 @@ export interface components {
             /**
              * Credit Grant
              * @default 0
-             * @constant
              */
-            credit_grant: 0;
+            credit_grant: number;
             /** Name */
             name: string;
             /** Price Note */
@@ -7492,12 +7955,14 @@ export interface components {
             /** Catalog Policy Version */
             catalog_policy_version: string;
             catalog_snapshot: components["schemas"]["ServiceCatalogItem"];
+            /** Checkout Blocked Reason */
+            checkout_blocked_reason?: string | null;
             /**
              * Checkout Enabled
              * @default false
-             * @constant
              */
-            checkout_enabled: false;
+            checkout_enabled: boolean;
+            checkout_terms?: components["schemas"]["CheckoutTerms"] | null;
             /**
              * Created At
              * Format: date-time
@@ -7506,25 +7971,38 @@ export interface components {
             /**
              * Credits Granted
              * @default 0
-             * @constant
              */
-            credits_granted: 0;
+            credits_granted: number;
             /** Current Quote Id */
             current_quote_id: string | null;
             /** Events */
             events: components["schemas"]["ServiceEventPayload"][];
             /** Id */
             id: string;
+            payment_order?: components["schemas"]["PaymentOrderData"] | null;
+            /**
+             * Payment Retry Allowed
+             * @default false
+             */
+            payment_retry_allowed: boolean;
+            /** Payment Retry Blocked Reason */
+            payment_retry_blocked_reason?: string | null;
             /**
              * Payment Status
              * @default not_collected
-             * @constant
              */
-            payment_status: "not_collected";
+            payment_status: string;
             /** Project Id */
             project_id: string | null;
             /** Quotes */
             quotes: components["schemas"]["ServiceQuotePayload"][];
+            /**
+             * Refund Allowed
+             * @default false
+             */
+            refund_allowed: boolean;
+            /** Refund Blocked Reason */
+            refund_blocked_reason?: string | null;
             /** Request Note */
             request_note: string;
             /** Revision */
@@ -7539,6 +8017,12 @@ export interface components {
              * @enum {string}
              */
             status: "requested" | "quoted" | "accepted" | "in_progress" | "delivered" | "completed" | "canceled" | "rejected";
+            subscription?: components["schemas"]["SubscriptionData"] | null;
+            /**
+             * Subscription Active
+             * @default false
+             */
+            subscription_active: boolean;
             /**
              * Updated At
              * Format: date-time
@@ -7549,6 +8033,7 @@ export interface components {
         ServiceQuotePayload: {
             /** Amount Inc Vat */
             amount_inc_vat: number;
+            checkout_terms?: components["schemas"]["CheckoutTerms"] | null;
             /**
              * Created At
              * Format: date-time
@@ -7881,6 +8366,11 @@ export interface components {
         };
         /** StructureValidation */
         StructureValidation: {
+            /** Approved Dimensions */
+            approved_dimensions?: {
+                [key: string]: number;
+            } | null;
+            approved_finishing?: components["schemas"]["FinishingApproval"] | null;
             /** Definition Hash */
             definition_hash: string;
             geometry: components["schemas"]["Geometry"];
@@ -8396,6 +8886,7 @@ export interface components {
             approved_dimensions?: {
                 [key: string]: unknown;
             };
+            approved_finishing?: components["schemas"]["FinishingApproval"] | null;
             /** Billing Family Key */
             billing_family_key?: string | null;
             /** Geometry Template Id */
@@ -12516,6 +13007,138 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_SupportDTO_"];
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Resource unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Revision or idempotency conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Retired operation or unavailable asset */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Request too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Input or semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Editor lease required */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Rate or quota limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+        };
+    };
+    finishing_preview_v1_admin_template_finishing_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FinishingPreviewBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_FinishingApprovalDraft_"];
                 };
             };
             /** @description Malformed request */
@@ -19493,6 +20116,139 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_Annotated_Union_AIGenerationJob__ReviewExportJob__ProductionExportJob__EditableExportJob___FieldInfo_annotation_NoneType__required_True__discriminator__kind____"];
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Resource unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Revision or idempotency conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Retired operation or unavailable asset */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Request too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Input or semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Editor lease required */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Rate or quota limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+        };
+    };
+    export_intake_history_v1_jobs__job_id__printer_intakes_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                before?: string | null;
+            };
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_PrinterIntakeHistory_"];
                 };
             };
             /** @description Malformed request */

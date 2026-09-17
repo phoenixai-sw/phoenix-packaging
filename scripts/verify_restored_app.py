@@ -213,10 +213,15 @@ def verify_restored_app(restore_dir,credentials_path):
                 _check_asset_content(stored,{'content_type':asset.content_type,'source':asset.source,
                                             'width_px':asset.width_px,'height_px':asset.height_px})
                 reopened_assets+=1
-            reopened_exports=0
+            reopened_exports=0;unavailable_exports=0
             for job in jobs:
                 item=_data(client.get(f"/v1/jobs/{job.id}"),"job")
                 require(item["project_id"]==job.project_id and item["status"]==job.status,"Recovered job link differs")
+                if job.kind.endswith('_export') and (job.result or {}).get('_integrity',{}).get('state')=='unavailable':
+                    response=client.get(f'/v1/exports/{job.id}/download')
+                    require(response.status_code==410 and item['download_url'] is None,'Recovered unavailable export must remain unavailable')
+                    unavailable_exports+=1
+                    continue
                 if job.status=="succeeded" and job.kind.endswith("_export") and job.result and job.result.get("storage_key"):
                     response=client.get(f"/v1/exports/{job.id}/download")
                     if job.result.get("_retention", {}).get("state") in {"deleting", "deleted"}:
@@ -234,10 +239,10 @@ def verify_restored_app(restore_dir,credentials_path):
                     "google_authentication_tested":False,"legacy_identity_fixture":legacy_identity,"projects_reopened":len(projects),
                     "revisions_reopened":reopened_revisions,"scene_asset_links_verified":linked_images,
                     "assets_reopened":reopened_assets,"known_unavailable_assets":unavailable_assets,
-                    "jobs_reopened":len(jobs),"export_files_reopened":reopened_exports,
+                      "jobs_reopened":len(jobs),"export_files_reopened":reopened_exports,"known_unavailable_exports":unavailable_exports,
                     "ledger_entries_preserved":len(ledger),"ledger_api_entries_reopened":len(credit_data["ledger"]),
                     "ac31_scenario_covered":bool(projects and ledger and reopened_exports and reopened_assets),
                     "postgres_physical_restore_tested":False,
-                    "local_application_mutations":["offline_test_session","credit_expiry_refresh"]+(["legacy_identity_fixture"] if legacy_identity else [])}
+                      "local_application_mutations":["offline_test_session","credit_expiry_refresh","export_integrity_observation"]+(["legacy_identity_fixture"] if legacy_identity else [])}
     (directory/"application-verification.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
     return report

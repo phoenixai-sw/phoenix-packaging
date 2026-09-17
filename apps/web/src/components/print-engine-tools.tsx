@@ -46,7 +46,7 @@ export function PrintEngineTools({ projectId, saveCurrent, readOnly }: {
     <p>저장된 디자인을 ICC 색 변환·한글 윤곽선·CUT/FOLD 분리 파일로 확인합니다. 무료 시험 ZIP에는 제작 사용 불가 표시가 들어갑니다.</p>
     <label>시험 출력 조건<select value={profile} onChange={e => setProfile(e.target.value)} disabled={busy || readOnly}>{profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
     {selected && <p className="muted">도련 {selected.requirements.bleed_mm}mm · 최소 {selected.requirements.min_ppi}ppi. 합성 ICC는 변환 시험 전용입니다. 등록 전개도가 없는 스탠드 파우치·박스는 먼저 등록 구조를 적용해 주세요.</p>}
-    <p className="muted">PDF/X·별색·화이트 잉크·반투명·구멍/지퍼/노치 가공은 지원하지 않습니다. 제작용 출력은 기존 제조 조건 승인과 검수를 모두 통과해야 합니다.</p>
+    <p className="muted">합성 ICC 시험은 원형 걸이 구멍·V/U 노치의 CUT와 개봉부·지퍼 안내를 별도 파일로 포함합니다. 실물 가공 검증은 별도이며 제작에는 가공 치수와 파일 전달 방식까지 승인된 도면·프로필이 필요합니다. PDF/X·별색·화이트 잉크·반투명은 지원하지 않습니다.</p>
     <button className="button" onClick={create} disabled={busy || readOnly || !profile || !!job && ["queued", "running"].includes(job.status)}>{busy ? "저장·요청 중…" : "무료 CMYK 시험 ZIP 만들기"}</button>
     <Feedback error={error || (job?.status === "failed" ? job.error || "시험 출력에 실패했습니다." : "")} />
     {job && <div role="status">{job.status === "succeeded" ? "시험 출력 완료" : job.status === "failed" ? "출력 실패" : job.status === "canceled" ? "출력 취소" : "파일 생성 중…"}

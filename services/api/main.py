@@ -15,7 +15,7 @@ import logging
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, File, Form, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Query, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -65,8 +65,9 @@ def asset_payload(asset):
     return {"id": asset.id, "name": asset.original_name, "content_type": asset.content_type, "byte_size": asset.byte_size, "width_px": asset.width_px, "height_px": asset.height_px, "source": asset.source, "url": f"/v1/assets/{asset.id}/content", **public_image}
 
 
-def job_payload(job, *, current_approval=None):
-    result = {key: value for key, value in job.result.items() if key not in {"storage_key", "_retention"}} if job.result else None
+def job_payload(job, *, current_approval=None, current_intake=None):
+    from .export_reconciliation import download_is_available, export_availability
+    result = {key: value for key, value in job.result.items() if key not in {"storage_key", "_retention", "_integrity"}} if job.result else None
     # History exposes the frozen request settings, never the full snapshot,
     # prompt, confirmed OCR text, actor IDs or private storage references.
     image_settings = {}
@@ -74,7 +75,9 @@ def job_payload(job, *, current_approval=None):
         from .image_provider import image_settings_payload
         image_settings = {"image_settings": image_settings_payload(job.snapshot or {})}
     approval = {"current_approval": current_approval} if job.kind == "production_export" and current_approval is not None else {}
-    return {"id": job.id, "project_id": job.project_id, "kind": job.kind, "status": job.status, "created_at": job.created_at.isoformat(), "updated_at": job.updated_at.isoformat(), "result": result, "error": job.error, "download_url": f"/v1/exports/{job.id}/download" if job.status == "succeeded" and job.kind.endswith("_export") and not (job.result or {}).get("_retention") else None, **{key:(result or {}).get(key,0) for key in ("credit_reserved","credit_charged","credit_returned")},"cancelable":job.kind=="ai_generation" and any(u.get("status")=="queued" for u in (result or {}).get("units",[])), **image_settings, **approval}
+    intake = {"current_intake": current_intake} if job.kind in {"review_export", "production_export"} and current_intake is not None else {}
+    availability = export_availability(job)
+    return {"id": job.id, "project_id": job.project_id, "kind": job.kind, "status": job.status, "created_at": job.created_at.isoformat(), "updated_at": job.updated_at.isoformat(), "result": result, "error": job.error, "download_url": f"/v1/exports/{job.id}/download" if download_is_available(job) else None, **{key:(result or {}).get(key,0) for key in ("credit_reserved","credit_charged","credit_returned")},"cancelable":job.kind=="ai_generation" and any(u.get("status")=="queued" for u in (result or {}).get("units",[])), **image_settings, **approval, **intake, **({"availability": availability} if availability is not None else {})}
 
 
 def owned(db, model, item_id, tenant_id):
@@ -475,7 +478,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         user, _ = require_auth(request, db)
         job = owned(db, Job, job_id, user.tenant_id)
         from .export_approvals import current_export_approvals
-        return envelope(request, job_payload(job, current_approval=current_export_approvals(db, [job]).get(job.id)))
+        from .export_intakes import batch_intake_summaries
+        intakes = batch_intake_summaries(db, tenant_id=user.tenant_id, project_id=job.project_id, job_ids=[job.id])
+        return envelope(request, job_payload(job, current_approval=current_export_approvals(db, [job]).get(job.id), current_intake=intakes.get(job.id)))
+
+    @app.get("/v1/jobs/{job_id}/printer-intakes", response_model=Envelope[J.PrinterIntakeHistory], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
+    def export_intake_history(job_id: UUID, request: Request, limit: int = Query(30, ge=1, le=100), before: str | None = Query(None, max_length=36), db=Depends(db_session)):
+        user, _ = require_auth(request, db)
+        job = owned(db, Job, job_id, user.tenant_id)
+        if job.kind not in {"review_export", "production_export"}:
+            raise APIError(404, "NOT_FOUND", "입고 기록 대상 출력 파일을 찾을 수 없습니다.")
+        from .export_intakes import list_export_intakes
+        return envelope(request, list_export_intakes(db, tenant_id=user.tenant_id, project_id=job.project_id, job_id=job.id, limit=limit, before=before))
 
     @app.post("/v1/jobs/{job_id}/retry", status_code=202, response_model=Envelope[J.JobData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def retry_job(job_id: UUID, request: Request, db=Depends(db_session)):
@@ -509,8 +523,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         owned(db, Project, project_id, user.tenant_id)
         rows = db.scalars(select(Job).where(Job.tenant_id == user.tenant_id, Job.project_id == str(project_id),Job.kind.in_(["review_export","production_export","editable_export"])).order_by(Job.created_at.desc()).limit(100)).all()
         from .export_approvals import current_export_approvals
+        from .export_intakes import batch_intake_summaries
         approvals = current_export_approvals(db, rows)
-        return envelope(request, {"items": [job_payload(row, current_approval=approvals.get(row.id)) for row in rows]})
+        intakes = batch_intake_summaries(db, tenant_id=user.tenant_id, project_id=str(project_id), job_ids=[row.id for row in rows])
+        return envelope(request, {"items": [job_payload(row, current_approval=approvals.get(row.id), current_intake=intakes.get(row.id)) for row in rows]})
 
     @app.get("/v1/exports/{job_id}/download", response_class=Response, responses=binary_responses("application/pdf", "application/zip"))
     def download(job_id: UUID, request: Request, db=Depends(db_session)):
@@ -520,6 +536,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ensure_object_available(job)
         if job.kind not in {"review_export", "production_export", "editable_export"}:
             raise APIError(404, "NOT_FOUND", "요청한 출력 파일을 찾을 수 없습니다.")
+        from .export_reconciliation import ensure_export_available,check_export_download
+        ensure_export_available(job)
         if job.status != "succeeded" or not job.result or not job.result.get("storage_key"):
             raise APIError(409, "EXPORT_NOT_READY", "검토 파일을 준비하고 있습니다.", retryable=True)
         if job.kind == "editable_export":
@@ -532,9 +550,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             from .print_engine import check_test_access
             check_test_access(db, user.tenant_id, {**job.snapshot, "actor_id": user.id})
             name=f"phoenix-print-engine-test-{job.id}.zip"
+        content=check_export_download(db,job,storage)
         if isinstance(storage, SupabaseStorage):
             return RedirectResponse(storage.signed_url(job.result["storage_key"], ttl=60, download_name=name), status_code=307)
-        content = storage.get(job.result["storage_key"])
         return Response(content=content, media_type="application/zip" if extension=="zip" else "application/pdf", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     @app.get("/v1/internal/jobs/process", response_model=Envelope[C.WorkerResult], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
@@ -547,7 +565,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         breakdown=process_all_jobs(session_factory,storage,settings)
         if any(value=="retry_pending" for value in breakdown.values()):
             raise APIError(503,"WORKER_RETRY_PENDING","일부 백그라운드 작업을 다음 실행에서 다시 확인합니다.",{"breakdown":breakdown},retryable=True)
-        maintenance = {"retention_checked", "orphan_candidates_checked", "orphan_files_deleted", "deletion_requests_checked", "requested_files_deleted", "font_uploads_cleaned"}
+        maintenance = {"retention_checked", "orphan_candidates_checked", "orphan_files_deleted", "deletion_requests_checked", "requested_files_deleted", "font_uploads_cleaned", "exports_checked"}
         return envelope(request, {"processed":sum(v for k,v in breakdown.items() if isinstance(v,int) and k not in maintenance),"breakdown":breakdown})
 
     from .billing.routes import install_billing_routes

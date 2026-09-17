@@ -10,6 +10,8 @@ import {
   exportStatusLabel,
   editableExportBody,
   isExportInProgress,
+  exportAvailabilityNotice,
+  preflightIssueTarget,
 } from "@/lib/export-state";
 import { useApiData } from "@/lib/business";
 import { Feedback } from "./management";
@@ -26,6 +28,16 @@ type Version = {
 type Preflight = ApiSchema<"PreflightReport">;
 type Quote = ApiSchema<"QuoteData">;
 type Job = ApiData<"/v1/jobs/{job_id}">;
+function PreflightIssueLink({ issue, faces, onSelect }: {
+  issue: Preflight["issues"][number];
+  faces: Scene["faces"];
+  onSelect: (faceId: string, objectId?: string) => void;
+}) {
+  const target = preflightIssueTarget(issue, faces);
+  return target ? <button className="text-link" onClick={() => onSelect(target.faceId, target.objectId)}>
+    {target.objectId ? "해당 레이어·면 확인" : "해당 면 확인"}
+  </button> : null;
+}
 export function ExportTools({
   project,
   scene,
@@ -61,6 +73,7 @@ export function ExportTools({
   const [preflight, setPreflight] = useState<Preflight>();
   const [quote, setQuote] = useState<Quote>();
   const [job, setJob] = useState<Job>();
+  const availabilityNotice = job ? exportAvailabilityNotice(job) : null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -310,6 +323,10 @@ export function ExportTools({
               }
             />
           )}{" "}
+          {availabilityNotice && <div className="alert alert-error"><div>
+            <strong>{availabilityNotice.title}</strong><p>{availabilityNotice.message}</p>
+            {availabilityNotice.creditRestored > 0 && <p>복원한 크레딧: {availabilityNotice.creditRestored}</p>}
+          </div></div>}
           {job.status === "succeeded" && job.download_url && (
             <a
               className="button button-dark"
@@ -331,7 +348,7 @@ export function ExportTools({
               파일 준비 다시 시도
             </button>
           )}
-          {job.status === "failed" && job.kind === "production_export" && (
+          {["failed", "unavailable"].includes(job.status) && job.kind === "production_export" && (
             <p className="field-hint">
               제작 출력은 현재 디자인을 다시 검수하고 새 견적을 확인한 뒤 요청해
               주세요.
@@ -555,16 +572,7 @@ export function ExportTools({
                         : ""}
                       {issue.message}
                     </p>
-                    {issue.face_id && (
-                      <button
-                        className="text-link"
-                        onClick={() =>
-                          onFaceSelect(issue.face_id!, issue.object_id ?? undefined)
-                        }
-                      >
-                        해당 레이어·면 확인
-                      </button>
-                    )}
+                    <PreflightIssueLink issue={issue} faces={scene.faces} onSelect={onFaceSelect} />
                   </div>
                 ))
             )}
@@ -599,16 +607,7 @@ export function ExportTools({
                             : ""}
                           {issue.message}
                         </p>
-                        {issue.face_id && (
-                          <button
-                            className="text-link"
-                            onClick={() =>
-                              onFaceSelect(issue.face_id!, issue.object_id ?? undefined)
-                            }
-                          >
-                            해당 레이어·면 확인
-                          </button>
-                        )}
+                        <PreflightIssueLink issue={issue} faces={scene.faces} onSelect={onFaceSelect} />
                       </div>
                     ))}
                 </details>

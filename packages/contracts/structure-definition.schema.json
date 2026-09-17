@@ -148,6 +148,32 @@
       "title": "Dimensions",
       "type": "object"
     },
+    "FinishingDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "pouch_features": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PouchFeatures"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "holes": {
+          "items": {
+            "$ref": "#/$defs/Hole"
+          },
+          "maxItems": 8,
+          "title": "Holes",
+          "type": "array"
+        }
+      },
+      "title": "FinishingDefinition",
+      "type": "object"
+    },
     "FixedDefinition": {
       "additionalProperties": false,
       "properties": {
@@ -170,10 +196,24 @@
           "$ref": "#/$defs/Semantics"
         },
         "feature_policy": {
-          "const": "none",
           "default": "none",
+          "enum": [
+            "none",
+            "pouch-finishing-v1"
+          ],
           "title": "Feature Policy",
           "type": "string"
+        },
+        "finishing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FinishingDefinition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "review_bleed_mm": {
           "const": 3,
@@ -223,6 +263,55 @@
         "panels"
       ],
       "title": "FixedDefinition",
+      "type": "object"
+    },
+    "Hole": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9_-]{1,100}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "face_id": {
+          "enum": [
+            "front",
+            "back",
+            "bottom",
+            "left",
+            "right",
+            "top"
+          ],
+          "title": "Face Id",
+          "type": "string"
+        },
+        "center_x_mm": {
+          "maximum": 2000,
+          "minimum": -2000,
+          "title": "Center X Mm",
+          "type": "number"
+        },
+        "center_y_mm": {
+          "maximum": 2000,
+          "minimum": -2000,
+          "title": "Center Y Mm",
+          "type": "number"
+        },
+        "diameter_mm": {
+          "maximum": 10,
+          "minimum": 4,
+          "title": "Diameter Mm",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "face_id",
+        "center_x_mm",
+        "center_y_mm",
+        "diameter_mm"
+      ],
+      "title": "Hole",
       "type": "object"
     },
     "Line": {
@@ -459,6 +548,75 @@
       "title": "Part",
       "type": "object"
     },
+    "PouchFeatures": {
+      "additionalProperties": false,
+      "description": "Optional physical pouch finishing, measured down from the top cut edge.",
+      "properties": {
+        "header_height_mm": {
+          "default": 30,
+          "maximum": 100,
+          "minimum": 20,
+          "title": "Header Height Mm",
+          "type": "number"
+        },
+        "zipper_enabled": {
+          "default": true,
+          "title": "Zipper Enabled",
+          "type": "boolean"
+        },
+        "zipper_y_mm": {
+          "default": 35,
+          "maximum": 200,
+          "minimum": 10,
+          "title": "Zipper Y Mm",
+          "type": "number"
+        },
+        "zipper_band_mm": {
+          "default": 6,
+          "maximum": 15,
+          "minimum": 2,
+          "title": "Zipper Band Mm",
+          "type": "number"
+        },
+        "tear_enabled": {
+          "default": true,
+          "title": "Tear Enabled",
+          "type": "boolean"
+        },
+        "tear_y_mm": {
+          "default": 24,
+          "maximum": 100,
+          "minimum": 12,
+          "title": "Tear Y Mm",
+          "type": "number"
+        },
+        "notch_depth_mm": {
+          "default": 3,
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Notch Depth Mm",
+          "type": "number"
+        },
+        "notch_height_mm": {
+          "default": 4,
+          "maximum": 8,
+          "minimum": 2,
+          "title": "Notch Height Mm",
+          "type": "number"
+        },
+        "notch_shape": {
+          "default": "round",
+          "enum": [
+            "round",
+            "v"
+          ],
+          "title": "Notch Shape",
+          "type": "string"
+        }
+      },
+      "title": "PouchFeatures",
+      "type": "object"
+    },
     "Range": {
       "additionalProperties": false,
       "properties": {
@@ -608,10 +766,24 @@
           "$ref": "#/$defs/Semantics"
         },
         "feature_policy": {
-          "const": "none",
           "default": "none",
+          "enum": [
+            "none",
+            "pouch-finishing-v1"
+          ],
           "title": "Feature Policy",
           "type": "string"
+        },
+        "finishing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FinishingDefinition"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "review_bleed_mm": {
           "const": 3,

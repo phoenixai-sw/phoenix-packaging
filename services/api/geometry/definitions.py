@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Annotated, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, BeforeValidator, TypeAdapter, model_validator
 from .validation import GeometryValidationError, normalize_mm
+from .finishing import FinishingDefinition, FEATURE_POLICY
 
 Family = Literal["three-side-seal", "stand-up-pouch", "folding-box"]
 FaceId = Literal["front", "back", "left", "right", "top", "bottom"]
@@ -109,9 +110,17 @@ class DefinitionBase(Strict):
     schema_version: Literal["2.0"] = "2.0"
     family: Family
     dimension_semantics: Semantics
-    # First release has no registered processing capability. Existing demo features stay separate.
-    feature_policy: Literal["none"] = "none"
+    feature_policy: Literal["none", "pouch-finishing-v1"] = "none"
+    finishing: FinishingDefinition | None = None
     review_bleed_mm: Literal[3] = 3
+
+    @model_validator(mode="after")
+    def finishing_scope(self):
+        if (self.feature_policy == FEATURE_POLICY) != (self.finishing is not None):
+            raise ValueError("등록 가공은 명시한 지원 규칙과 동결 가공값이 함께 필요합니다.")
+        if self.finishing is not None and self.family == "folding-box":
+            raise ValueError("이 가공 규칙은 파우치에만 적용됩니다.")
+        return self
 
 
 class FixedDefinition(DefinitionBase):

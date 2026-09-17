@@ -1,5 +1,6 @@
 """Conservative preflight. Registry evidence is supplied only by a trusted server caller."""
 from copy import deepcopy
+import re
 from ..geometry import GeometryValidationError, geometry_for_scene, validate_scene, TEMPLATES, normalize_mm
 from .review_pdf import _scene_from_project, _layout_text, _resolve_image
 from ..image_quality_metadata import resolver_quality_metrics
@@ -7,6 +8,35 @@ from ..image_quality_metadata import resolver_quality_metrics
 CAPABILITIES={"pdf_standard":"PDF","color_space":"RGB","font_mode":"embedded","layout":"face_pages","bleed_mm":0,
               "vector_text":True,"vector_barcode":True,"pdf_x":False,"cmyk":False,"spot_colors":False,"white_ink":False,"overprint":False,"outlined_fonts":False}
 DEFAULT_CONFIRMED_FIELDS=["product_name","net_weight","ingredients","allergens","manufacturer","storage"]
+
+
+def scene_issue_location(field, source_scene):
+    """Resolve validator paths only against the scene actually being inspected."""
+    if not isinstance(field, str) or not isinstance(source_scene, dict):
+        return {}
+    parts = re.match(r"^faces\.([^.]+)(?:\.objects\.([^.]+))?(?:\.|$)", field)
+    faces = source_scene.get("faces")
+    if not parts or not isinstance(faces, list):
+        return {}
+
+    def resolve(items, key):
+        matched = next((item for item in items if isinstance(item, dict) and item.get("id") == key), None)
+        if matched is not None:
+            return matched
+        if key and len(key) <= 4 and key.isascii() and key.isdigit() and int(key) < len(items):
+            return items[int(key)] if isinstance(items[int(key)], dict) else None
+        return None
+
+    face = resolve(faces, parts[1])
+    if not face or not isinstance(face.get("id"), str):
+        return {}
+    target = {"face_id": face["id"]}
+    objects = face.get("objects")
+    if isinstance(objects, list) and parts[2]:
+        obj = resolve(objects, parts[2])
+        if obj and isinstance(obj.get("id"), str):
+            target["object_id"] = obj["id"]
+    return target
 
 
 def validate_output_requirements(requirements):
@@ -43,11 +73,14 @@ def validate_output_requirements(requirements):
 
 def preflight_project(project:dict, approved_conditions:dict|None=None, asset_resolver=None) -> dict:
     issues=[]
+    source_scene=None
     def add(code,message,scope="production",**details):
-        issues.append({"code":code,"message":message,"severity":"error","scope":scope,**details})
+        location = scene_issue_location(details.get("field"), source_scene)
+        issues.append({"code":code,"message":message,"severity":"error","scope":scope,**location,**details})
     scene=None; geometry=None
     try:
-        scene=validate_scene(_scene_from_project(project), structure_snapshot=project.get("structure_snapshot"))
+        source_scene=_scene_from_project(project)
+        scene=validate_scene(source_scene, structure_snapshot=project.get("structure_snapshot"))
         geometry=geometry_for_scene(scene, structure_snapshot=project.get("structure_snapshot"))
     except GeometryValidationError as exc:
         add(exc.code,exc.message,"review",field=exc.field)
@@ -122,9 +155,12 @@ def preflight_project(project:dict, approved_conditions:dict|None=None, asset_re
         for field in required_fields:
             if field not in (scene.get("confirmed_fields") or []):
                 add("FIELD_CONFIRMATION_REQUIRED","법정 표시·제품 정보를 고객이 확인해야 합니다.",field=field)
-        if scene.get("pouch_features") is not None:
+        if print_engine and geometry and output_rules.get('print_profile'):
+            from ..geometry.finishing import finishing_approval_issues
+            issues.extend(finishing_approval_issues(geometry,template,output_rules['print_profile']))
+        elif scene.get("pouch_features") is not None:
             add("POUCH_FEATURES_PRODUCTION_UNSUPPORTED","개봉부·지퍼·뜯는 노치는 검토 PDF에서 확인할 수 있습니다. 제조사 가공 출력 규격 검증 전 제작용 출력은 지원하지 않습니다.")
-        if scene.get("holes"):
+        if not print_engine and scene.get("holes"):
             # PDF spot cut contours are not implemented; fail closed rather than erase circles and claim a cut file.
             add("HOLE_PRODUCTION_UNSUPPORTED","걸이 구멍의 제조사 칼선·가공 출력은 현재 기본 RGB 출력기에서 지원하지 않습니다.")
         for face in scene["faces"]:

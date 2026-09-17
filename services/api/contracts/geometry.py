@@ -3,6 +3,7 @@ from typing import Literal
 from .base import ContractModel
 from ..schemas import Hole, PouchFeatures, StructureRef
 from ..geometry.definitions import StructureDefinitionV2, Semantics
+from ..geometry.finishing import FinishingApproval
 
 
 class Rect(ContractModel):
@@ -203,6 +204,8 @@ class StructureValidation(ContractModel):
     definition_hash: str
     review_only: bool
     production_enabled: bool
+    approved_dimensions: dict[str, float] | None = None
+    approved_finishing: FinishingApproval | None = None
 
 
 class RegisteredStructure(ContractModel):

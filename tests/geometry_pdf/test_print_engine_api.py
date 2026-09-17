@@ -66,6 +66,43 @@ def test_access_and_cas_guards(app):
             assert other.post('/v1/print-engine/tests',json={'project_id':item['id'],'base_revision':1,'profile_id':BUILTIN_ID}).status_code==404
 
 
+def test_builtin_finishing_trial_persists_manifest_process_and_zero_charge(app):
+    with TestClient(app) as client:
+        register(client);item=create(client)
+        scene=deepcopy(item['scene'])
+        scene['pouch_features']={}
+        scene['holes']=[{'id':'trial-hanger','face_id':'front','center_x_mm':80,'center_y_mm':15,'diameter_mm':6}]
+        # Keep actual artwork below the newly enabled header and zipper band.
+        for face in scene['faces']:
+            for obj in face['objects']:
+                obj['y_mm'] = max(55, obj['y_mm'])
+        saved=client.patch(f"/v1/projects/{item['id']}/draft",json={'base_revision':1,'scene':scene})
+        assert saved.status_code==200,saved.text
+        request={'project_id':item['id'],'base_revision':saved.json()['data']['base_revision'],'profile_id':BUILTIN_ID}
+        queued=client.post('/v1/print-engine/tests',json=request)
+        assert queued.status_code==202,queued.text
+        job_id=queued.json()['data']['id']
+        assert process_pending_jobs(app.state.session_factory,app.state.storage)==1
+        status=client.get('/v1/jobs/'+job_id).json()['data']
+        assert status['status']=='succeeded',status
+        assert queued.json()['data']['credits_charged']==0
+        downloaded=client.get('/v1/exports/'+job_id+'/download')
+        assert downloaded.status_code==200
+        with ZipFile(BytesIO(downloaded.content)) as archive:
+            assert len(archive.namelist())==8
+            assert {'process.pdf','finishing.json'} <= set(archive.namelist())
+            manifest=json.loads(archive.read('manifest.json'))
+            from services.api.contracts.printing import PrintEngineManifest
+            parsed=PrintEngineManifest.model_validate(manifest).model_dump(mode='json',exclude_unset=True)
+            assert parsed['finishing']==manifest['finishing']
+            assert parsed['verification']['finishing']==manifest['verification']['finishing']
+            assert parsed['finishing']['physical_specification']['holes'][0]['diameter_mm']==6
+            assert parsed['review_only'] is True
+        with app.state.session_factory() as db:
+            from services.api.billing.models import Reservation
+            assert not list(db.scalars(select(Reservation)))
+
+
 def test_admin_upload_registration_and_revocation_fail_closed(app):
     with TestClient(app) as client:
         register(client,email='qa@example.com');item=create(client)

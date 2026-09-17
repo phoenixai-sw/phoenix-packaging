@@ -10,7 +10,7 @@ from typing import Literal
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, File, Request, UploadFile, Response
 from PIL import Image
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from sqlalchemy import func, select, update
 from .auth import require_auth
 from .database import utcnow
@@ -19,6 +19,7 @@ from .feature_models import RegistryVersion, Evidence, AuditEvent, ProviderAttem
 from .models import Job, Project, User
 from .business import owned_record
 from .geometry import geometry_for_scene
+from .geometry.finishing import FinishingApproval, finishing_approval_for_geometry, validate_finishing_for_template
 from .printer_intakes import intake_metadata, intake_metrics
 
 
@@ -60,7 +61,8 @@ def canonical_production_identity(db,project):
         if item not in holes: holes.append(item)
     identity={"brand_id":project.brand_id,"product_variant_id":variant.id,"billing_family_key":version.details["billing_family_key"],"content_amount":variant.details.get("net_quantity"),"content_unit":variant.details.get("net_unit"),"barcode":{"symbology":"EAN13","data":barcode} if barcode else {},"width_mm":project.width_mm,"height_mm":project.height_mm,"bottom_mm":project.bottom_mm or 0,"depth_mm":project.depth_mm or 0,"holes":holes}
     if project.scene.get("pouch_features") is not None:
-        identity["pouch_features"]=geometry_for_scene(project.scene)["pouch_features"]
+        from .geometry.snapshots import project_geometry
+        identity["pouch_features"]=project_geometry(project)["pouch_features"]
     if getattr(project,"structure_snapshot",None):
         from .geometry.snapshots import validate_snapshot
         validate_snapshot(project.structure_snapshot)
@@ -85,6 +87,12 @@ class VersionBody(Body):
     material: str=Field(default="",max_length=120)
     structure_definition: dict | None=None
     review_available: bool=False
+    approved_finishing: FinishingApproval | None=None
+
+
+class FinishingPreviewBody(Body):
+    project_id: UUID
+    base_revision: int=Field(ge=1)
 
 
 class ApprovalBody(Body):
@@ -145,6 +153,21 @@ def install_registry_routes(app,db_session,project_payload,snapshot_revision):
         if not row or row.kind!=kind_for(collection): raise APIError(404,"NOT_FOUND","버전을 찾을 수 없습니다.")
         return row
     def audit(db,user,action,identity,details=None): db.add(AuditEvent(tenant_id=user.tenant_id,actor_id=user.id,action=action,entity_id=identity,details=details or {}))
+
+    @router.post("/admin/template-finishing/preview", response_model=Envelope[R.FinishingApprovalDraft], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
+    def finishing_preview(body:FinishingPreviewBody,request:Request,db=Depends(db_session)):
+        # Unlike global registry reads, importing customer geometry retains the
+        # ordinary membership and workspace read checks, including for admins.
+        user,_=require_auth(request,db,mutate=True,authorize_write=False)
+        if not user.is_admin:raise APIError(403,"ADMIN_REQUIRED","플랫폼 관리자 권한이 필요합니다.")
+        project=owned_record(db,Project,body.project_id,user.tenant_id)
+        if project.base_revision!=body.base_revision:raise APIError(409,"REVISION_CONFLICT","프로젝트가 변경되었습니다. 목록을 다시 열고 최신 저장본을 선택해 주세요.")
+        if project.structure_snapshot is not None:raise APIError(422,"STRUCTURE_FINISHING_IN_DEFINITION","등록 구조의 가공은 등록 구조 메뉴에서 실제 치수와 함께 검증해 등록해 주세요.")
+        from .geometry.snapshots import project_geometry
+        geometry=project_geometry(project)
+        return result(request,{"project_id":project.id,"base_revision":project.base_revision,"geometry_template_id":project.template_id,
+            "approved_dimensions":{key:geometry[key] for key in ("width_mm","height_mm","bottom_mm","depth_mm") if geometry.get(key) is not None},
+            "approved_finishing":finishing_approval_for_geometry(geometry)})
 
     @router.get("/print-profiles", response_model=Envelope[C.Items[R.RegistryVersionData]], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def profiles(request:Request,db=Depends(db_session)):
@@ -226,18 +249,27 @@ def install_registry_routes(app,db_session,project_payload,snapshot_revision):
         user=admin(request,db,True);kind=kind_for(collection)
         if kind=="template" and (not body.geometry_template_id or not body.billing_family_key): raise APIError(422,"TEMPLATE_FIELDS_REQUIRED","구조 종류와 과금 구조 식별자가 필요합니다.")
         if kind=="profile" and not body.requirements: raise APIError(422,"PRINT_REQUIREMENTS_REQUIRED","제조사 인쇄 조건을 입력해 주세요.")
-        details=body.model_dump(exclude={"name","manufacturer","is_demo"})
+        details=body.model_dump(exclude={"name","manufacturer","is_demo","approved_finishing"})
         if body.structure_definition is not None:
             if kind!="template":raise APIError(422,"STRUCTURE_TEMPLATE_ONLY","구조 정의는 도면 버전에만 등록할 수 있습니다.")
             from .geometry.definitions import parse_definition
             from .geometry.snapshots import canonical_hash,compile_structure
             definition=parse_definition(body.structure_definition)
             if definition["family"]!=body.geometry_template_id:raise APIError(422,"GEOMETRY_FAMILY_MISMATCH","등록 구조와 도면 종류가 다릅니다.")
-            sample=definition.get("dimensions") or {"width_mm":definition["width_range_mm"]["minimum"],"height_mm":definition["height_range_mm"]["minimum"]}
+            sample=body.approved_dimensions or definition.get("dimensions") or {"width_mm":definition["width_range_mm"]["minimum"],"height_mm":definition["height_range_mm"]["minimum"]}
             compile_structure(definition,sample,"registration-validation")
             details.update(structure_definition=definition,structure_definition_hash=canonical_hash(definition))
         elif body.review_available:
             raise APIError(422,"STRUCTURE_DEFINITION_REQUIRED","검토 공개에는 검증 가능한 구조 정의가 필요합니다.")
+        if body.approved_finishing is not None:
+            if kind!="template":raise APIError(422,"FINISHING_TEMPLATE_ONLY","가공 치수 승인은 도면 버전에만 등록할 수 있습니다.")
+            from .geometry.definitions import Dimensions
+            try:dimensions=Dimensions.model_validate(body.approved_dimensions).model_dump(exclude_none=True)
+            except ValidationError as exc:raise APIError(422,"APPROVED_DIMENSIONS_REQUIRED","가공 승인 대상의 정확한 폭·높이·바닥 또는 깊이를 입력해 주세요.") from exc
+            details["approved_dimensions"]=dimensions
+            details["approved_finishing"]=validate_finishing_for_template(body.geometry_template_id,dimensions,body.approved_finishing.model_dump(mode="json"),details.get("structure_definition"))
+        elif (details.get("structure_definition") or {}).get("feature_policy")=="pouch-finishing-v1":
+            raise APIError(422,"FINISHING_APPROVAL_REQUIRED","가공 구조는 실제 승인 대상 치수로 검증하고 가공값을 함께 등록해 주세요.")
         row=RegistryVersion(kind=kind,name=body.name,manufacturer=body.manufacturer,is_demo=body.is_demo,created_by=user.id,details=details);db.add(row);db.flush();audit(db,user,"registry_created",row.id);db.commit();return result(request,registry_payload(row))
     @router.post("/admin/{collection}/{identity}/review", response_model=Envelope[R.RegistryVersionData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def submit_review(collection:str,identity:str,body:ReviewBody,request:Request,db=Depends(db_session)):
@@ -271,6 +303,12 @@ def install_registry_routes(app,db_session,project_payload,snapshot_revision):
         approval={"evidence_asset_id":evidence.id,"evidence_sha256":evidence.sha256,"approved_by":user.id,"approved_by_name":body.approved_by_name,"approved_at":utcnow().isoformat(),"source":row.details["source"],"license":row.details["license"],"notes":body.notes}
         if row.details.get("structure_definition_hash"):
             approval["structure_definition_hash"]=row.details["structure_definition_hash"]
+        if row.kind=="template" and row.details.get("approved_finishing") is not None:
+            from .geometry.snapshots import canonical_hash
+            normalized=validate_finishing_for_template(row.details["geometry_template_id"],row.details["approved_dimensions"],row.details["approved_finishing"],row.details.get("structure_definition"))
+            approval["finishing_hash"]=canonical_hash(normalized)
+        elif row.kind=="template" and (row.details.get("structure_definition") or {}).get("feature_policy")=="pouch-finishing-v1":
+            raise APIError(422,"FINISHING_APPROVAL_REQUIRED","가공 치수가 증빙에 연결된 새 도면 버전을 등록해 주세요.")
         changed=db.execute(update(RegistryVersion).where(RegistryVersion.id==row.id,RegistryVersion.status=="review").values(status="approved",approval=approval,updated_at=utcnow()).execution_options(synchronize_session=False))
         if changed.rowcount!=1: raise APIError(409,"VERSION_IMMUTABLE","승인 중 도면 상태가 변경되었습니다. 새 버전을 등록해 주세요.")
         db.refresh(row);audit(db,user,"registry_approved",row.id,{"evidence_asset_id":evidence.id});db.commit();return result(request,registry_payload(row))

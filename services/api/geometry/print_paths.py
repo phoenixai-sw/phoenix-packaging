@@ -3,14 +3,13 @@ from .validation import GeometryValidationError
 
 
 def structure_paths(geometry, layout):
-    if geometry.get("holes") or geometry.get("pouch_features"):
-        raise GeometryValidationError("PRINT_FINISHING_UNSUPPORTED", "구멍·지퍼·노치 가공의 제작 출력은 지원하지 않습니다.")
+    from .finishing_paths import add_finishing_paths
     if layout == "face_pages":
-        return [{"face_id":f["id"],"width_mm":f["width_mm"],"height_mm":f["height_mm"],
+        return add_finishing_paths([{"face_id":f["id"],"width_mm":f["width_mm"],"height_mm":f["height_mm"],
                  "cut":[[0,0,f["width_mm"],0],[f["width_mm"],0,f["width_mm"],f["height_mm"]],
                         [f["width_mm"],f["height_mm"],0,f["height_mm"]],[0,f["height_mm"],0,0]],
                  "fold":[[p[k] for k in ("x1_mm","y1_mm","x2_mm","y2_mm")] for p in f["regions"].get("fold",[])]}
-                for f in geometry["faces"]]
+                for f in geometry["faces"]],geometry,layout)
     if not all(f.get("registered_structure") for f in geometry["faces"]):
         raise GeometryValidationError("REGISTERED_NET_REQUIRED", "전개도 제작 엔진은 등록된 고정 구조만 지원합니다.")
     rects=[(f["net"]["x_mm"],f["net"]["y_mm"],f["width_mm"],f["height_mm"]) for f in geometry["faces"]]
@@ -74,4 +73,4 @@ def structure_paths(geometry, layout):
                 if start>cursor:
                     cuts.append([line[0],cursor,line[0],start] if vertical else [cursor,line[1],start,line[1]])
                 cursor=max(cursor,end)
-    return [{"face_id":"net","width_mm":geometry["net_width_mm"],"height_mm":geometry["net_height_mm"],"cut":cuts,"fold":list(unique.values()),"rectangles":rects}]
+    return add_finishing_paths([{"face_id":"net","width_mm":geometry["net_width_mm"],"height_mm":geometry["net_height_mm"],"cut":cuts,"fold":list(unique.values()),"rectangles":rects}],geometry,layout)

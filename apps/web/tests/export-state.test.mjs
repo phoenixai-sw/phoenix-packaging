@@ -8,7 +8,21 @@ import {
   editableExportBody,
   isExportInProgress,
   exportApprovalNotice,
+  preflightIssueTarget,
 } from "../src/lib/export-state.ts";
+
+test("preflight navigation uses the checked back object ID after layer order changes", () => {
+  const issue = { field: "faces.back.objects.0", face_id: "back", object_id: "back-ingredients" };
+  const faces = [
+    { id: "front", objects: [{ id: "front-title" }] },
+    { id: "back", objects: [{ id: "new-first-layer" }, { id: "back-ingredients" }] },
+  ];
+  assert.deepEqual(preflightIssueTarget(issue, faces), { faceId: "back", objectId: "back-ingredients" });
+  faces[1].objects.pop();
+  assert.deepEqual(preflightIssueTarget(issue, faces), { faceId: "back", objectId: undefined });
+  assert.equal(preflightIssueTarget({ ...issue, face_id: "missing" }, faces), null);
+  assert.equal(preflightIssueTarget({ field: issue.field }, faces), null);
+});
 
 test("only failed review exports expose the existing retry operation", () => {
   assert.equal(

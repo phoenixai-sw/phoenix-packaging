@@ -15,13 +15,18 @@ from .business import workspace_access
 from .errors import APIError
 from .registry import approved_conditions
 from .exporters import export_production_bundle,preflight_project
-from .billing.service import canonical_hash,capture_unit,release
+from .billing.service import canonical_hash,capture_unit,release,lock_wallet
 from .billing.payments import enforce_membership_entitlement
 from .retention.storage_lifecycle import record_write_intent,mark_published
+from .retention.service import lock_tenant
 from .metrics.service import record_production_success
 
 
 def _current_conditions(db,snapshot,tenant_id,*,lock=False):
+    # Match export-loss compensation and retention: never hold a project or
+    # entitlement row while waiting for the wallet used by credit capture.
+    lock_tenant(db,tenant_id)
+    lock_wallet(db,tenant_id)
     project=db.scalar(select(Project).where(Project.id==snapshot["id"],Project.tenant_id==tenant_id).with_for_update())
     if not project or project.base_revision!=snapshot["base_revision"]:
         raise APIError(409,"REVISION_CHANGED","출력 대기 중 프로젝트가 바뀌었습니다. 최신 리비전으로 다시 요청해 주세요.")
@@ -34,6 +39,8 @@ def _current_conditions(db,snapshot,tenant_id,*,lock=False):
     if actor.role not in {"owner","editor"} or not workspace_access(db,actor,project.workspace_id):
         raise APIError(403,"ROLE_FORBIDDEN","제작 출력 권한이 변경되었습니다.")
     enforce_membership_entitlement(db,actor)
+    from .export_reconciliation import assert_repeat_entitlement
+    assert_repeat_entitlement(db,tenant_id,snapshot)
     if lock:
         identities=[snapshot.get("template_version_id"),snapshot.get("print_profile_version_id")]
         if snapshot.get("print_output"):identities.append(snapshot['print_output']['icc']['id'])
@@ -55,10 +62,16 @@ def process_production_jobs(session_factory,storage,settings,limit=1):
     for _ in range(max(1,min(limit,3))):
         lease=str(uuid4());now=utcnow();claimed=None
         with session_factory() as db:
-            overdue=list(db.scalars(select(Job).where(Job.kind=="production_export",Job.status.in_(["queued","running"]),Job.created_at<now-timedelta(minutes=35)).with_for_update(skip_locked=True)))
-            for job in overdue:
+            overdue=list(db.execute(select(Job.id,Job.tenant_id).where(Job.kind=="production_export",Job.status.in_(["queued","running"]),Job.created_at<now-timedelta(minutes=35)).order_by(Job.created_at,Job.id).limit(100)))
+        for overdue_id,overdue_tenant in overdue:
+            with session_factory() as db:
+                lock_tenant(db,overdue_tenant);lock_wallet(db,overdue_tenant,now)
+                job=db.scalar(select(Job).where(Job.id==overdue_id,Job.tenant_id==overdue_tenant,Job.kind=="production_export",Job.status.in_(["queued","running"]),Job.created_at<now-timedelta(minutes=35)).with_for_update())
+                if job is None:continue
                 release(db,job.tenant_id,job.snapshot["reservation_id"],reason="production_queue_timeout")
                 job.status="failed";job.error="출력 대기 시간이 지나 예약을 복원했습니다. 새 견적으로 요청해 주세요.";job.lease_id=None;job.updated_at=now
+                db.commit()
+        with session_factory() as db:
             db.execute(update(Job).where(Job.kind=="production_export",Job.status=="running",Job.updated_at<now-timedelta(minutes=15)).values(status="queued",lease_id=None,updated_at=now))
             db.commit()
         for attempt in range(20):
@@ -137,6 +150,7 @@ def process_production_jobs(session_factory,storage,settings,limit=1):
             message="제작 묶음을 준비하지 못해 예약을 복원했습니다. 검수 후 새 견적으로 다시 요청해 주세요."
             if hasattr(exc,"message") and type(exc).__module__.startswith("services.api"):message=str(exc.message)[:500]
             with session_factory() as db:
+                lock_tenant(db,tenant_id);lock_wallet(db,tenant_id)
                 won=db.execute(update(Job).where(Job.id==job_id,Job.status=="running",Job.lease_id==lease).values(status="failed",error=message,updated_at=utcnow()).execution_options(synchronize_session=False))
                 if won.rowcount==1:
                     release(db,tenant_id,snapshot["reservation_id"],reason=getattr(exc,"code","production_failed"))

@@ -6,6 +6,7 @@ from .geometry import CutContour, CircleHole, TearNotch
 from .registry import OutputCapabilities, RegistryApproval
 from ..schemas import StructureRef, PouchFeatures
 from ..exporters.print_profile import PrintProfile
+from ..geometry.finishing import FinishingApproval
 
 
 class PrintIssue(ContractModel):
@@ -258,7 +259,7 @@ class ImageTransform(ContractModel):
 
 
 class PrintPageCheck(ContractModel):
-    role: Literal['artwork','cut','fold']
+    role: Literal['artwork','cut','fold','process']
     page: int
     boxes_mm: dict[str,list[float]]
     tolerance_mm: float
@@ -266,11 +267,80 @@ class PrintPageCheck(ContractModel):
     text_outlined: Literal[True]
 
 
+class FinishingPathCheck(ContractModel):
+    role: Literal['cut','fold','process']
+    face_id: str
+    line_count: int
+    cubic_count: int
+    tolerance_mm: float
+    passed: Literal[True]
+
+
+class FinishingVerification(ContractModel):
+    path_checks: list[FinishingPathCheck]
+    cut_duplicate_check: Literal['passed']
+    physical_tooling_tested: Literal[False]
+    cubic_tolerance_mm: float
+
+
+class FinishingHole(ContractModel):
+    face_id: str
+    center_x_mm: float
+    center_y_mm: float
+    diameter_mm: float
+
+
+class FinishingNotch(ContractModel):
+    face_id: str
+    side: Literal['left','right']
+    shape: Literal['round','v']
+    depth_mm: float
+    height_mm: float
+    edge_endpoints_mm: list[float]
+
+
+class FinishingProcess(ContractModel):
+    face_id: str
+    kind: Literal['header_reference','zipper_band','tear_reference','zipper_center','seal_region']
+    polygon_mm: list[float] | None = None
+    line_mm: list[float] | None = None
+
+
+class FinishingPage(ContractModel):
+    face_id: str
+    width_mm: float
+    height_mm: float
+    cut: list[list[float]]
+    fold: list[list[float]]
+    cut_curves: list[list[float]]
+    holes: list[FinishingHole]
+    notches: list[FinishingNotch]
+    process: list[FinishingProcess]
+
+
+class FinishingManifest(ContractModel):
+    schema_version: Literal['1.0']
+    delivery: Literal['separate_process_pdf_v1']
+    physical_specification: FinishingApproval
+    physical_specification_hash: str
+    coordinate_system: Literal['top-left-mm']
+    cut_file: Literal['cut.pdf']
+    process_file: Literal['process.pdf']
+    fold_file: Literal['fold.pdf']
+    artwork_knockouts: Literal[True]
+    outer_bleed_preserved: Literal[True]
+    cubic_tolerance_mm: float
+    tear_line_role: Literal['reference_only_not_perforation']
+    manufacturer_approval_inferred: Literal[False]
+    pages: list[FinishingPage]
+
+
 class PrintVerification(ContractModel):
     page_checks: list[PrintPageCheck]
     barcodes: list[BarcodeCheck]
     pdf_x: Literal['not_claimed']
     manufacturer_approval: Literal[False]
+    finishing: FinishingVerification | None = None
 
 
 class PrintEngineVersion(ContractModel):
@@ -303,6 +373,7 @@ class PrintEngineManifest(ContractModel):
     approval_evidence: dict[str,RegistryApproval] | None = None
     capabilities: PrintCapabilities | None = None
     manifest_hash_policy: str | None = None
+    finishing: FinishingManifest | None = None
 
 
 class PrintEngineResult(ContractModel):

@@ -21,6 +21,10 @@ def compile_structure(definition, inputs, template_version_id):
     geometry=resolve_recipe(definition,inputs)
     definition_hash=canonical_hash(definition);input_hash=canonical_hash(inputs)
     physical_hash=canonical_hash(geometry)
+    if definition.get('feature_policy')=='pouch-finishing-v1':
+        from .finishing import finishing_geometry_hash
+        # UI IDs and disabled slider values are not a new physical product.
+        physical_hash=finishing_geometry_hash(geometry)
     digest=canonical_hash({"definition_hash":definition_hash,"engine_version":ENGINE_VERSION,"input_hash":input_hash,"geometry":geometry,"template_version_id":template_version_id})
     geometry.update(template_version_id=template_version_id,geometry_hash=digest)
     return {"snapshot_version":SNAPSHOT_VERSION,"template_version_id":template_version_id,"engine_version":ENGINE_VERSION,
@@ -54,7 +58,12 @@ def geometry_from_snapshot(scene, snapshot):
         raise GeometryValidationError("STRUCTURE_REFERENCE_MISMATCH", "장면과 등록 구조 버전이 일치하지 않습니다.", "structure_ref")
     if scene.get("geometry_hash")!=snapshot["geometry_hash"]:
         raise GeometryValidationError("STRUCTURE_HASH_MISMATCH", "장면의 기하 해시가 동결한 구조와 다릅니다.", "geometry_hash")
-    if scene.get("holes") or scene.get("pouch_features"):
+    if snapshot["definition"].get("feature_policy")=="pouch-finishing-v1":
+        from .pouch_features import physical_pouch_features, normalize_pouch_features
+        selected=normalize_pouch_features(scene.get("pouch_features"),geometry["template_id"],geometry["width_mm"],geometry["height_mm"])
+        if canonical_hash(scene.get("holes") or [])!=canonical_hash(geometry.get("holes") or []) or physical_pouch_features(selected)!=physical_pouch_features(geometry.get("pouch_features")):
+            raise GeometryValidationError("REGISTERED_FINISHING_MISMATCH", "장면의 가공값은 등록 구조에 동결한 값과 같아야 합니다.", "structure_ref")
+    elif scene.get("holes") or scene.get("pouch_features"):
         raise GeometryValidationError("REGISTERED_FEATURES_UNSUPPORTED", "이 등록 구조 버전에는 추가 구멍·지퍼·노치 가공을 지원하지 않습니다.", "structure_ref")
     for key in ("bottom_mm","depth_mm"):
         if scene.get(key)!=snapshot["normalized_inputs"].get(key):

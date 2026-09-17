@@ -358,14 +358,16 @@ def test_hosted_download_is_redirect_without_large_body_proxy(tmp_path, monkeypa
     app = create_app(Settings(environment="test", database_url=f"sqlite:///{tmp_path/'hosted.db'}", storage_dir=tmp_path/'unused'))
     calls = []
     monkeypatch.setattr(storage, "signed_url", lambda key, **kwargs: calls.append((key, kwargs)) or "https://private.example/signed-test")
-    monkeypatch.setattr(storage, "get", lambda *_: pytest.fail("ZIP bytes must not pass through API"))
+    raw=b'fixture-export'*(30*1024*1024//14)
+    monkeypatch.setattr(storage, "get", lambda *_: pytest.fail("Download integrity uses a bounded read"))
+    monkeypatch.setattr(storage, "get_limited", lambda *_: raw)
     with TestClient(app) as client:
         register(client)
         item = project(client)
         job = enqueue(client, item)
         with app.state.session_factory() as db:
             row = db.get(Job, job["id"])
-            row.status, row.result = "succeeded", {"storage_key": f"{row.tenant_id}/exports/{row.id}/test.zip", "byte_size": 30 * 1024 * 1024}
+            row.status, row.result = "succeeded", {"storage_key": f"{row.tenant_id}/exports/{row.id}/test.zip", "byte_size":len(raw),"sha256":sha256(raw).hexdigest()}
             db.commit()
         response = client.get(f"/v1/exports/{job['id']}/download", follow_redirects=False)
         assert response.status_code == 307 and len(response.content) == 0
