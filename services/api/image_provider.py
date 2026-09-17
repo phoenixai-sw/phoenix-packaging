@@ -27,6 +27,59 @@ class ProviderError(Exception):
 
 EDIT_VERSION = "packaging-image-edit-v1"
 MAX_REFERENCE_BYTES = 25 * 1024 * 1024
+AI_SELECTION_VERSION = "packaging-image-selection-v1"
+IMAGE_MODELS = ("gpt-image-2.5-sunburst", "gpt-image-2.5-flare")
+IMAGE_QUALITIES = ("low", "medium", "high", "xhigh", "max", "auto")
+PREMIUM_QUALITIES = frozenset({"xhigh", "max", "auto"})
+IMAGE_ACTIONS = frozenset({"image.generate.standard", "image.generate.high", "image.edit.standard", "image.edit.high"})
+
+
+def quality_tier(quality):
+    return "high" if quality in PREMIUM_QUALITIES else "standard"
+
+
+def image_settings_payload(data):
+    keys = ("model", "quality", "output_size", "output_width_px", "output_height_px",
+            "output_effective_ppi", "output_experimental", "requested_quality", "ai_selection_version")
+    payload = {key: data.get(key) for key in keys}
+    if data.get("edit_mode") == "remove_text":
+        # Pixel-preserving removal returns source size; final placed-object PPI
+        # is only known after the user applies it in the editor.
+        payload["output_effective_ppi"] = None
+    return payload
+
+
+def resolve_image_selection(settings, data):
+    """Recheck a frozen selection, never silently substitute a model or quality.
+
+    Legacy jobs retain their original high-quality preset and default-model
+    binding. New selections survive a default change while still respecting
+    the operator's current allowlist before the call and before publication.
+    """
+    action = data.get("action")
+    if action not in IMAGE_ACTIONS:
+        raise ProviderError("AI_ACTION_INVALID", "지원하지 않는 이미지 작업입니다.")
+    model = data.get("model", settings.image_model)
+    if model not in IMAGE_MODELS or model not in settings.ai_image_models:
+        raise ProviderError("AI_MODEL_DISABLED", "선택한 이미지 모델은 현재 사용할 수 없습니다. 새 견적을 확인해 주세요.")
+    version = data.get("ai_selection_version")
+    if version is None:
+        if model != settings.image_model:
+            raise ProviderError("AI_CONFIGURATION_CHANGED", "이미지 서비스 설정이 변경되어 예약을 복원합니다.")
+        quality = data.get("quality", "high")
+        if quality != "high" or action == "image.edit.high":
+            raise ProviderError("AI_SELECTION_INVALID", "이전 이미지 견적의 품질 설정을 확인할 수 없습니다.")
+    else:
+        if version != AI_SELECTION_VERSION:
+            raise ProviderError("AI_SELECTION_INVALID", "이미지 선택 정책이 변경되었습니다. 새 견적을 확인해 주세요.")
+        quality = data.get("quality")
+        if quality not in IMAGE_QUALITIES or data.get("requested_quality") != quality:
+            raise ProviderError("AI_QUALITY_INVALID", "지원하지 않는 이미지 품질입니다.")
+        if action.rsplit(".", 1)[1] != quality_tier(quality):
+            raise ProviderError("AI_QUALITY_ACTION_MISMATCH", "선택 품질과 크레딧 견적이 일치하지 않습니다.")
+    if action.endswith(".high") and not settings.ai_high_enabled:
+        raise ProviderError("HIGH_RESOLUTION_DISABLED", "고품질 이미지 작업은 현재 제공되지 않습니다.")
+    return model, quality
 
 
 def normalize_edit_region(region):
@@ -124,12 +177,25 @@ def composite_edit_result(data, reference, result):
 
 
 def get_capabilities(settings):
+    from .billing.policy import pricing
+    available = settings.ai_provider != "disabled"
+    actions = pricing()["actions"]
+    labels = {"low":"낮음", "medium":"보통", "high":"높음", "xhigh":"매우 높음", "max":"최대", "auto":"자동"}
     return {"provider": settings.ai_provider, "model": settings.image_model if settings.ai_provider == "openai" else "fixture-v1",
             "generate": settings.ai_provider != "disabled", "edit": settings.ai_provider != "disabled", "mask": False,
             "standard": {"size": "face_aspect_max", "quality": "high", "experimental": True},
-            "high": {"enabled": settings.ai_high_enabled, "size": "face_aspect_max", "quality": "high", "experimental": True},
+            "high": {"enabled": available and settings.ai_high_enabled, "size": "face_aspect_max", "quality": "xhigh", "experimental": True},
+            "models": [{"id": model, "label": "GPT Image 2.5 Sunburst" if model.endswith("sunburst") else "GPT Image 2.5 Flare",
+                        "description": "세밀한 이미지 생성과 정밀한 수정" if model.endswith("sunburst") else "빠른 일상 이미지 생성과 수정",
+                        "enabled": available and model in settings.ai_image_models} for model in IMAGE_MODELS],
+            "qualities": [{"id": quality, "label": labels[quality], "action_tier": quality_tier(quality),
+                           "credit_cost": actions["image.generate."+quality_tier(quality)],
+                           "enabled": available and (quality not in PREMIUM_QUALITIES or settings.ai_high_enabled)} for quality in IMAGE_QUALITIES],
+            "defaults": {"model": settings.image_model, "quality": "high"},
+            "selection_version": AI_SELECTION_VERSION,
+            "auto_quality": {"selects": "quality", "changes_model": False, "credit_cost": actions["image.generate.high"], "actual_quality_may_be_unknown": True},
             "size_policy": size_capabilities(),
-            "high_edit": False, "max_units": 3, "preservation_guaranteed": False,
+            "high_edit": available and settings.ai_high_enabled, "max_units": 3, "preservation_guaranteed": False,
             "edit_modes": ["full", "remove_text"],
             "remove_text": {"enabled": settings.ai_provider != "disabled", "region_coordinates": "source_normalized",
                 "max_regions": 1, "source_size_preserved": True, "preservation_scope": "outside_edit_region",
@@ -181,14 +247,12 @@ def generate_image(settings, data, reference=None, *, transport=None):
     if settings.ai_provider == "disabled":
         raise ProviderError("AI_DISABLED", "이미지 생성 연결을 준비하고 있습니다.")
     action = data.get("action")
-    if action not in {"image.generate.standard", "image.generate.high", "image.edit.standard"}:
-        raise ProviderError("AI_ACTION_INVALID", "지원하지 않는 이미지 작업입니다.")
-    if action == "image.generate.high" and not settings.ai_high_enabled:
-        raise ProviderError("HIGH_RESOLUTION_DISABLED", "고해상도 생성은 아직 제공되지 않습니다.")
-    if (action == "image.edit.standard") != (reference is not None):
+    model, quality = resolve_image_selection(settings, data)
+    is_edit = action.startswith("image.edit.")
+    if is_edit != (reference is not None):
         raise ProviderError("AI_REFERENCE_MISMATCH", "이미지 수정에는 원본 이미지가 필요합니다.")
     mode = data.get("edit_mode", "full")
-    if not isinstance(mode, str) or mode not in {"full", "remove_text"} or (mode == "remove_text" and action != "image.edit.standard"):
+    if not isinstance(mode, str) or mode not in {"full", "remove_text"} or (mode == "remove_text" and not is_edit):
         raise ProviderError("AI_EDIT_MODE_INVALID", "지원하지 않는 이미지 수정 방식입니다.")
     if mode == "remove_text":
         if data.get("edit_version") != EDIT_VERSION:
@@ -202,7 +266,7 @@ def generate_image(settings, data, reference=None, *, transport=None):
     else:
         sizing_data = data
     try:
-        output = frozen_image_output(settings.image_model, sizing_data)
+        output = frozen_image_output(model, sizing_data)
     except ImageSizeError as error:
         raise ProviderError("AI_SIZE_INVALID", str(error)) from None
     size = output["output_size"]
@@ -216,11 +280,11 @@ def generate_image(settings, data, reference=None, *, transport=None):
         draw.ellipse((width*.49, height*.63, width*1.27, height*1.42), fill=tuple(40+x%100 for x in color[3:6]))
         draw.ellipse((-width*.12, -height*.16, width*.24, height*.2), fill=tuple(110+x%80 for x in color[6:9]))
         buffer = BytesIO(); image.save(buffer, format="PNG")
-        return ImageResult(buffer.getvalue(), width, height, {"provider":"fixture", "model":"fixture-v1", "demo":True, "usage":{}, "cost_usd":0, "cost_is_estimate":False, **output})
+        return ImageResult(buffer.getvalue(), width, height, {"provider":"fixture", "model":"fixture-v1", "requested_model":model, "quality":quality, "requested_quality":quality, "actual_quality":None, "demo":True, "usage":{}, "cost_usd":0, "cost_is_estimate":False, **output})
     if not settings.openai_api_key:
         raise ProviderError("AI_AUTH", "이미지 제공자 인증 설정이 필요합니다.")
-    prompt = edit_prompt(data) if action == "image.edit.standard" else design_prompt(data)
-    payload = {"model":settings.image_model, "prompt":prompt, "quality":"high", "size":size, "n":1, "output_format":"png"}
+    prompt = edit_prompt(data) if is_edit else design_prompt(data)
+    payload = {"model":model, "prompt":prompt, "quality":quality, "size":size, "n":1, "output_format":"png"}
     headers = {"Authorization": "Bearer " + settings.openai_api_key}
     try:
         with httpx.Client(timeout=httpx.Timeout(240, connect=15), transport=transport) as client:
@@ -228,7 +292,7 @@ def generate_image(settings, data, reference=None, *, transport=None):
                 files = {"image":("reference.png",reference,"image/png")}
                 # Official guide documents Sunburst mask guidance; Flare uses
                 # reference editing plus the same strict server-side composite.
-                if mode == "remove_text" and settings.image_model == "gpt-image-2.5-sunburst":
+                if mode == "remove_text" and model == "gpt-image-2.5-sunburst":
                     files["mask"] = ("mask.png", remove_text_mask(reference, data), "image/png")
                 response = client.post("https://api.openai.com/v1/images/edits", headers=headers,
                     data={k:str(v) for k,v in payload.items()}, files=files)
@@ -263,10 +327,13 @@ def generate_image(settings, data, reference=None, *, transport=None):
         image_tokens=details.get("image_tokens",0)
         text_tokens=details.get("text_tokens",max(0,usage.get("input_tokens",0)-image_tokens))
         cost=((text_tokens*5 + image_tokens*8 + usage.get("output_tokens",0)*30)/1_000_000) if known else None
-        return ImageResult(raw,width,height,{"provider":"openai", "model":settings.image_model,"quality":"high","size":size, **output,
+        actual_quality = result.get("quality")
+        if actual_quality not in IMAGE_QUALITIES[:-1]:
+            actual_quality = None  # Optional provider field; auto is not an actual quality.
+        return ImageResult(raw,width,height,{"provider":"openai", "model":model,"quality":quality,"requested_quality":quality,"actual_quality":actual_quality,"size":size, **output,
             "actual_size":f"{width}x{height}", "output_size_mismatch":(width,height)!=(output["output_width_px"],output["output_height_px"]),
-            "prompt_version":("packaging-remove-text-v1" if mode=="remove_text" else "packaging-reference-edit-v1") if action=="image.edit.standard" else "packaging-background-v1",
-            "provider_mask_guidance": mode=="remove_text" and settings.image_model=="gpt-image-2.5-sunburst",
+            "prompt_version":("packaging-remove-text-v1" if mode=="remove_text" else "packaging-reference-edit-v1") if is_edit else "packaging-background-v1",
+            "provider_mask_guidance": mode=="remove_text" and model=="gpt-image-2.5-sunburst",
             "provider_request_id":request_id,"usage":usage,"cost_usd":cost,"cost_is_estimate":True,
             "warning":"AI 이미지의 임의 글자·형태를 확인하세요. 상품 문구와 바코드는 편집 객체로 입력해야 합니다."})
     except (ValueError,KeyError,IndexError,TypeError,OSError,Image.DecompressionBombError):

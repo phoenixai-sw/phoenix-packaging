@@ -28,6 +28,8 @@ class QuoteBody(Body):
     prompt: str | None = Field(default=None, max_length=4000)
     face_id: str | None = Field(default=None, max_length=30)
     reference_asset_id: UUID | None = None
+    model: Literal["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"] | None = None
+    quality: Literal["low", "medium", "high", "xhigh", "max", "auto"] | None = None
 
     @model_validator(mode="after")
     def normalize_units(self):

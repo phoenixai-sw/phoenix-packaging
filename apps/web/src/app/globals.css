@@ -490,6 +490,30 @@
   border-right: 1px solid var(--line);
   padding-right: 27px;
 }
+.ai-credit-wallet {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  padding: 16px 18px;
+  margin: 0 0 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f6f7f2;
+  font-size: 12px;
+}
+.ai-credit-wallet > div { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; }
+.ai-credit-wallet strong { font-size: 16px; }
+.ai-credit-wallet > a { margin-left: auto; text-decoration: underline; text-underline-offset: 3px; }
+.ai-credit-wallet p { width: 100%; color: var(--muted); line-height: 1.7; }
+.ai-capability-error { margin-bottom: 20px; }
+.ai-quality-note { margin-top: -4px; margin-bottom: 15px; }
+.ai-settings-summary { width: 100%; margin: 8px 0 14px; font-size: 11px; }
+.ai-settings-summary > div { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 5px 0; }
+.ai-settings-summary dt { flex-shrink: 0; color: var(--muted); }
+.ai-settings-summary dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+.ai-result-metadata { display: flex; flex-direction: column; gap: 5px; font-size: 10px; color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+.ai-result-metadata strong { color: var(--ink); font-size: 12px; }
 .ai-results {
   min-width: 0;
 }

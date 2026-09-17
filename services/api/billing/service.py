@@ -97,8 +97,8 @@ def _action_cost(action, units):
         raise APIError(422, "ACTION_UNAVAILABLE", "지원하지 않는 작업입니다.")
     if action.startswith("export.") and units != 1:
         raise APIError(422, "INVALID_EXPORT_UNITS", "출력 견적은 제작 항목 하나씩 요청해 주세요.")
-    if action == "image.generate.high" and os.getenv("AI_HIGH_ENABLED", "false").lower() != "true":
-        raise APIError(422, "HIGH_RESOLUTION_DISABLED", "고해상도 생성은 원가 검증 후 제공됩니다.")
+    if action in {"image.generate.high", "image.edit.high"} and os.getenv("AI_HIGH_ENABLED", "false").lower() != "true":
+        raise APIError(422, "HIGH_RESOLUTION_DISABLED", "고품질 이미지 작업은 원가 검증 후 제공됩니다.")
     return pricing()["actions"][action]
 
 
@@ -178,7 +178,11 @@ def create_quote(db, tenant_id, action, units, *, project_id, base_revision, inp
 
 
 def quote_payload(quote):
-    return {"id": quote.id, "quote_id": quote.id, "action": quote.action, "requested_units": quote.units, "credit_total": quote.credit_total, "unit_cost": quote.unit_cost, "balance_before": quote.balance_before, "balance_after": quote.balance_before - quote.credit_total, "pricing_version": quote.pricing_version, "project_id": quote.project_id, "base_revision": quote.base_revision, "fingerprint": quote.fingerprint, "expires_at": aware(quote.expires_at).isoformat(), "input_hash": quote.input_hash}
+    payload = {"id": quote.id, "quote_id": quote.id, "action": quote.action, "requested_units": quote.units, "credit_total": quote.credit_total, "unit_cost": quote.unit_cost, "balance_before": quote.balance_before, "balance_after": quote.balance_before - quote.credit_total, "pricing_version": quote.pricing_version, "project_id": quote.project_id, "base_revision": quote.base_revision, "fingerprint": quote.fingerprint, "expires_at": aware(quote.expires_at).isoformat(), "input_hash": quote.input_hash}
+    if quote.action.startswith("image."):
+        from ..image_provider import image_settings_payload
+        payload["image_settings"] = image_settings_payload(quote.input_data)
+    return payload
 
 
 def reserve(db, tenant_id, operation_key, action, units, *, quote_id=None, project_id=None, base_revision=None, input_data=None, job_id=None, actor_id=None, now=None):

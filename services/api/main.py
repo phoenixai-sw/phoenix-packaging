@@ -45,12 +45,20 @@ def project_payload(project):
 
 
 def asset_payload(asset):
-    return {"id": asset.id, "name": asset.original_name, "content_type": asset.content_type, "byte_size": asset.byte_size, "width_px": asset.width_px, "height_px": asset.height_px, "source": asset.source, "url": f"/v1/assets/{asset.id}/content"}
+    metadata = asset.metadata_json or {}
+    public_image = {key: metadata[key] for key in ("model", "requested_quality", "actual_quality", "output_size", "actual_size") if key in metadata}
+    return {"id": asset.id, "name": asset.original_name, "content_type": asset.content_type, "byte_size": asset.byte_size, "width_px": asset.width_px, "height_px": asset.height_px, "source": asset.source, "url": f"/v1/assets/{asset.id}/content", **public_image}
 
 
 def job_payload(job):
     result = {key: value for key, value in job.result.items() if key != "storage_key"} if job.result else None
-    return {"id": job.id, "project_id": job.project_id, "kind": job.kind, "status": job.status, "created_at": job.created_at.isoformat(), "updated_at": job.updated_at.isoformat(), "result": result, "error": job.error, "download_url": f"/v1/exports/{job.id}/download" if job.status == "succeeded" and job.kind.endswith("_export") else None, **{key:(result or {}).get(key,0) for key in ("credit_reserved","credit_charged","credit_returned")},"cancelable":job.kind=="ai_generation" and any(u.get("status")=="queued" for u in (result or {}).get("units",[]))}
+    # History exposes the frozen request settings, never the full snapshot,
+    # prompt, confirmed OCR text, actor IDs or private storage references.
+    image_settings = {}
+    if job.kind == "ai_generation":
+        from .image_provider import image_settings_payload
+        image_settings = {"image_settings": image_settings_payload(job.snapshot or {})}
+    return {"id": job.id, "project_id": job.project_id, "kind": job.kind, "status": job.status, "created_at": job.created_at.isoformat(), "updated_at": job.updated_at.isoformat(), "result": result, "error": job.error, "download_url": f"/v1/exports/{job.id}/download" if job.status == "succeeded" and job.kind.endswith("_export") else None, **{key:(result or {}).get(key,0) for key in ("credit_reserved","credit_charged","credit_returned")},"cancelable":job.kind=="ai_generation" and any(u.get("status")=="queued" for u in (result or {}).get("units",[])), **image_settings}
 
 
 def owned(db, model, item_id, tenant_id):

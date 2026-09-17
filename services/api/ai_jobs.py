@@ -11,7 +11,8 @@ from .database import utcnow
 from .models import Asset, Job, Tenant, User, Project
 from .feature_models import AiUnit, ProviderAttempt, ProviderBudget, AuditEvent, Membership, WorkspaceMember
 from .image_provider import (generate_image, ProviderError, MAX_REFERENCE_BYTES,
-                             validate_edit_reference, composite_edit_result)
+                             validate_edit_reference, composite_edit_result, resolve_image_selection,
+                             image_settings_payload)
 from .billing.service import lock_wallet
 from .errors import APIError
 
@@ -49,10 +50,9 @@ def recheck_actor(db, job, settings):
         ensure_ai_access(settings, principal)
     except APIError as exc:
         raise ProviderError(exc.code, exc.message) from None
-    if data.get("provider_mode") != settings.ai_provider or data.get("model") != settings.image_model:
+    if data.get("provider_mode") != settings.ai_provider:
         raise ProviderError("AI_CONFIGURATION_CHANGED", "이미지 서비스 설정이 변경되어 예약을 복원합니다.")
-    if data["action"] == "image.generate.high" and not settings.ai_high_enabled:
-        raise ProviderError("HIGH_RESOLUTION_DISABLED", "고해상도 생성 설정이 변경되어 예약을 복원합니다.")
+    resolve_image_selection(settings,data)
     project = db.scalar(select(Project).where(Project.id == job.project_id, Project.tenant_id == job.tenant_id).with_for_update())
     if project is None or project.workspace_id != data.get("workspace_id"):
         raise ProviderError("AI_WORKSPACE_CHANGED", "작업 공간이 변경되어 예약을 복원합니다.")
@@ -87,6 +87,7 @@ def summarize_job(db, job):
         asset=db.get(Asset,unit.asset_id)
         if asset:
             detail={"id":asset.id,"name":asset.original_name,"source":asset.source,"width_px":asset.width_px,"height_px":asset.height_px,"url":f"/v1/assets/{asset.id}/content"}
+            detail.update({key:asset.metadata_json.get(key) for key in ("model","requested_quality","actual_quality","output_size","actual_size")})
             if asset.metadata_json.get("edit_mode")=="remove_text":
                 detail.update({key:asset.metadata_json.get(key) for key in ("edit_mode","edit_region","edit_pixel_box","reference_asset_id","preservation_scope","source_size_px","outside_pixels_preserved")})
             assets.append(detail)
@@ -156,7 +157,7 @@ def process_ai_jobs(session_factory, storage, settings, limit=1, provider=None):
                     release_unit(db,candidate.tenant_id,candidate.reservation_id,candidate.unit_index,reason="provider_daily_limit",now=now)
                     db.refresh(candidate);candidate.status="failed";candidate.error_code="AI_DAILY_LIMIT"
                     summarize_job(db,job);db.commit();continue
-                attempt=ProviderAttempt(tenant_id=candidate.tenant_id,unit_id=candidate.id,provider=settings.ai_provider,model=settings.image_model,status="started")
+                attempt=ProviderAttempt(tenant_id=candidate.tenant_id,unit_id=candidate.id,provider=settings.ai_provider,model=job.snapshot.get("model",settings.image_model),status="started",usage={"image_settings":image_settings_payload(job.snapshot)})
                 db.add(attempt);db.flush();db.refresh(candidate)
                 job.status="running";job.updated_at=now
                 claimed=(candidate.id,job.id,candidate.tenant_id,candidate.reservation_id,candidate.unit_index,lease,attempt.id,dict(job.snapshot),candidate.attempt_count)
@@ -192,10 +193,11 @@ def process_ai_jobs(session_factory, storage, settings, limit=1, provider=None):
             with session_factory() as db:
                 attempt=db.get(ProviderAttempt,attempt_id)
                 attempt.request_id=result.metadata.get("provider_request_id")
-                attempt.usage=result.metadata.get("usage",{})
+                attempt.usage={**result.metadata.get("usage",{}),"image_settings":{**image_settings_payload(data),"actual_quality":result.metadata.get("actual_quality"),"actual_size":result.metadata.get("actual_size")}}
                 attempt.cost_usd=result.metadata.get("cost_usd")
                 attempt.cost_is_estimate=result.metadata.get("cost_is_estimate",True)
                 attempt.status="provider_succeeded"
+                db.get(AiUnit,unit_id).result_metadata=result.metadata
                 db.commit()
             if data.get("edit_mode")=="remove_text":
                 result=composite_edit_result(data,reference,result)
@@ -209,7 +211,7 @@ def process_ai_jobs(session_factory, storage, settings, limit=1, provider=None):
                 unit=db.scalar(select(AiUnit).where(AiUnit.id==unit_id).with_for_update())
                 attempt=db.get(ProviderAttempt,attempt_id)
                 attempt.request_id=result.metadata.get("provider_request_id")
-                attempt.usage=result.metadata.get("usage",{})
+                attempt.usage={**result.metadata.get("usage",{}),"image_settings":{**image_settings_payload(data),"actual_quality":result.metadata.get("actual_quality"),"actual_size":result.metadata.get("actual_size")}}
                 attempt.cost_usd=result.metadata.get("cost_usd")
                 attempt.status="provider_succeeded"
                 if unit.status!="running" or unit.lease_id!=lease:
