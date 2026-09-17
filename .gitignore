@@ -18,6 +18,8 @@ supabase/.branches/
 .local/
 /output/pdf/
 /output/ops-ui/
+/output/ops-production/
+/output/spec-completion-ops-*/
 test-results/
 playwright-report/
 *.log
