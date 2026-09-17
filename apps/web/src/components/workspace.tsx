@@ -16,6 +16,7 @@ import {
   Users,
   Wallet,
   ShieldCheck,
+  Images,
 } from "lucide-react";
 import { Brand } from "./brand";
 import { api, ApiError, errorMessage, Session } from "@/lib/api";
@@ -154,6 +155,7 @@ export function Workspace({ children }: { children: React.ReactNode }) {
             {[
               { href: "/app/brands", label: "브랜드", icon: Palette },
               { href: "/app/products", label: "상품과 변형", icon: Package },
+              { href: "/app/assets", label: "이미지 보관함", icon: Images },
               { href: "/app/team", label: "팀과 작업 공간", icon: Users },
               { href: "/app/billing", label: "구독과 크레딧", icon: Wallet },
             ].map((item) => (
@@ -182,7 +184,7 @@ export function Workspace({ children }: { children: React.ReactNode }) {
             <CircleHelp size={21} />
             <h4>처음이신가요?</h4>
             <p>포장을 선택하고 상품 정보를 입력하면 시작할 수 있어요.</p>
-            <Link href="/#how-it-works">
+            <Link href="/app/help">
               만드는 방법 살펴보기 <ArrowUpRight size={14} />
             </Link>
           </div>

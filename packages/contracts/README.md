@@ -48,11 +48,22 @@ adjacent `.manifest.json`, and returns the manifest. It includes original
 unchanged text, rendered lines, font/PDF hashes, page sizes, warnings and
 explicitly unsupported production capabilities.
 
-The review PDF page size is the finished face size. Guides/labels intentionally
-remain visible. The page does not add an outer bleed strip; TrimBox and
-BleedBox therefore equal MediaBox. The manifest warns about this review-only
-behavior. Production export is blocked even if caller-supplied approval fields
-claim that a demo has been approved.
+Basic-profile review jobs add a 3mm outer bleed strip with the finished-size
+TrimBox; legacy jobs without that profile retain finished-size MediaBox and
+BleedBox. Guides/labels intentionally remain visible. Production export is
+blocked even if caller-supplied approval fields claim that a demo is approved.
+
+Image objects may store `crop: {x, y, width, height}` in normalized coordinates
+of the EXIF-oriented source. Omission or `null` displays the complete image;
+placement width/height and top-left rotation stay unchanged. Bounds are finite
+numbers, x/y in [0,1), width/height in [0.000001,1], and each endpoint <=1.
+Non-image crop fields are rejected. Source assets stay immutable. Canvas, 3D
+textures and PDF use the same selected source rectangle; PDF clipping keeps
+original raster pixels. Effective and original PPI both use visible source
+pixels, so cropping cannot hide a low-resolution warning. Quality derivatives
+materialize the selected region once, preserve root provenance and return
+`crop: null` in the apply patch to prevent a second crop. Crop is independent
+of the source-pixel ROI used by AI text removal and of physical bleed extension.
 
 `build_geometry(template_id, width, height, unit='mm', bottom_mm=..., depth_mm=..., holes=...)`
 builds versioned demo nets, structural regions and assembly transforms. Stand-up

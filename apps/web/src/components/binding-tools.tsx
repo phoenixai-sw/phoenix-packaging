@@ -20,11 +20,13 @@ export function BindingTools({
   saveCurrent,
   onServerProject,
   readOnly,
+  lockedIds = [],
 }: {
   project: Project;
   saveCurrent: () => Promise<number>;
   onServerProject: (project: Project) => void;
   readOnly: boolean;
+  lockedIds?: string[];
 }) {
   const router = useRouter();
   const products = useApiData<{ items: ProductData[] }>("/products");
@@ -52,7 +54,15 @@ export function BindingTools({
     }
   }
   async function apply() {
-    if (!preview) return;
+    if (!preview || readOnly) return;
+    if (
+      preview.changes.some((change) => lockedIds.includes(change.object_id))
+    ) {
+      setError(
+        "변경할 문구에 잠긴 레이어가 있습니다. 먼저 잠금을 해제해 주세요.",
+      );
+      return;
+    }
     setBusy(true);
     try {
       const result = await api<Project>(

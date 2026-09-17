@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "node --experimental-strip-types --test ../../packages/editor/tests/model.test.mjs ../../packages/editor/tests/text-history.test.mjs ../../packages/editor/tests/structure.test.mjs tests/auth-proxy.test.mjs tests/billing-state.test.mjs tests/export-state.test.mjs ../../packages/editor/tests/image-tools.test.mjs tests/product-input.test.mjs tests/ai-image-settings.test.mjs",
+    "test": "node --experimental-strip-types --test ../../packages/editor/tests/*.test.mjs tests/*.test.mjs",
     "predev": "node scripts/prepare-ocr.mjs",
     "prebuild": "node scripts/prepare-ocr.mjs"
   },
@@ -28,6 +28,7 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@types/three": "0.186.0",
+    "fake-indexeddb": "^6.2.5",
     "typescript": "5.9.3"
   }
 }

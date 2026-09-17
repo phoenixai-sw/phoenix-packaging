@@ -14,7 +14,7 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     return NextResponse.json({ code: 'NOT_FOUND', message: '요청한 경로를 찾을 수 없습니다.', retryable: false }, { status: 404 });
   }
   const headers = new Headers();
-  for (const name of ['content-type', 'cookie', 'x-csrf-token', 'idempotency-key', 'accept']) {
+  for (const name of ['content-type', 'cookie', 'x-csrf-token', 'x-editor-lease', 'idempotency-key', 'accept']) {
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }

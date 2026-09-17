@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./workspace-tools.css";
 export const metadata: Metadata = {
   title: {
     default: "Phoenix Packaging — 좋은 제품의 다음 모습",

@@ -28,7 +28,7 @@ type Preview = {
   asset: { id: string; width_px: number; height_px: number; url: string };
   patch: Pick<
     SceneObject,
-    "asset_id" | "x_mm" | "y_mm" | "width_mm" | "height_mm"
+    "asset_id" | "x_mm" | "y_mm" | "width_mm" | "height_mm" | "crop"
   >;
   quality: Quality;
   base_revision: number;
@@ -270,7 +270,9 @@ export function ImageQualityTools({
                 src={`/api/v1/assets/${object.asset_id}/content`}
                 alt="보완 전 원본"
               />
-              <figcaption>원본</figcaption>
+              <figcaption>
+                {object.crop ? "자르기 전 전체 원본" : "원본"}
+              </figcaption>
             </figure>
             <figure>
               <img

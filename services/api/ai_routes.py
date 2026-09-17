@@ -154,6 +154,8 @@ def install_ai_routes(app,db_session,job_payload,snapshot_revision):
             if existing:
                 if existing.request_hash!=request_hash: raise APIError(409,"IDEMPOTENCY_CONFLICT","같은 요청 식별자로 다른 작업을 실행할 수 없습니다.")
                 return result(request,job_payload(existing))
+            from .editor_sessions import enforce_edit_lease
+            enforce_edit_lease(db,project,request)
             # Portable write lock binds the quote to the exact snapshot through
             # the reservation+job commit, even during a concurrent editor save.
             unchanged=db.execute(update(Project).where(Project.id==project.id,Project.tenant_id==user.tenant_id,Project.base_revision==quote.base_revision).values(base_revision=Project.base_revision).execution_options(synchronize_session=False))

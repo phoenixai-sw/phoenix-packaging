@@ -96,6 +96,20 @@ class Revision(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class ProjectEditLease(Base):
+    __tablename__ = "project_edit_leases"
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    # No session FK: logout may remove a session immediately. Such a lease is
+    # inactive and reclaimable without retaining revoked login sessions.
+    login_session_id: Mapped[str] = mapped_column(String(36))
+    editor_id: Mapped[str] = mapped_column(String(36))
+    lease_token: Mapped[str] = mapped_column(String(36))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Asset(Base):
     __tablename__ = "assets"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)

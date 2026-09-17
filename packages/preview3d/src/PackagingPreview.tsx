@@ -107,7 +107,10 @@ async function faceTexture(
           reject(new Error("이미지 자산을 불러오지 못했습니다."));
         item.src = assetUrl(obj.asset_id!);
       });
-      ctx.drawImage(image, 0, 0, obj.width_mm, obj.height_mm);
+      const crop = obj.crop ?? { x: 0, y: 0, width: 1, height: 1 };
+      ctx.drawImage(image, crop.x * image.naturalWidth, crop.y * image.naturalHeight,
+        crop.width * image.naturalWidth, crop.height * image.naturalHeight,
+        0, 0, obj.width_mm, obj.height_mm);
     } else if (obj.type === "barcode") {
       const barcode = ean13Geometry(
         obj.barcode_value ?? "",

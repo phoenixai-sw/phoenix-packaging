@@ -1,3 +1,5 @@
+import { editorLeaseForRequest } from "./editor-lease-headers";
+export { setEditorLease, clearEditorLease } from "./editor-lease-headers";
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -14,6 +16,15 @@ export async function api<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const headers = new Headers(options.headers);
+  const lease = editorLeaseForRequest(path, options.method, options.body);
+  if (lease === null)
+    throw new ApiError(
+      423,
+      "EDITOR_READ_ONLY",
+      "현재 창은 읽기 전용입니다. 편집 권한을 다시 확인해 주세요.",
+    );
+  if (lease && !headers.has("X-Editor-Lease"))
+    headers.set("X-Editor-Lease", lease);
   if (options.body && !(options.body instanceof FormData))
     headers.set("Content-Type", "application/json");
   if (csrf && options.method && options.method !== "GET")

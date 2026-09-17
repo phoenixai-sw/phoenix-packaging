@@ -30,6 +30,7 @@ from .storage import SupabaseStorage, build_storage
 from . import feature_models
 from .billing import models as billing_models
 from .business import enforce_item_access, validate_project_links
+from .editor_sessions import enforce_edit_lease, install_editor_routes
 
 logger = logging.getLogger("phoenix.api")
 
@@ -81,6 +82,28 @@ def snapshot_revision(db, project, reason):
         db.add(revision)
         db.flush()
     return revision
+
+
+def normalize_draft_scene(db, user, project, body_scene, *, links=None):
+    scene = body_scene.model_dump(mode="json", exclude_none=True)
+    scene["template_version_id"] = project.template_version_id or project.template_id+"-demo-v1"
+    scene["template_kind"] = project.template_id
+    scene["bottom_mm"] = project.bottom_mm
+    scene["depth_mm"] = project.depth_mm
+    for key in ("brand_id", "product_variant_id", "workspace_id"):
+        scene[key] = (links or {}).get(key, getattr(project, key))
+    scene["geometry_hash"] = geometry_for_scene(scene)["geometry_hash"]
+    expected = build_geometry(project.template_id, project.width_mm, project.height_mm, bottom_mm=project.bottom_mm, depth_mm=project.depth_mm)
+    expected_faces = {face["id"]: face for face in expected["faces"]}
+    if set(face["id"] for face in scene["faces"]) != set(expected_faces):
+        raise APIError(422, "FACE_SET_MISMATCH", "모든 편집 면을 포함해 주세요.")
+    for face in scene["faces"]:
+        if face["width_mm"] != expected_faces[face["id"]]["width_mm"] or face["height_mm"] != expected_faces[face["id"]]["height_mm"]:
+            raise APIError(422, "FACE_DIMENSIONS_MISMATCH", "포장 규격과 편집 면의 크기가 다릅니다.")
+        for obj in face["objects"]:
+            if obj.get("asset_id"):
+                owned(db, Asset, obj["asset_id"], user.tenant_id)
+    return scene
 
 
 def initial_scene(project):
@@ -140,10 +163,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.engine = engine
     app.state.session_factory = session_factory
     app.state.storage = storage
-    app.add_middleware(CORSMiddleware, allow_origins=list(settings.allowed_origins), allow_credentials=True, allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"], allow_headers=["Content-Type", "X-CSRF-Token", "Idempotency-Key"])
+    app.add_middleware(CORSMiddleware, allow_origins=list(settings.allowed_origins), allow_credentials=True, allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"], allow_headers=["Content-Type", "X-CSRF-Token", "Idempotency-Key", "X-Editor-Lease"])
 
-    def db_session():
+    def db_session(request: Request):
         with session_factory() as db:
+            db.info["request"] = request
             yield db
 
     @app.middleware("http")
@@ -275,23 +299,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def save_draft(project_id: UUID, body: SaveDraftInput, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
         project = owned(db, Project, project_id, user.tenant_id)
+        enforce_edit_lease(db, project, request)
         ensure_revision(project, body.base_revision)
-        scene = body.scene.model_dump(mode="json", exclude_none=True)
-        scene["template_version_id"] = project.template_version_id or project.template_id+"-demo-v1"
-        scene["template_kind"] = project.template_id
-        scene["bottom_mm"]=project.bottom_mm;scene["depth_mm"]=project.depth_mm
-        for key in ("brand_id","product_variant_id","workspace_id"): scene[key]=getattr(project,key)
-        geometry = geometry_for_scene(scene)
-        scene["geometry_hash"] = geometry["geometry_hash"]
-        expected=build_geometry(project.template_id,project.width_mm,project.height_mm,bottom_mm=project.bottom_mm,depth_mm=project.depth_mm)
-        expected_faces={f["id"]:f for f in expected["faces"]}
-        if set(f["id"] for f in scene["faces"])!=set(expected_faces): raise APIError(422,"FACE_SET_MISMATCH","모든 편집 면을 포함해 주세요.")
-        for face in scene["faces"]:
-            if face["width_mm"] != expected_faces[face["id"]]["width_mm"] or face["height_mm"] != expected_faces[face["id"]]["height_mm"]:
-                raise APIError(422, "FACE_DIMENSIONS_MISMATCH", "포장 규격과 편집 면의 크기가 다릅니다.")
-            for obj in face["objects"]:
-                if obj.get("asset_id"):
-                    owned(db, Asset, obj["asset_id"], user.tenant_id)
+        scene = normalize_draft_scene(db, user, project, body.scene)
         values = {"scene": scene, "base_revision": body.base_revision + 1, "updated_at": utcnow()}
         if body.name is not None:
             if not body.name.strip():
@@ -315,6 +325,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def create_revision(project_id: UUID, body: RevisionInput, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
         project = owned(db, Project, project_id, user.tenant_id)
+        enforce_edit_lease(db, project, request)
         ensure_revision(project, body.base_revision)
         try:
             revision = snapshot_revision(db, project, body.reason)
@@ -323,13 +334,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             db.rollback()
             revision = db.scalar(select(Revision).where(Revision.project_id == project.id, Revision.number == body.base_revision))
         return envelope(request, {"id": revision.id, "project_id": revision.project_id, "number": revision.number, "scene": revision.scene, "created_at": revision.created_at.isoformat()})
-
-    @app.get("/v1/projects/{project_id}/revisions")
-    def revisions(project_id: UUID, request: Request, db=Depends(db_session)):
-        user, _ = require_auth(request, db)
-        project = owned(db, Project, project_id, user.tenant_id)
-        rows = db.scalars(select(Revision).where(Revision.project_id == project.id, Revision.tenant_id == user.tenant_id).order_by(Revision.number.desc()).limit(100)).all()
-        return envelope(request, {"items": [{"id": row.id, "number": row.number, "reason": row.reason, "scene": row.scene, "created_at": row.created_at.isoformat()} for row in rows]})
 
     @app.post("/v1/assets", status_code=201)
     def upload_asset(request: Request, file: UploadFile = File(...), project_id: str | None=Form(default=None), db=Depends(db_session)):
@@ -397,10 +401,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/v1/exports", status_code=202)
     def create_export(body: ExportInput, request: Request, db=Depends(db_session)):
         user, _ = require_auth(request, db, mutate=True)
+        project = owned(db, Project, body.project_id, user.tenant_id)
+        enforce_edit_lease(db, project, request)
         if body.kind=="production":
             from .production_routes import create_production_export
             return envelope(request,job_payload(create_production_export(db,user,body,request,project_payload,snapshot_revision)))
-        project = owned(db, Project, body.project_id, user.tenant_id)
         ensure_revision(project, body.base_revision)
         from .exporters.public_profiles import BASIC_REVIEW_PROFILE_ID
         operation_key = request.headers.get("idempotency-key", f"review:{project.id}:{body.base_revision}:{BASIC_REVIEW_PROFILE_ID}")
@@ -485,6 +490,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from .ai_routes import install_ai_routes, prepare_ai_quote
     from .production_routes import install_production_routes, prepare_production_quote
     def prepare_quote(db,user,body):
+        if body.get("project_id"):
+            project = owned(db, Project, body["project_id"], user.tenant_id)
+            enforce_edit_lease(db, project)
         if body["action"].startswith("image."): return prepare_ai_quote(db,user,body,settings)
         if body["action"].startswith("export.production"):
             return prepare_production_quote(db,user,body,settings,project_payload,snapshot_revision,storage=storage)
@@ -501,6 +509,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_print_preparation_routes(app,db_session)
     from .image_quality import install_image_quality_routes
     install_image_quality_routes(app,db_session,asset_payload)
+    install_editor_routes(app,db_session,project_payload,snapshot_revision,normalize_draft_scene)
+    from .workspace_views import install_workspace_views
+    install_workspace_views(app,db_session,asset_payload)
 
     return app
 

@@ -16,7 +16,7 @@ from pathlib import Path
 import threading
 from typing import Callable
 
-from PIL import Image
+from PIL import Image, ImageOps
 from reportlab.lib.colors import HexColor, Color
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
@@ -25,6 +25,8 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
 
 from ..geometry import DEMO_TEMPLATE_ID, GeometryValidationError, validate_scene, geometry_for_scene, holes_for_face, barcode_geometry
+from ..image_crop import normalized_crop
+from ..image_quality_metadata import resolver_quality_metrics
 
 ROOT = Path(__file__).resolve().parents[3]
 FONT_PATH = ROOT / "fixtures" / "fonts" / "NotoSansKR-Regular.ttf"
@@ -154,7 +156,7 @@ def _resolve_image(asset_id: str, resolver: AssetResolver | None) -> tuple[Image
             if source.format not in ("PNG", "JPEG", "WEBP") or source.width * source.height > 40_000_000:
                 raise ValueError("unsupported image")
             source.load()
-            image = source.convert("RGBA")
+            image = ImageOps.exif_transpose(source).convert("RGBA")
             size = image.size
         return ImageReader(image), size
     except Exception as exc:
@@ -187,8 +189,13 @@ def _draw_object(canvas: Canvas, obj: dict, face_height: float, resolver: AssetR
             canvas.drawText(text)
     elif kind == "image":
         source, pixels = _resolve_image(obj["asset_id"], resolver)
-        canvas.drawImage(source, 0, -height, width=width, height=height, mask="auto")
-        effective_ppi = min(pixels[0] / (obj["width_mm"] / 25.4), pixels[1] / (obj["height_mm"] / 25.4))
+        crop = normalized_crop(obj.get("crop"))
+        clip = canvas.beginPath(); clip.rect(0, -height, width, height)
+        canvas.clipPath(clip, stroke=0, fill=0)
+        source_width, source_height = width / crop["width"], height / crop["height"]
+        canvas.drawImage(source, -crop["x"] * source_width, -(1-crop["y"]) * source_height,
+                         width=source_width, height=source_height, mask="auto")
+        effective_ppi = resolver_quality_metrics(resolver, obj["asset_id"], pixels, obj)["effective_ppi"]
         if effective_ppi < 300:
             warnings.append({"code": "LOW_PPI", "object_id": obj["id"], "effective_ppi": round(effective_ppi, 1),
                              "message": "배치 크기 기준 해상도가 기본 검토 기준 300ppi 미만입니다."})

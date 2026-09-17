@@ -15,6 +15,13 @@ import {
 import type Konva from "konva";
 import type { Face, SceneObject } from "./model";
 import { roundMM } from "./model";
+import {
+  cropPixels,
+  objectBounds,
+  selectionInRect,
+  snapTranslation,
+} from "./layout";
+type SelectEvent = Konva.KonvaEventObject<MouseEvent | TouchEvent>;
 import { ean13Geometry } from "@preview3d/barcode";
 import { contourPoints, linePoints, type FaceStructure } from "./structure";
 type Region = {
@@ -35,7 +42,7 @@ function BarcodeObject({
   object: SceneObject;
   scale: number;
   selected: boolean;
-  onSelect: () => void;
+  onSelect: (event: SelectEvent) => void;
   onChange: (patch: Partial<SceneObject>) => void;
   readOnly: boolean;
 }) {
@@ -68,12 +75,6 @@ function BarcodeObject({
       draggable={!readOnly && !object.locked}
       onClick={onSelect}
       onTap={onSelect}
-      onDragEnd={(e) =>
-        onChange({
-          x_mm: roundMM(e.target.x() / scale),
-          y_mm: roundMM(e.target.y() / scale),
-        })
-      }
     >
       <Rect
         width={barcode.width_mm * scale}
@@ -104,10 +105,21 @@ function BarcodeObject({
         fill="#000000"
         listening={false}
       />
-      {object.barcode_usage === "sample" && <Text text="SAMPLE / 검토용" x={0}
-        y={(barcode.bar_height_mm + 5.5) * scale} width={barcode.width_mm * scale} height={3.5 * scale}
-        fontFamily="NotoSansKREditor" fontSize={7 * 25.4 / 72 * scale} lineHeight={1}
-        align="center" fill="#000000" listening={false} />}
+      {object.barcode_usage === "sample" && (
+        <Text
+          text="SAMPLE / 검토용"
+          x={0}
+          y={(barcode.bar_height_mm + 5.5) * scale}
+          width={barcode.width_mm * scale}
+          height={3.5 * scale}
+          fontFamily="NotoSansKREditor"
+          fontSize={((7 * 25.4) / 72) * scale}
+          lineHeight={1}
+          align="center"
+          fill="#000000"
+          listening={false}
+        />
+      )}
     </Group>
   );
 }
@@ -120,13 +132,14 @@ function AssetImage({
 }: {
   object: SceneObject;
   scale: number;
-  onSelect: () => void;
+  onSelect: (event: SelectEvent) => void;
   onChange: (patch: Partial<SceneObject>) => void;
   readOnly: boolean;
 }) {
   const [image, setImage] = useState<HTMLImageElement>();
   useEffect(() => {
     let active = true;
+    setImage(undefined);
     const img = new window.Image();
     img.crossOrigin = "anonymous";
     img.src = `/api/v1/assets/${object.asset_id}/content`;
@@ -141,6 +154,11 @@ function AssetImage({
     <KImage
       id={object.id}
       image={image}
+      crop={
+        image
+          ? cropPixels(object.crop, image.naturalWidth, image.naturalHeight)
+          : undefined
+      }
       opacity={object.opacity ?? 1}
       x={object.x_mm * scale}
       y={object.y_mm * scale}
@@ -150,12 +168,6 @@ function AssetImage({
       onClick={onSelect}
       onTap={onSelect}
       draggable={!readOnly && !object.locked}
-      onDragEnd={(e) =>
-        onChange({
-          x_mm: roundMM(e.target.x() / scale),
-          y_mm: roundMM(e.target.y() / scale),
-        })
-      }
       onTransformEnd={(e) => {
         const n = e.target;
         onChange({
@@ -181,10 +193,22 @@ export default function Canvas({
   holes = [],
   geometryFace,
   readOnly = false,
+  selectedIds = selected ? [selected] : [],
+  onSelectMany,
+  onBatchChange,
+  snapping = true,
+  rulers = true,
 }: {
   face: Face;
   selected: string | null;
-  onSelect: (id: string | null) => void;
+  onSelect: (id: string | null, additive?: boolean) => void;
+  selectedIds?: string[];
+  onSelectMany?: (ids: string[]) => void;
+  onBatchChange?: (
+    changes: Array<{ id: string; patch: Partial<SceneObject> }>,
+  ) => void;
+  snapping?: boolean;
+  rulers?: boolean;
   onChange: (id: string, patch: Partial<SceneObject>) => void;
   zoom: number;
   guides: boolean;
@@ -209,7 +233,10 @@ export default function Canvas({
   const composing = useRef(false);
   const [fontReady, setFontReady] = useState(false);
   useEffect(() => {
-    Promise.all([document.fonts.load('400 16px "NotoSansKREditor"'), document.fonts.load('700 16px "NotoSansKREditor"')]).then(() => setFontReady(true));
+    Promise.all([
+      document.fonts.load('400 16px "NotoSansKREditor"'),
+      document.fonts.load('700 16px "NotoSansKREditor"'),
+    ]).then(() => setFontReady(true));
   }, []);
   useEffect(() => {
     if (!host.current) return;
@@ -236,6 +263,7 @@ export default function Canvas({
     const node = selected ? stage.current?.findOne(`#${selected}`) : null;
     transformer.current?.nodes(
       node &&
+        selectedIds.length === 1 &&
         !editing &&
         node.draggable() &&
         !readOnly &&
@@ -244,7 +272,7 @@ export default function Canvas({
         : [],
     );
     transformer.current?.getLayer()?.batchDraw();
-  }, [selected, editing, face.objects, fontReady]);
+  }, [selected, selectedIds, editing, face.objects, fontReady, readOnly]);
   useEffect(() => {
     setEditing(null);
     onEditState(false);
@@ -259,11 +287,125 @@ export default function Canvas({
     }, 0);
   }
   function endEdit(cancel = false) {
-    if (!editing || composing.current) return;
+    if (
+      !editing ||
+      composing.current ||
+      (!cancel && (readOnly || current?.locked))
+    )
+      return;
     if (!cancel) onChange(editing, { text: textValue });
     setEditing(null);
     onEditState(false);
   }
+  const drag = useRef<{
+    ids: string[];
+    origin: { x: number; y: number };
+    dx: number;
+    dy: number;
+  } | null>(null);
+  const marqueeStart = useRef<{ x: number; y: number } | null>(null);
+  const [marquee, setMarquee] = useState<{
+    x_mm: number;
+    y_mm: number;
+    width_mm: number;
+    height_mm: number;
+  } | null>(null);
+  const [snapGuides, setSnapGuides] = useState<
+    Array<{ axis: "x" | "y"; position: number }>
+  >([]);
+  function choose(id: string, event: SelectEvent) {
+    const e = event.evt as MouseEvent;
+    onSelect(id, !!(e.shiftKey || e.ctrlKey || e.metaKey));
+  }
+  function dragStart(e: Konva.KonvaEventObject<DragEvent>) {
+    const object = face.objects.find((o) => o.id === e.target.id());
+    if (!object || readOnly || object.locked) return;
+    const ids = (
+      selectedIds.includes(object.id) ? selectedIds : [object.id]
+    ).filter((id) => !face.objects.find((o) => o.id === id)?.locked);
+    if (!selectedIds.includes(object.id)) onSelect(object.id);
+    drag.current = {
+      ids,
+      origin: { x: object.x_mm, y: object.y_mm },
+      dx: 0,
+      dy: 0,
+    };
+  }
+  function dragMove(e: Konva.KonvaEventObject<DragEvent>) {
+    const d = drag.current;
+    if (!d) return;
+    const dx = e.target.x() / scale - d.origin.x,
+      dy = e.target.y() / scale - d.origin.y;
+    const move = snapping
+      ? snapTranslation(
+          face,
+          d.ids,
+          dx,
+          dy,
+          6 / scale,
+          geometryFace?.regions?.safe,
+        )
+      : { dx, dy, guides: [] };
+    d.dx = move.dx;
+    d.dy = move.dy;
+    setSnapGuides(move.guides);
+    for (const id of d.ids) {
+      const o = face.objects.find((o) => o.id === id)!;
+      stage.current
+        ?.findOne(`#${id}`)
+        ?.position({ x: (o.x_mm + d.dx) * scale, y: (o.y_mm + d.dy) * scale });
+    }
+  }
+  function dragEnd() {
+    const d = drag.current;
+    drag.current = null;
+    setSnapGuides([]);
+    if (!d || readOnly) return;
+    const changes = d.ids.map((id) => {
+      const o = face.objects.find((o) => o.id === id)!;
+      return {
+        id,
+        patch: { x_mm: roundMM(o.x_mm + d.dx), y_mm: roundMM(o.y_mm + d.dy) },
+      };
+    });
+    if (onBatchChange) onBatchChange(changes);
+    else changes.forEach((change) => onChange(change.id, change.patch));
+  }
+  function beginMarquee(e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) {
+    if (e.target !== stage.current && e.target.name() !== "face-background")
+      return;
+    endEdit();
+    const p = stage.current?.getPointerPosition();
+    if (!p) return;
+    marqueeStart.current = { x: p.x / scale, y: p.y / scale };
+    setMarquee(null);
+  }
+  function moveMarquee() {
+    const a = marqueeStart.current,
+      p = stage.current?.getPointerPosition();
+    if (!a || !p) return;
+    const x = p.x / scale,
+      y = p.y / scale;
+    setMarquee({
+      x_mm: Math.min(a.x, x),
+      y_mm: Math.min(a.y, y),
+      width_mm: Math.abs(x - a.x),
+      height_mm: Math.abs(y - a.y),
+    });
+  }
+  function endMarquee() {
+    if (!marqueeStart.current) return;
+    marqueeStart.current = null;
+    if (
+      marquee &&
+      marquee.width_mm * scale > 3 &&
+      marquee.height_mm * scale > 3
+    )
+      onSelectMany?.(selectionInRect(face, marquee));
+    else onSelect(null);
+    setMarquee(null);
+  }
+  const rulerStep = scale < 1 ? 20 : scale < 2 ? 10 : 5;
   const patch = (object: SceneObject) => (changes: Partial<SceneObject>) =>
     onChange(object.id, changes);
   return (
@@ -273,6 +415,46 @@ export default function Canvas({
           className="canvas-board"
           style={{ width: width + 60, height: height + 60 }}
         >
+          {rulers && (
+            <>
+              <svg
+                className="canvas-ruler horizontal"
+                width={width}
+                height={22}
+                aria-label="가로 눈금자 mm"
+              >
+                {Array.from(
+                  { length: Math.floor(face.width_mm / rulerStep) + 1 },
+                  (_, i) => i * rulerStep,
+                ).map((mm) => (
+                  <g key={mm}>
+                    <line x1={mm * scale} x2={mm * scale} y1={14} y2={22} />
+                    <text x={mm * scale + 2} y={11}>
+                      {mm}
+                    </text>
+                  </g>
+                ))}
+              </svg>
+              <svg
+                className="canvas-ruler vertical"
+                width={24}
+                height={height}
+                aria-label="세로 눈금자 mm"
+              >
+                {Array.from(
+                  { length: Math.floor(face.height_mm / rulerStep) + 1 },
+                  (_, i) => i * rulerStep,
+                ).map((mm) => (
+                  <g key={mm}>
+                    <line x1={17} x2={24} y1={mm * scale} y2={mm * scale} />
+                    <text x={2} y={mm * scale + 11}>
+                      {mm}
+                    </text>
+                  </g>
+                ))}
+              </svg>
+            </>
+          )}
           <span className="canvas-width-label">{face.width_mm} mm</span>
           <span className="canvas-height-label">{face.height_mm} mm</span>
           <div className="canvas-paper" style={{ width, height }}>
@@ -280,12 +462,15 @@ export default function Canvas({
               width={width}
               height={height}
               ref={stage}
-              onMouseDown={(e) => {
-                if (e.target === e.target.getStage()) {
-                  onSelect(null);
-                  endEdit();
-                }
-              }}
+              onMouseDown={beginMarquee}
+              onTouchStart={beginMarquee}
+              onMouseMove={moveMarquee}
+              onTouchMove={moveMarquee}
+              onMouseUp={endMarquee}
+              onTouchEnd={endMarquee}
+              onDragStart={dragStart}
+              onDragMove={dragMove}
+              onDragEnd={dragEnd}
             >
               <Layer>
                 <Rect
@@ -294,10 +479,7 @@ export default function Canvas({
                   width={width}
                   height={height}
                   fill={face.background || "#f5f0e5"}
-                  onClick={() => {
-                    onSelect(null);
-                    endEdit();
-                  }}
+                  name="face-background"
                 />
                 {[...face.objects]
                   .sort((a, b) => a.z_index - b.z_index)
@@ -309,7 +491,7 @@ export default function Canvas({
                         object={object}
                         scale={scale}
                         selected={selected === object.id}
-                        onSelect={() => onSelect(object.id)}
+                        onSelect={(e) => choose(object.id, e)}
                         onChange={patch(object)}
                         readOnly={readOnly}
                       />
@@ -318,7 +500,7 @@ export default function Canvas({
                         key={object.id}
                         object={object}
                         scale={scale}
-                        onSelect={() => onSelect(object.id)}
+                        onSelect={(e) => choose(object.id, e)}
                         onChange={patch(object)}
                         readOnly={readOnly}
                       />
@@ -355,14 +537,8 @@ export default function Canvas({
                           context.fillStrokeShape(node);
                         }}
                         draggable={!readOnly && !object.locked}
-                        onClick={() => onSelect(object.id)}
-                        onTap={() => onSelect(object.id)}
-                        onDragEnd={(e) =>
-                          patch(object)({
-                            x_mm: roundMM(e.target.x() / scale),
-                            y_mm: roundMM(e.target.y() / scale),
-                          })
-                        }
+                        onClick={(e) => choose(object.id, e)}
+                        onTap={(e) => choose(object.id, e)}
                         onTransformEnd={(e) => {
                           const n = e.target;
                           patch(object)({
@@ -392,7 +568,9 @@ export default function Canvas({
                           (((object.font_size_pt || 16) * 25.4) / 72) * scale
                         }
                         fontFamily="NotoSansKREditor"
-                        fontStyle={object.font_weight === 700 ? "bold" : "normal"}
+                        fontStyle={
+                          object.font_weight === 700 ? "bold" : "normal"
+                        }
                         fill={object.color || "#263b2d"}
                         rotation={object.rotation_deg}
                         align={object.align || "left"}
@@ -404,16 +582,10 @@ export default function Canvas({
                         wrap="char"
                         visible={editing !== object.id}
                         draggable={!readOnly && !object.locked}
-                        onClick={() => onSelect(object.id)}
-                        onTap={() => onSelect(object.id)}
+                        onClick={(e) => choose(object.id, e)}
+                        onTap={(e) => choose(object.id, e)}
                         onDblClick={() => startEdit(object)}
                         onDblTap={() => startEdit(object)}
-                        onDragEnd={(e) =>
-                          patch(object)({
-                            x_mm: roundMM(e.target.x() / scale),
-                            y_mm: roundMM(e.target.y() / scale),
-                          })
-                        }
                         onTransformEnd={(e) => {
                           const n = e.target;
                           patch(object)({
@@ -503,20 +675,65 @@ export default function Canvas({
                         listening={false}
                       />
                     ))}
-                    {geometryFace.regions.zipper && <>
-                      <Rect {...{
-                        x: geometryFace.regions.zipper.band.x_mm * scale, y: geometryFace.regions.zipper.band.y_mm * scale,
-                        width: geometryFace.regions.zipper.band.width_mm * scale, height: geometryFace.regions.zipper.band.height_mm * scale,
-                      }} fill="#8760a225" stroke="#8760a2" strokeWidth={0.7} listening={false} />
-                      <Line points={linePoints(geometryFace.regions.zipper.line, scale)} stroke="#8760a2" strokeWidth={1.2} listening={false} />
-                    </>}
-                    {geometryFace.regions.tear_line && <Line points={linePoints(geometryFace.regions.tear_line, scale)} stroke="#c34b78" dash={[5, 3]} strokeWidth={1} listening={false} />}
+                    {geometryFace.regions.zipper && (
+                      <>
+                        <Rect
+                          {...{
+                            x: geometryFace.regions.zipper.band.x_mm * scale,
+                            y: geometryFace.regions.zipper.band.y_mm * scale,
+                            width:
+                              geometryFace.regions.zipper.band.width_mm * scale,
+                            height:
+                              geometryFace.regions.zipper.band.height_mm *
+                              scale,
+                          }}
+                          fill="#8760a225"
+                          stroke="#8760a2"
+                          strokeWidth={0.7}
+                          listening={false}
+                        />
+                        <Line
+                          points={linePoints(
+                            geometryFace.regions.zipper.line,
+                            scale,
+                          )}
+                          stroke="#8760a2"
+                          strokeWidth={1.2}
+                          listening={false}
+                        />
+                      </>
+                    )}
+                    {geometryFace.regions.tear_line && (
+                      <Line
+                        points={linePoints(
+                          geometryFace.regions.tear_line,
+                          scale,
+                        )}
+                        stroke="#c34b78"
+                        dash={[5, 3]}
+                        strokeWidth={1}
+                        listening={false}
+                      />
+                    )}
                   </>
                 )}
-                {geometryFace?.regions?.tear_notches?.map((notch, index) => <Group key={`notch-${index}`} listening={false}>
-                  <Line points={contourPoints(notch.points_mm, scale)} closed fill="#000000" globalCompositeOperation="destination-out" />
-                  {guides && <Line points={contourPoints(notch.points_mm, scale)} stroke="#c34b78" strokeWidth={1} />}
-                </Group>)}
+                {geometryFace?.regions?.tear_notches?.map((notch, index) => (
+                  <Group key={`notch-${index}`} listening={false}>
+                    <Line
+                      points={contourPoints(notch.points_mm, scale)}
+                      closed
+                      fill="#000000"
+                      globalCompositeOperation="destination-out"
+                    />
+                    {guides && (
+                      <Line
+                        points={contourPoints(notch.points_mm, scale)}
+                        stroke="#c34b78"
+                        strokeWidth={1}
+                      />
+                    )}
+                  </Group>
+                ))}
                 {holes
                   .filter(
                     (h) =>
@@ -525,20 +742,78 @@ export default function Canvas({
                       (h.face_id === "back" && face.id === "front"),
                   )
                   .map((h) => (
-                    <Group key={h.id} listening={false}><Circle
-                      key={h.id}
-                      x={
-                        (h.face_id === face.id
-                          ? h.center_x_mm
-                          : face.width_mm - h.center_x_mm) * scale
-                      }
-                      y={h.center_y_mm * scale}
-                      radius={(h.diameter_mm / 2) * scale}
-                      fill="#000000"
-                      globalCompositeOperation="destination-out"
-                    />{guides && <Circle x={(h.face_id === face.id ? h.center_x_mm : face.width_mm - h.center_x_mm) * scale}
-                      y={h.center_y_mm * scale} radius={h.diameter_mm / 2 * scale} stroke="#d8643d" strokeWidth={1} />}</Group>
+                    <Group key={h.id} listening={false}>
+                      <Circle
+                        key={h.id}
+                        x={
+                          (h.face_id === face.id
+                            ? h.center_x_mm
+                            : face.width_mm - h.center_x_mm) * scale
+                        }
+                        y={h.center_y_mm * scale}
+                        radius={(h.diameter_mm / 2) * scale}
+                        fill="#000000"
+                        globalCompositeOperation="destination-out"
+                      />
+                      {guides && (
+                        <Circle
+                          x={
+                            (h.face_id === face.id
+                              ? h.center_x_mm
+                              : face.width_mm - h.center_x_mm) * scale
+                          }
+                          y={h.center_y_mm * scale}
+                          radius={(h.diameter_mm / 2) * scale}
+                          stroke="#d8643d"
+                          strokeWidth={1}
+                        />
+                      )}
+                    </Group>
                   ))}
+                {selectedIds.length > 1 &&
+                  face.objects
+                    .filter((o) => selectedIds.includes(o.id))
+                    .map((o) => {
+                      const b = objectBounds(o);
+                      return (
+                        <Rect
+                          key={`selection-${o.id}`}
+                          x={b.left * scale}
+                          y={b.top * scale}
+                          width={b.width * scale}
+                          height={b.height * scale}
+                          stroke={o.locked ? "#777" : "#e4673d"}
+                          dash={[4, 3]}
+                          strokeWidth={1}
+                          listening={false}
+                        />
+                      );
+                    })}
+                {marquee && (
+                  <Rect
+                    x={marquee.x_mm * scale}
+                    y={marquee.y_mm * scale}
+                    width={marquee.width_mm * scale}
+                    height={marquee.height_mm * scale}
+                    fill="#e4673d20"
+                    stroke="#e4673d"
+                    strokeWidth={1}
+                    listening={false}
+                  />
+                )}
+                {snapGuides.map((g, i) => (
+                  <Line
+                    key={`snap-${i}`}
+                    points={
+                      g.axis === "x"
+                        ? [g.position * scale, 0, g.position * scale, height]
+                        : [0, g.position * scale, width, g.position * scale]
+                    }
+                    stroke="#9c4db1"
+                    dash={[3, 3]}
+                    listening={false}
+                  />
+                ))}
                 <Transformer
                   ref={transformer}
                   rotateEnabled
@@ -560,6 +835,7 @@ export default function Canvas({
                 className="canvas-textarea"
                 aria-label="캔버스 한글 문구 편집"
                 value={textValue}
+                readOnly={readOnly || current.locked}
                 onChange={(e) => setTextValue(e.target.value)}
                 onCompositionStart={() => {
                   composing.current = true;
