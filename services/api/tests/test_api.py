@@ -89,7 +89,8 @@ def test_stale_draft_cannot_overwrite_and_snapshots_stay_immutable(client):
     saved = client.get(url).json()["data"]
     assert saved["scene"]["faces"][0]["objects"][1]["text"] == "첫 번째 저장"
     revisions = client.get(url + "/revisions").json()["data"]["items"]
-    assert revisions[0]["scene"] == item["scene"]
+    assert revisions[0]["number"] == 2 and revisions[0]["scene"] == saved["scene"]
+    assert revisions[1]["number"] == 1 and revisions[1]["scene"] == item["scene"]
     snap = client.post(url + "/revisions", json={"base_revision": 2})
     assert snap.status_code == 201
     assert snap.json()["data"]["scene"] == saved["scene"]

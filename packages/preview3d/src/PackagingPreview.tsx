@@ -5,12 +5,14 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import type { Scene, Face } from "../../contracts/scene.generated";
 import { ean13Geometry } from "./barcode";
+import type { FaceStructure } from "../../editor/src/structure";
 
 type StructuralFace = {
   id: string;
   name: string;
   width_mm: number;
   height_mm: number;
+  regions?: FaceStructure["regions"];
   assembly: {
     position_mm: number[];
     rotation_deg: number[];
@@ -37,6 +39,7 @@ async function faceTexture(
   scene: Scene,
   assetUrl: PackagingPreviewProps["assetUrl"],
   verification: boolean,
+  structural?: StructuralFace,
 ) {
   const scale = Math.min(5, 1600 / Math.max(face.width_mm, face.height_mm));
   const canvas = document.createElement("canvas");
@@ -59,7 +62,7 @@ async function faceTexture(
     if (obj.type === "text") {
       const size = (obj.font_size_pt ?? 18) * pt,
         spacing = (obj.letter_spacing ?? 0) * pt;
-      ctx.font = `${size}px NotoSansKR`;
+      ctx.font = `${obj.font_weight ?? 400} ${size}px NotoSansKREditor`;
       ctx.fillStyle = obj.color ?? "#172c28";
       ctx.textBaseline = "alphabetic";
       const width = (text: string) =>
@@ -113,17 +116,21 @@ async function faceTexture(
       );
       ctx.globalAlpha = 1;
       ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, barcode.width_mm, barcode.height_mm);
+      ctx.fillRect(0, 0, barcode.width_mm, obj.height_mm);
       ctx.fillStyle = "#000000";
       for (const bar of barcode.bars)
         ctx.fillRect(bar.x_mm, 0, bar.width_mm, barcode.bar_height_mm);
-      ctx.font = `${(9 * pt * barcode.module_mm) / 0.33}px NotoSansKR`;
+      ctx.font = `400 ${(9 * pt * barcode.module_mm) / 0.33}px NotoSansKREditor`;
       ctx.textAlign = "center";
       ctx.fillText(
         barcode.value,
         barcode.width_mm / 2,
         barcode.height_mm - 1.2,
       );
+      if (obj.barcode_usage === "sample") {
+        ctx.font = `400 ${7 * pt}px NotoSansKREditor`;
+        ctx.fillText("SAMPLE / 검토용", barcode.width_mm / 2, barcode.bar_height_mm + 8);
+      }
     } else {
       ctx.fillStyle = obj.fill ?? obj.color ?? "#172c28";
       ctx.strokeStyle = obj.stroke ?? obj.color ?? "#172c28";
@@ -144,6 +151,27 @@ async function faceTexture(
       if (obj.stroke && (obj.stroke_width_mm ?? 0) > 0) ctx.stroke();
     }
     ctx.restore();
+  }
+  if (verification && structural?.regions) {
+    const regions = structural.regions;
+    ctx.save(); ctx.lineWidth = 0.3;
+    if (regions.zipper) {
+      const { band, line } = regions.zipper;
+      ctx.fillStyle = "rgba(135,96,162,.16)"; ctx.strokeStyle = "#8760a2";
+      ctx.fillRect(band.x_mm, band.y_mm, band.width_mm, band.height_mm);
+      ctx.strokeRect(band.x_mm, band.y_mm, band.width_mm, band.height_mm);
+      ctx.beginPath(); ctx.moveTo(line.x1_mm, line.y1_mm); ctx.lineTo(line.x2_mm, line.y2_mm); ctx.stroke();
+    }
+    if (regions.tear_line) {
+      const line = regions.tear_line; ctx.strokeStyle = "#c34b78"; ctx.setLineDash([2, 1]);
+      ctx.beginPath(); ctx.moveTo(line.x1_mm, line.y1_mm); ctx.lineTo(line.x2_mm, line.y2_mm); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  for (const notch of structural?.regions?.tear_notches || []) {
+    ctx.save(); ctx.globalCompositeOperation = "destination-out"; ctx.beginPath();
+    notch.points_mm.forEach(([x, y], index) => index ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+    ctx.closePath(); ctx.fill(); ctx.restore();
   }
   for (const hole of scene.holes ?? []) {
     const direct = hole.face_id === face.id,
@@ -168,7 +196,7 @@ async function faceTexture(
     ctx.fillStyle = "rgba(255,255,255,.93)";
     ctx.fillRect(2, 2, Math.min(face.width_mm - 4, 48), 11);
     ctx.fillStyle = "#642770";
-    ctx.font = "5px NotoSansKR";
+    ctx.font = "400 5px NotoSansKREditor";
     ctx.fillText(`${face.name} ↑`, 4, 9);
   }
   return canvas;
@@ -199,13 +227,13 @@ export function PackagingPreview({
     setFallback(false);
     setPictures({});
     const start = async () => {
-      const loadedFonts = await document.fonts.load("16px NotoSansKR");
-      if (!loadedFonts.length)
+      const loadedFonts = await Promise.all([document.fonts.load("400 16px NotoSansKREditor"), document.fonts.load("700 16px NotoSansKREditor")]);
+      if (loadedFonts.some((fonts) => !fonts.length))
         throw new Error("검증된 NotoSansKR 글꼴을 불러오지 못했습니다.");
       const textures = await Promise.all(
         scene.faces.map(async (face) => ({
           face,
-          canvas: await faceTexture(face, scene, url.current, verificationMode),
+          canvas: await faceTexture(face, scene, url.current, verificationMode, geometry.faces.find((item) => item.id === face.id)),
         })),
       );
       if (disposed) return;
@@ -424,6 +452,7 @@ export function PackagingPreview({
       {fallback && (
         <p>WebGL 미리보기를 사용할 수 없어 전체 면 2D 보기로 전환했습니다.</p>
       )}
+      {verificationMode && <p style={{ fontSize: 12, color: "#725873" }}>보라·분홍 선은 가공 위치 가이드이며 인쇄 디자인에 추가되지 않습니다. 홈·구멍은 절개 영역입니다.</p>}
       <div
         style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 12 }}
       >

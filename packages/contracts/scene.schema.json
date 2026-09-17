@@ -106,6 +106,75 @@
       "title": "Hole",
       "type": "object"
     },
+    "PouchFeatures": {
+      "additionalProperties": false,
+      "description": "Optional physical pouch finishing, measured down from the top cut edge.",
+      "properties": {
+        "header_height_mm": {
+          "default": 30,
+          "maximum": 100,
+          "minimum": 20,
+          "title": "Header Height Mm",
+          "type": "number"
+        },
+        "zipper_enabled": {
+          "default": true,
+          "title": "Zipper Enabled",
+          "type": "boolean"
+        },
+        "zipper_y_mm": {
+          "default": 35,
+          "maximum": 200,
+          "minimum": 10,
+          "title": "Zipper Y Mm",
+          "type": "number"
+        },
+        "zipper_band_mm": {
+          "default": 6,
+          "maximum": 15,
+          "minimum": 2,
+          "title": "Zipper Band Mm",
+          "type": "number"
+        },
+        "tear_enabled": {
+          "default": true,
+          "title": "Tear Enabled",
+          "type": "boolean"
+        },
+        "tear_y_mm": {
+          "default": 24,
+          "maximum": 100,
+          "minimum": 12,
+          "title": "Tear Y Mm",
+          "type": "number"
+        },
+        "notch_depth_mm": {
+          "default": 3,
+          "maximum": 5,
+          "minimum": 1,
+          "title": "Notch Depth Mm",
+          "type": "number"
+        },
+        "notch_height_mm": {
+          "default": 4,
+          "maximum": 8,
+          "minimum": 2,
+          "title": "Notch Height Mm",
+          "type": "number"
+        },
+        "notch_shape": {
+          "default": "round",
+          "enum": [
+            "round",
+            "v"
+          ],
+          "title": "Notch Shape",
+          "type": "string"
+        }
+      },
+      "title": "PouchFeatures",
+      "type": "object"
+    },
     "SceneObject": {
       "additionalProperties": false,
       "properties": {
@@ -213,6 +282,15 @@
           ],
           "default": null,
           "title": "Font Id"
+        },
+        "font_weight": {
+          "default": 400,
+          "enum": [
+            400,
+            700
+          ],
+          "title": "Font Weight",
+          "type": "integer"
         },
         "color": {
           "anyOf": [
@@ -422,6 +500,15 @@
           "default": false,
           "title": "Barcode Owned",
           "type": "boolean"
+        },
+        "barcode_usage": {
+          "default": "retail",
+          "enum": [
+            "retail",
+            "sample"
+          ],
+          "title": "Barcode Usage",
+          "type": "string"
         }
       },
       "required": [
@@ -510,6 +597,17 @@
       "maxItems": 8,
       "title": "Holes",
       "type": "array"
+    },
+    "pouch_features": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PouchFeatures"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "confirmed_fields": {
       "items": {

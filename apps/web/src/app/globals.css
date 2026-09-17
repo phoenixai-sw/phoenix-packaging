@@ -16,6 +16,38 @@
   --pale: #f0f2e9;
   --font: NotoSansKR, Arial, sans-serif;
 }
+
+@font-face {
+  font-family: NotoSansKREditor;
+  src: url("/fonts/NotoSansKR-Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+}
+@font-face {
+  font-family: NotoSansKREditor;
+  src: url("/fonts/NotoSansKR-Bold.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+}
+.text-history-panel { padding: 6px 0 14px; }
+.history-revision { margin: 22px 0; border-top: 1px solid var(--line); padding-top: 18px; }
+.history-revision > header { display: flex; gap: 16px; justify-content: space-between; align-items: center; }
+.history-revision time, .history-change small { font-size: 11px; color: var(--muted); }
+.history-change { padding: 18px 0; }
+.history-change small { display: block; margin-top: 6px; overflow-wrap: anywhere; }
+.history-change-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }
+.history-change-grid > div { border: 1px solid var(--line); background: var(--paper); border-radius: 8px; padding: 14px; min-width: 0; }
+.history-change-grid span { font-size: 10px; color: var(--muted); }
+.history-change-grid p { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 0; font-size: 12px; }
+.structure-feature-form { margin-bottom: 22px; }
+.structure-feature-form > .form-two-columns { margin-top: 18px; }
+.structure-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: var(--muted); margin: 12px 0; }
+@media (max-width: 600px) {
+  .history-change-grid { grid-template-columns: 1fr; }
+  .history-revision > header { align-items: flex-start; flex-direction: column; gap: 6px; }
+}
 /* Business tools share the studio's restrained palette and clear spacing. */
 .management-page {
   max-width: 1320px;
@@ -2977,8 +3009,8 @@ input[type="checkbox"] {
 .canvas-paper {
   position: relative;
   flex-shrink: 0;
-  box-shadow: 0 10px 28px #405e2330;
-  background: #f5f0e5;
+  filter: drop-shadow(0 10px 14px #405e2330);
+  background: transparent;
 }
 .canvas-width-label {
   position: absolute;

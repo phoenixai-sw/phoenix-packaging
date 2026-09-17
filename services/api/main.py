@@ -210,16 +210,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/geometry/validate")
     def validate_geometry(body:dict, request:Request):
-        if set(body)-{"template_id","width_mm","height_mm","bottom_mm","depth_mm","unit","holes"}: raise APIError(422,"GEOMETRY_FIELDS_INVALID","규격 입력 항목을 확인해 주세요.")
-        return envelope(request,build_geometry(body.get("template_id","three-side-seal"),body.get("width_mm"),body.get("height_mm"),body.get("unit","mm"),bottom_mm=body.get("bottom_mm"),depth_mm=body.get("depth_mm"),holes=body.get("holes",[])))
+        if set(body)-{"template_id","width_mm","height_mm","bottom_mm","depth_mm","unit","holes","pouch_features"}: raise APIError(422,"GEOMETRY_FIELDS_INVALID","규격 입력 항목을 확인해 주세요.")
+        return envelope(request,build_geometry(body.get("template_id","three-side-seal"),body.get("width_mm"),body.get("height_mm"),body.get("unit","mm"),bottom_mm=body.get("bottom_mm"),depth_mm=body.get("depth_mm"),holes=body.get("holes",[]),pouch_features=body.get("pouch_features")))
 
     @app.post("/v1/geometry/barcode")
     def barcode(body:dict, request:Request):
         from .geometry import barcode_geometry
-        if set(body)-{"value","module_mm","bar_height_mm","scene","face_id","x_mm","y_mm"}: raise APIError(422,"BARCODE_FIELDS_INVALID","바코드 입력 항목을 확인해 주세요.")
+        from .geometry.barcodes import sample_ean13
+        if set(body)-{"value","module_mm","bar_height_mm","scene","face_id","x_mm","y_mm","barcode_usage"}: raise APIError(422,"BARCODE_FIELDS_INVALID","바코드 입력 항목을 확인해 주세요.")
         if "scene" not in body and any(key in body for key in ("face_id","x_mm","y_mm")):
             raise APIError(422,"BARCODE_SCENE_REQUIRED","배치를 검증할 현재 디자인이 필요합니다.")
-        result=barcode_geometry(body.get("value"),module_mm=body.get("module_mm",0.33),bar_height_mm=body.get("bar_height_mm",22.85))
+        usage=body.get("barcode_usage","retail")
+        value=body.get("value")
+        if value is None and usage=="sample": value=sample_ean13()
+        result=barcode_geometry(value,module_mm=body.get("module_mm",0.33),bar_height_mm=body.get("bar_height_mm",22.85),barcode_usage=usage)
         if "scene" in body:
             from pydantic import ValidationError
             from .schemas import Scene
@@ -291,8 +295,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             db.refresh(project)
             ensure_revision(project, body.base_revision)
             raise APIError(409, "REVISION_CONFLICT", "서버의 최신 내용을 다시 열어 주세요.")
-        db.commit()
+        # The successful CAS holds the project write lock. Preserve both sides
+        # atomically, including a previously unsnapshotted legacy draft.
+        snapshot_revision(db, project, "before_autosave")
         db.refresh(project)
+        snapshot_revision(db, project, "autosave")
+        db.commit()
         return envelope(request, project_payload(project))
 
     @app.post("/v1/projects/{project_id}/revisions", status_code=201)

@@ -14,7 +14,7 @@ def _face(fid, w, h, x, y, position, rotation, margin=5):
             "regions":{"cut":_r(0,0,w,h),"safe":_r(margin,margin,w-2*margin,h-2*margin),"bleed":_r(-3,-3,w+6,h+6),"seal":[],"fold":[],"hole":[],"no_print":[],"hole_allowed":None}}
 
 
-def build_geometry(template_id, width, height, unit="mm", *, bottom_mm=None, depth_mm=None, holes=None):
+def build_geometry(template_id, width, height, unit="mm", *, bottom_mm=None, depth_mm=None, holes=None, pouch_features=None):
     if holes is not None and not isinstance(holes,list):
         raise GeometryValidationError("INVALID_HOLES","걸이 구멍을 목록으로 입력해 주세요.","holes")
     if template_id not in TEMPLATES:
@@ -64,6 +64,9 @@ def build_geometry(template_id, width, height, unit="mm", *, bottom_mm=None, dep
         geometry["fold_lines"] += [{"x1_mm":glue,"y1_mm":y,"x2_mm":glue+2*w+2*d,"y2_mm":y} for y in (d,d+h)]
         geometry["assumptions"]=["자체 제작한 단순 접이식 상자 데모 전개도입니다. 6면 외 접착부·덮개를 포함합니다.","치수는 데모 외경 기준입니다. 종이 두께·맞물림·가공 여유는 제조사 승인 전 미확정입니다."]
     geometry["faces"]=faces
+    from .pouch_features import normalize_pouch_features, apply_pouch_features, physical_pouch_features
+    features = normalize_pouch_features(pouch_features, template_id, w, h)
+    apply_pouch_features(geometry, features)
     geometry["holes"]=deepcopy(holes or [])
     if isinstance(holes,list):
         for face in faces:
@@ -83,7 +86,9 @@ def build_geometry(template_id, width, height, unit="mm", *, bottom_mm=None, dep
             raise GeometryValidationError(issue["code"],issue["message"],"holes")
         geometry["holes"]=[{**hole,**{key:normalize_mm(hole[key],"mm") for key in ("center_x_mm","center_y_mm","diameter_mm")}} for hole in holes]
     normalized={"template_version_id":geometry["template_version_id"],"width_mm":w,"height_mm":h,"bottom_mm":geometry.get("bottom_mm"),"depth_mm":geometry.get("depth_mm"),"holes":geometry["holes"]}
-    if template_id != "three-side-seal" or holes:
+    if features is not None:
+        normalized["pouch_features"] = physical_pouch_features(features)
+    if template_id != "three-side-seal" or holes or features is not None:
         geometry["geometry_hash"]=hashlib.sha256(json.dumps(normalized,sort_keys=True,separators=(",", ":")).encode()).hexdigest()
     return geometry
 
@@ -96,7 +101,7 @@ def geometry_for_scene(scene):
     if version in TEMPLATES.values() and version!=TEMPLATES[kind]:
         raise GeometryValidationError("TEMPLATE_KIND_MISMATCH","템플릿 버전과 구조 종류가 일치하지 않습니다.","template_version_id")
     front=next((f for f in scene.get("faces",[]) if isinstance(f,dict) and f.get("id")=="front"),{})
-    geometry=build_geometry(kind,front.get("width_mm"),front.get("height_mm"),"mm",bottom_mm=scene.get("bottom_mm"),depth_mm=scene.get("depth_mm"),holes=scene.get("holes"))
+    geometry=build_geometry(kind,front.get("width_mm"),front.get("height_mm"),"mm",bottom_mm=scene.get("bottom_mm"),depth_mm=scene.get("depth_mm"),holes=scene.get("holes"),pouch_features=scene.get("pouch_features"))
     geometry["geometry_template_id"]=TEMPLATES[kind]
     if version!=TEMPLATES[kind]:
         geometry["geometry_hash"]=hashlib.sha256(json.dumps({"template_version_id":version,"engine_geometry_hash":geometry["geometry_hash"]},sort_keys=True,separators=(",",":")).encode()).hexdigest()

@@ -11,6 +11,7 @@ export type SceneObject = {
   text?: string;
   font_size_pt?: number;
   font_id?: string;
+  font_weight?: 400 | 700;
   color?: string;
   align?: "left" | "center" | "right";
   asset_id?: string;
@@ -28,6 +29,7 @@ export type SceneObject = {
   module_mm?: number;
   bar_height_mm?: number;
   barcode_owned?: boolean;
+  barcode_usage?: "retail" | "sample";
   binding_key?: string;
 };
 export type Face = {
@@ -41,6 +43,17 @@ export type Face = {
 export type Scene = {
   schema_version: string;
   active_face_id: string;
+  pouch_features?: {
+    header_height_mm: number;
+    zipper_enabled: boolean;
+    zipper_y_mm: number;
+    zipper_band_mm: number;
+    tear_enabled: boolean;
+    tear_y_mm: number;
+    notch_depth_mm: number;
+    notch_height_mm: number;
+    notch_shape?: "round" | "v";
+  } | null;
   faces: Face[];
   holes?: Array<{
     id: string;

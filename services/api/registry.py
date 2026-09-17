@@ -55,7 +55,10 @@ def canonical_production_identity(db,project):
         x=hole["center_x_mm"] if hole["face_id"]!="back" else project.width_mm-hole["center_x_mm"]
         item={"face_id":"front" if hole["face_id"] in {"front","back"} else hole["face_id"],"x_mm":round(x,4),"y_mm":hole["center_y_mm"],"diameter_mm":hole["diameter_mm"]}
         if item not in holes: holes.append(item)
-    return {"brand_id":project.brand_id,"product_variant_id":variant.id,"billing_family_key":version.details["billing_family_key"],"content_amount":variant.details.get("net_quantity"),"content_unit":variant.details.get("net_unit"),"barcode":{"symbology":"EAN13","data":barcode} if barcode else {},"width_mm":project.width_mm,"height_mm":project.height_mm,"bottom_mm":project.bottom_mm or 0,"depth_mm":project.depth_mm or 0,"holes":holes}
+    identity={"brand_id":project.brand_id,"product_variant_id":variant.id,"billing_family_key":version.details["billing_family_key"],"content_amount":variant.details.get("net_quantity"),"content_unit":variant.details.get("net_unit"),"barcode":{"symbology":"EAN13","data":barcode} if barcode else {},"width_mm":project.width_mm,"height_mm":project.height_mm,"bottom_mm":project.bottom_mm or 0,"depth_mm":project.depth_mm or 0,"holes":holes}
+    if project.scene.get("pouch_features") is not None:
+        identity["pouch_features"]=geometry_for_scene(project.scene)["pouch_features"]
+    return identity
 
 
 class Body(BaseModel):

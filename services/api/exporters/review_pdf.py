@@ -29,6 +29,8 @@ from ..geometry import DEMO_TEMPLATE_ID, GeometryValidationError, validate_scene
 ROOT = Path(__file__).resolve().parents[3]
 FONT_PATH = ROOT / "fixtures" / "fonts" / "NotoSansKR-Regular.ttf"
 FONT_ID = "PhoenixNotoSansKR"
+FONT_BOLD_PATH = ROOT / "fixtures" / "fonts" / "NotoSansKR-Bold.ttf"
+FONT_BOLD_ID = "PhoenixNotoSansKRBold"
 FONT_LOCK = threading.Lock()
 AssetResolver = Callable[[str], Path | bytes]
 
@@ -37,14 +39,31 @@ class ExportValidationError(GeometryValidationError):
     pass
 
 
-@lru_cache(maxsize=1)
-def _font() -> TTFont:
-    if not FONT_PATH.is_file():
+@lru_cache(maxsize=2)
+def _font(weight: int = 400) -> TTFont:
+    if weight not in (400, 700):
+        raise ExportValidationError("UNSUPPORTED_FONT_WEIGHT", "검증된 글꼴 두께 400 또는 700을 선택해 주세요.", "font_weight")
+    path, font_id = (FONT_BOLD_PATH, FONT_BOLD_ID) if weight == 700 else (FONT_PATH, FONT_ID)
+    if not path.is_file():
         raise ExportValidationError("FONT_UNAVAILABLE", "검증된 한글 글꼴 파일이 없습니다.", "font_id")
     with FONT_LOCK:
-        if FONT_ID not in pdfmetrics.getRegisteredFontNames():
-            pdfmetrics.registerFont(TTFont(FONT_ID, str(FONT_PATH)))
-    return pdfmetrics.getFont(FONT_ID)
+        if font_id not in pdfmetrics.getRegisteredFontNames():
+            pdfmetrics.registerFont(TTFont(font_id, str(path)))
+    return pdfmetrics.getFont(font_id)
+
+
+def _text_font_id(obj: dict) -> str:
+    weight = obj.get("font_weight", 400)
+    _font(weight)
+    return FONT_BOLD_ID if weight == 700 else FONT_ID
+
+
+def _font_manifest(scene: dict) -> list[dict]:
+    weights = {400} | {obj.get("font_weight", 400) for face in scene["faces"] for obj in face["objects"]
+                       if obj["type"] == "text" and obj["visible"] and obj["print_enabled"]}
+    return [{"id": "NotoSansKR", "weight": weight, "embedded": True, "license": "OFL-1.1",
+             "sha256": hashlib.sha256((FONT_BOLD_PATH if weight == 700 else FONT_PATH).read_bytes()).hexdigest()}
+            for weight in sorted(weights)]
 
 
 def _scene_from_project(project: dict) -> dict:
@@ -57,13 +76,14 @@ def _scene_from_project(project: dict) -> dict:
     raise ExportValidationError("SCENE_REQUIRED", "출력할 저장된 장면이 없습니다.")
 
 
-def _width(text: str, size: float, spacing: float) -> float:
-    return pdfmetrics.stringWidth(text, FONT_ID, size) + max(0, len(text) - 1) * spacing
+def _width(text: str, size: float, spacing: float, font_id: str = FONT_ID) -> float:
+    return pdfmetrics.stringWidth(text, font_id, size) + max(0, len(text) - 1) * spacing
 
 
 def _layout_text(obj: dict) -> list[str]:
     """Character wrapping matching Konva wrap='char'; retain original in manifest."""
-    font = _font()
+    font = _font(obj.get("font_weight", 400))
+    font_id = _text_font_id(obj)
     text, size = obj["text"], obj["font_size_pt"]
     missing = sorted({ord(char) for char in text if char not in "\n\r\t" and ord(char) not in font.face.charToGlyph})
     if missing:
@@ -76,16 +96,16 @@ def _layout_text(obj: dict) -> list[str]:
     for paragraph in text.replace("\r\n", "\n").replace("\r", "\n").expandtabs(4).split("\n"):
         line = ""
         for char in paragraph:
-            if _width(char, size, spacing) > maximum + 0.001:
+            if _width(char, size, spacing, font_id) > maximum + 0.001:
                 raise ExportValidationError("TEXT_OVERFLOW", "한 글자가 텍스트 상자보다 큽니다. 글자 크기나 상자를 조정해 주세요.", f"objects.{obj['id']}")
             candidate = line + char
-            if line and _width(candidate, size, spacing) > maximum + 0.001:
+            if line and _width(candidate, size, spacing, font_id) > maximum + 0.001:
                 lines.append(line)
                 line = char
             else:
                 line = candidate
         lines.append(line)
-    ascent, descent = pdfmetrics.getAscentDescent(FONT_ID, size)
+    ascent, descent = pdfmetrics.getAscentDescent(font_id, size)
     required = ascent - descent + max(0, len(lines) - 1) * size * obj["line_height"]
     if required > obj["height_mm"] * mm + 0.001:
         raise ExportValidationError("TEXT_OVERFLOW", "문구가 텍스트 상자 높이를 넘습니다. 글자 크기나 상자를 조정해 주세요.", f"objects.{obj['id']}")
@@ -153,14 +173,15 @@ def _draw_object(canvas: Canvas, obj: dict, face_height: float, resolver: AssetR
     kind = obj["type"]
     if kind == "text":
         size = obj["font_size_pt"]
-        ascent, _ = pdfmetrics.getAscentDescent(FONT_ID, size)
+        font_id = _text_font_id(obj)
+        ascent, _ = pdfmetrics.getAscentDescent(font_id, size)
         canvas.setFillColor(HexColor(obj["color"]))
         canvas.setFillAlpha(obj["opacity"])
         for index, line in enumerate(_layout_text(obj)):
-            line_width = _width(line, size, obj["letter_spacing"])
+            line_width = _width(line, size, obj["letter_spacing"], font_id)
             x = (width - line_width) / 2 if obj["align"] == "center" else width - line_width if obj["align"] == "right" else 0
             text = canvas.beginText(x, -ascent - index * size * obj["line_height"])
-            text.setFont(FONT_ID, size)
+            text.setFont(font_id, size)
             text.setCharSpace(obj["letter_spacing"])
             text.textOut(line)
             canvas.drawText(text)
@@ -172,7 +193,8 @@ def _draw_object(canvas: Canvas, obj: dict, face_height: float, resolver: AssetR
             warnings.append({"code": "LOW_PPI", "object_id": obj["id"], "effective_ppi": round(effective_ppi, 1),
                              "message": "배치 크기 기준 해상도가 기본 검토 기준 300ppi 미만입니다."})
     elif kind == "barcode":
-        barcode = barcode_geometry(obj["barcode_value"], obj["module_mm"], obj["bar_height_mm"])
+        usage = obj.get("barcode_usage", "retail")
+        barcode = barcode_geometry(obj["barcode_value"], obj["module_mm"], obj["bar_height_mm"], barcode_usage=usage)
         canvas.setFillColor(HexColor("#ffffff"))
         canvas.setFillAlpha(1)
         canvas.rect(0, -height, width, height, fill=1, stroke=0)
@@ -180,7 +202,10 @@ def _draw_object(canvas: Canvas, obj: dict, face_height: float, resolver: AssetR
         for bar in barcode["bars"]:
             canvas.rect(bar["x_mm"] * mm, -barcode["bar_height_mm"] * mm, bar["width_mm"] * mm, barcode["bar_height_mm"] * mm, fill=1, stroke=0)
         canvas.setFont(FONT_ID, 9 * obj["module_mm"] / 0.33)
-        canvas.drawCentredString(width/2, -height + 1.2 * mm, barcode["value"])
+        canvas.drawCentredString(width/2, -(barcode["bar_height_mm"] + 3.8) * mm, barcode["value"])
+        if usage == "sample":
+            canvas.setFont(FONT_ID, 7)
+            canvas.drawCentredString(width/2, -(barcode["bar_height_mm"] + 8) * mm, "SAMPLE / 검토용")
     else:
         canvas.setFillColor(HexColor(obj.get("fill") or obj["color"]))
         canvas.setStrokeColor(HexColor(obj.get("stroke") or obj["color"]))
@@ -195,10 +220,97 @@ def _draw_object(canvas: Canvas, obj: dict, face_height: float, resolver: AssetR
     canvas.restoreState()
 
 
+def _clip_print_area(canvas: Canvas, face: dict, structural_face: dict, bleed_mm: float = 0) -> None:
+    """Keep bleed at outer edges, but remove actual holes/notches using even-odd clipping.
+
+    A notch exclusion extends through the outside bleed so ink cannot bridge the
+    cut-out. The retained mm contour is a review geometry, not a cutting-machine file.
+    """
+    width, height = face["width_mm"], face["height_mm"]
+    path = canvas.beginPath()
+    path.rect(-bleed_mm * mm, -bleed_mm * mm, (width + 2 * bleed_mm) * mm, (height + 2 * bleed_mm) * mm)
+    for hole in structural_face["regions"].get("hole", []):
+        x, y, r = hole["center_x_mm"], height - hole["center_y_mm"], hole["radius_mm"]
+        # PDFPathObject takes width/height, unlike Canvas.ellipse's x2/y2.
+        path.ellipse((x-r)*mm, (y-r)*mm, 2*r*mm, 2*r*mm)
+    for notch in structural_face["regions"].get("tear_notches", []):
+        points = notch["points_mm"]
+        path.moveTo(points[0][0]*mm, (height-points[0][1])*mm)
+        for x, y in points[1:]:
+            path.lineTo(x*mm, (height-y)*mm)
+        outside = -bleed_mm if notch["side"] == "left" else width+bleed_mm
+        path.lineTo(outside*mm, (height-points[-1][1])*mm)
+        path.lineTo(outside*mm, (height-points[0][1])*mm)
+        path.close()
+    canvas.clipPath(path, stroke=0, fill=0, fillMode=0)
+
+
+def _draw_face_art(canvas: Canvas, scene: dict, face: dict, structural_face: dict,
+                   resolver, warnings: list, bleed_mm: float = 0) -> None:
+    canvas.saveState()
+    _clip_print_area(canvas, face, structural_face, bleed_mm)
+    canvas.setFillColor(HexColor(face["background"]))
+    canvas.rect(-bleed_mm*mm, -bleed_mm*mm, (face["width_mm"]+2*bleed_mm)*mm,
+                (face["height_mm"]+2*bleed_mm)*mm, fill=1, stroke=0)
+    for obj in sorted(face["objects"], key=lambda obj: obj["z_index"]):
+        _draw_object(canvas, obj, face["height_mm"], resolver, warnings)
+    canvas.restoreState()
+
+
+def _draw_cut_contour(canvas: Canvas, face: dict, structural_face: dict) -> None:
+    width, height = face["width_mm"], face["height_mm"]
+    contour = structural_face["regions"].get("cut_contour")
+    canvas.saveState()
+    canvas.setStrokeColor(HexColor("#674a8f"))
+    canvas.setLineWidth(.25*mm)
+    if contour:
+        path = canvas.beginPath()
+        points = contour["points_mm"]
+        path.moveTo(points[0][0]*mm, (height-points[0][1])*mm)
+        for x, y in points[1:]:
+            path.lineTo(x*mm, (height-y)*mm)
+        path.close()
+        canvas.drawPath(path, fill=0, stroke=1)
+    else:
+        canvas.rect(.15*mm, .15*mm, (width-.3)*mm, (height-.3)*mm, fill=0, stroke=1)
+    canvas.restoreState()
+
+
+def _draw_finishing_guides(canvas: Canvas, face: dict, structural_face: dict) -> None:
+    regions = structural_face["regions"]
+    if not regions.get("header"):
+        return
+    width, height = face["width_mm"], face["height_mm"]
+    canvas.saveState()
+    canvas.setFont(FONT_ID, 6)
+    header = regions["header"]
+    y = header["y_mm"] + header["height_mm"]
+    canvas.setStrokeColor(HexColor("#795ca5")); canvas.setFillColor(HexColor("#674a8f"))
+    canvas.setLineWidth(.18*mm); canvas.setDash(1.5*mm, mm)
+    canvas.line(0, (height-y)*mm, width*mm, (height-y)*mm)
+    canvas.drawRightString((width-11)*mm, (height-y+1.2)*mm, f"개봉부 {header['height_mm']:g}mm · 가공 검토 가이드")
+    zipper = regions.get("zipper")
+    if zipper:
+        band = zipper["band"]
+        canvas.setDash(); canvas.setStrokeColor(HexColor("#007f87")); canvas.setFillColor(HexColor("#007f87"))
+        canvas.rect(band["x_mm"]*mm, (height-band["y_mm"]-band["height_mm"])*mm, band["width_mm"]*mm, band["height_mm"]*mm, fill=0, stroke=1)
+        line = zipper["line"]
+        canvas.setDash(2*mm, .7*mm)
+        canvas.line(line["x1_mm"]*mm, (height-line["y1_mm"])*mm, line["x2_mm"]*mm, (height-line["y2_mm"])*mm)
+        canvas.drawString((band["x_mm"]+1)*mm, (height-line["y1_mm"]+1)*mm, "지퍼 대역 · 가공 가이드")
+    tear = regions.get("tear_line")
+    if tear:
+        canvas.setDash(1.2*mm, mm); canvas.setStrokeColor(HexColor("#b05a14"))
+        canvas.line(tear["x1_mm"]*mm, (height-tear["y1_mm"])*mm, tear["x2_mm"]*mm, (height-tear["y2_mm"])*mm)
+    canvas.restoreState()
+
+
 def _draw_guides(canvas: Canvas, face: dict, page: int, total: int, structural_face: dict) -> None:
     width, height = face["width_mm"], face["height_mm"]
     regions = structural_face["regions"]
     canvas.saveState()
+    canvas.saveState()
+    _clip_print_area(canvas, face, structural_face)
     for region in regions["no_print"]:
         canvas.setFillColor(Color(0.96, 0.68, 0.18, alpha=0.12))
         canvas.rect(region["x_mm"] * mm, (height - region["y_mm"] - region["height_mm"]) * mm, region["width_mm"] * mm, region["height_mm"] * mm, fill=1, stroke=0)
@@ -208,14 +320,14 @@ def _draw_guides(canvas: Canvas, face: dict, page: int, total: int, structural_f
         canvas.rect(region["x_mm"]*mm,(height-region["y_mm"]-region["height_mm"])*mm,region["width_mm"]*mm,region["height_mm"]*mm,fill=0,stroke=1)
     for fold in regions.get("fold",[]):
         canvas.line(fold["x1_mm"]*mm,(height-fold["y1_mm"])*mm,fold["x2_mm"]*mm,(height-fold["y2_mm"])*mm)
+    canvas.restoreState()
     safe = regions["safe"]
     canvas.setStrokeColor(HexColor("#288f82"))
     canvas.setDash(2 * mm, 1.5 * mm)
     canvas.rect(safe["x_mm"] * mm, (height - safe["y_mm"] - safe["height_mm"]) * mm, safe["width_mm"] * mm, safe["height_mm"] * mm, stroke=1, fill=0)
     canvas.setDash()
-    canvas.setStrokeColor(HexColor("#674a8f"))
-    canvas.setLineWidth(0.25 * mm)
-    canvas.rect(0.15 * mm, 0.15 * mm, (width - 0.3) * mm, (height - 0.3) * mm, stroke=1, fill=0)
+    _draw_cut_contour(canvas, face, structural_face)
+    _draw_finishing_guides(canvas, face, structural_face)
     # Labels stay inside excluded closure/seal bands to avoid artwork overlap.
     canvas.setFillColor(Color(1, 1, 1, alpha=0.94))
     canvas.rect(10.5 * mm, (height - 9.5) * mm, (width - 21) * mm, 8.5 * mm, fill=1, stroke=0)
@@ -232,7 +344,8 @@ def _draw_guides(canvas: Canvas, face: dict, page: int, total: int, structural_f
     size = min(8, (width - 24) * mm / pdfmetrics.stringWidth(footer, FONT_ID, 1))
     canvas.setFont(FONT_ID, size)
     canvas.drawCentredString(width * mm / 2, 5.4 * mm, footer)
-    legend = "실선: 실링·후속 열접착  /  점선: 안전영역"
+    legend = ("보라: 재단 · 원: 구멍 · 주황 점선: 절취 · 청록: 지퍼 · 녹색: 안전영역"
+              if regions.get("header") else "실선: 실링·후속 열접착  /  점선: 안전영역")
     size = min(6, (width - 24) * mm / pdfmetrics.stringWidth(legend, FONT_ID, 1))
     canvas.setFont(FONT_ID, size)
     canvas.drawCentredString(width * mm / 2, 2.3 * mm, legend)
@@ -243,8 +356,6 @@ def _draw_holes(canvas: Canvas, scene: dict, face: dict, *, guides: bool) -> Non
     for hole in holes_for_face(scene,face["id"]):
         x,y=hole["center_x_mm"]*mm,(face["height_mm"]-hole["center_y_mm"])*mm
         canvas.saveState()
-        canvas.setFillColor(HexColor("#ffffff"))
-        canvas.circle(x,y,hole["diameter_mm"]*mm/2,fill=1,stroke=0)
         if guides:
             canvas.setStrokeColor(HexColor("#dc4364"))
             canvas.setLineWidth(.2*mm)
@@ -265,13 +376,10 @@ def _draw_net(canvas: Canvas, scene: dict, geometry: dict, resolver, warnings) -
         canvas.saveState(); canvas.translate(net["x_mm"]*mm,(h-net["y_mm"]-face["height_mm"])*mm)
         if net.get("rotation_deg")==180:
             canvas.translate(face["width_mm"]*mm,face["height_mm"]*mm);canvas.rotate(180)
-        canvas.setFillColor(HexColor(face["background"]))
-        canvas.rect(0,0,face["width_mm"]*mm,face["height_mm"]*mm,fill=1,stroke=0)
-        for obj in sorted(face["objects"],key=lambda o:o["z_index"]):
-            _draw_object(canvas,obj,face["height_mm"],resolver,warnings)
+        _draw_face_art(canvas, scene, face, structural, resolver, warnings)
         _draw_holes(canvas,scene,face,guides=True)
-        canvas.setStrokeColor(HexColor("#674a8f"));canvas.setLineWidth(.2*mm)
-        canvas.rect(0,0,face["width_mm"]*mm,face["height_mm"]*mm,fill=0,stroke=1)
+        _draw_cut_contour(canvas, face, structural)
+        _draw_finishing_guides(canvas, face, structural)
         canvas.setFont(FONT_ID,7);canvas.setFillColor(HexColor("#674a8f"))
         canvas.drawString(2*mm,(face["height_mm"]-4)*mm,face["name"]+" ↑")
         canvas.restoreState()
@@ -322,12 +430,9 @@ def _render(project: dict, resolver: AssetResolver | None, production: bool) -> 
         canvas.setBleedBox((0, 0, width+2*bleed, height+2*bleed))
         canvas.saveState()
         canvas.translate(bleed, bleed)
-        canvas.setFillColor(HexColor(face["background"]))
-        canvas.rect(-bleed, -bleed, width+2*bleed, height+2*bleed, fill=1, stroke=0)
-        for obj in sorted(face["objects"], key=lambda obj: obj["z_index"]):
-            _draw_object(canvas, obj, face["height_mm"], resolver, warnings)
-        _draw_holes(canvas,scene,face,guides=True)
+        _draw_face_art(canvas, scene, face, geometry["faces"][page-1], resolver, warnings, bleed_mm)
         _draw_guides(canvas, face, page, len(ordered_faces), geometry["faces"][page-1])
+        _draw_holes(canvas,scene,face,guides=True)
         canvas.restoreState()
         canvas.showPage()
         pages.append({"face_id":face["id"],"width_mm":face["width_mm"],"height_mm":face["height_mm"],
@@ -350,6 +455,12 @@ def _render(project: dict, resolver: AssetResolver | None, production: bool) -> 
                 "geometry_hash": geometry["geometry_hash"],
                 "generated_at": datetime.now(timezone.utc).isoformat(), "sha256": hashlib.sha256(data).hexdigest(),
                 "font": {"id": "NotoSansKR", "sha256": hashlib.sha256(FONT_PATH.read_bytes()).hexdigest(), "embedded": True, "license": "OFL-1.1"},
+                "font_weights": _font_manifest(scene),
+                "review_structure": {"manufacturer_approved": False, "cut_out_clipping": True,
+                    "pouch_features": geometry.get("pouch_features"),
+                    "faces": [{"face_id": f["id"], "cut_contour": f["regions"].get("cut_contour"),
+                               "holes": f["regions"].get("hole", []), "tear_notches": f["regions"].get("tear_notches", [])}
+                              for f in geometry["faces"]]},
                 "pages": pages,
                 "warnings": warnings, "original_texts": validation["original_texts"],
                 "capabilities": {"vector_text": True, "embedded_fonts": True, "original_raster_assets": True,

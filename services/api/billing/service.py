@@ -126,6 +126,10 @@ def production_fingerprint(tenant_id, identity):
     holes = [{"face_id": str(hole.get("face_id", "front")), **{key: measure(hole.get(key, 0)) for key in ("x_mm", "y_mm", "diameter_mm")}} for hole in identity.get("holes", [])]
     barcode = identity.get("barcode") or {}
     normalized = {"tenant_id": tenant_id, "brand_id": str(identity["brand_id"]), "product_variant_id": str(identity["product_variant_id"]), "billing_family_key": str(identity["billing_family_key"]), "content": measure(number(identity.get("content_amount", 0)) * scale), "unit": normalized_unit, "barcode": {"symbology": str(barcode.get("symbology", "")).upper(), "data": str(barcode.get("data", ""))}, "dimensions": dimensions, "holes": sorted(holes, key=lambda h: json.dumps(h, sort_keys=True))}
+    if identity.get("pouch_features") is not None:
+        from ..geometry.pouch_features import normalize_pouch_features, physical_pouch_features
+        features=normalize_pouch_features(identity["pouch_features"],"stand-up-pouch",float(dimensions["width_mm"]),float(dimensions["height_mm"]))
+        normalized["pouch_features"]={key:measure(value) if not isinstance(value,(bool,str)) else value for key,value in physical_pouch_features(features).items()}
     return canonical_hash(normalized)
 
 

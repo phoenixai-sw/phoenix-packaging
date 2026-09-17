@@ -16,26 +16,14 @@ import type Konva from "konva";
 import type { Face, SceneObject } from "./model";
 import { roundMM } from "./model";
 import { ean13Geometry } from "@preview3d/barcode";
+import { contourPoints, linePoints, type FaceStructure } from "./structure";
 type Region = {
   x_mm: number;
   y_mm: number;
   width_mm: number;
   height_mm: number;
 };
-type GeometryFace = {
-  regions?: {
-    safe?: Region;
-    cut?: Region;
-    no_print?: Region[];
-    fold?: Array<{
-      x1_mm: number;
-      y1_mm: number;
-      x2_mm: number;
-      y2_mm: number;
-    }>;
-    hole_allowed?: Region | null;
-  };
-};
+type GeometryFace = Pick<FaceStructure, "regions">;
 function BarcodeObject({
   object,
   scale,
@@ -89,7 +77,7 @@ function BarcodeObject({
     >
       <Rect
         width={barcode.width_mm * scale}
-        height={barcode.height_mm * scale}
+        height={object.height_mm * scale}
         fill="#ffffff"
         stroke={selected ? "#e36d40" : undefined}
         strokeWidth={1}
@@ -110,12 +98,16 @@ function BarcodeObject({
         x={0}
         y={(barcode.bar_height_mm + 1) * scale}
         width={barcode.width_mm * scale}
-        fontFamily="NotoSansKR"
+        fontFamily="NotoSansKREditor"
         fontSize={3.175 * (barcode.module_mm / 0.33) * scale}
         align="center"
         fill="#000000"
         listening={false}
       />
+      {object.barcode_usage === "sample" && <Text text="SAMPLE / 검토용" x={0}
+        y={(barcode.bar_height_mm + 5.5) * scale} width={barcode.width_mm * scale} height={3.5 * scale}
+        fontFamily="NotoSansKREditor" fontSize={7 * 25.4 / 72 * scale} lineHeight={1}
+        align="center" fill="#000000" listening={false} />}
     </Group>
   );
 }
@@ -217,7 +209,7 @@ export default function Canvas({
   const composing = useRef(false);
   const [fontReady, setFontReady] = useState(false);
   useEffect(() => {
-    document.fonts.load('16px "NotoSansKR"').then(() => setFontReady(true));
+    Promise.all([document.fonts.load('400 16px "NotoSansKREditor"'), document.fonts.load('700 16px "NotoSansKREditor"')]).then(() => setFontReady(true));
   }, []);
   useEffect(() => {
     if (!host.current) return;
@@ -399,7 +391,8 @@ export default function Canvas({
                         fontSize={
                           (((object.font_size_pt || 16) * 25.4) / 72) * scale
                         }
-                        fontFamily="NotoSansKR"
+                        fontFamily="NotoSansKREditor"
+                        fontStyle={object.font_weight === 700 ? "bold" : "normal"}
                         fill={object.color || "#263b2d"}
                         rotation={object.rotation_deg}
                         align={object.align || "left"}
@@ -510,8 +503,20 @@ export default function Canvas({
                         listening={false}
                       />
                     ))}
+                    {geometryFace.regions.zipper && <>
+                      <Rect {...{
+                        x: geometryFace.regions.zipper.band.x_mm * scale, y: geometryFace.regions.zipper.band.y_mm * scale,
+                        width: geometryFace.regions.zipper.band.width_mm * scale, height: geometryFace.regions.zipper.band.height_mm * scale,
+                      }} fill="#8760a225" stroke="#8760a2" strokeWidth={0.7} listening={false} />
+                      <Line points={linePoints(geometryFace.regions.zipper.line, scale)} stroke="#8760a2" strokeWidth={1.2} listening={false} />
+                    </>}
+                    {geometryFace.regions.tear_line && <Line points={linePoints(geometryFace.regions.tear_line, scale)} stroke="#c34b78" dash={[5, 3]} strokeWidth={1} listening={false} />}
                   </>
                 )}
+                {geometryFace?.regions?.tear_notches?.map((notch, index) => <Group key={`notch-${index}`} listening={false}>
+                  <Line points={contourPoints(notch.points_mm, scale)} closed fill="#000000" globalCompositeOperation="destination-out" />
+                  {guides && <Line points={contourPoints(notch.points_mm, scale)} stroke="#c34b78" strokeWidth={1} />}
+                </Group>)}
                 {holes
                   .filter(
                     (h) =>
@@ -520,7 +525,7 @@ export default function Canvas({
                       (h.face_id === "back" && face.id === "front"),
                   )
                   .map((h) => (
-                    <Circle
+                    <Group key={h.id} listening={false}><Circle
                       key={h.id}
                       x={
                         (h.face_id === face.id
@@ -529,11 +534,10 @@ export default function Canvas({
                       }
                       y={h.center_y_mm * scale}
                       radius={(h.diameter_mm / 2) * scale}
-                      fill="#ffffff"
-                      stroke="#d8643d"
-                      strokeWidth={1}
-                      listening={false}
-                    />
+                      fill="#000000"
+                      globalCompositeOperation="destination-out"
+                    />{guides && <Circle x={(h.face_id === face.id ? h.center_x_mm : face.width_mm - h.center_x_mm) * scale}
+                      y={h.center_y_mm * scale} radius={h.diameter_mm / 2 * scale} stroke="#d8643d" strokeWidth={1} />}</Group>
                   ))}
                 <Transformer
                   ref={transformer}
@@ -585,6 +589,8 @@ export default function Canvas({
                   color: current.color,
                   textAlign: current.align,
                   lineHeight: current.line_height ?? 1.2,
+                  fontFamily: "NotoSansKREditor",
+                  fontWeight: current.font_weight ?? 400,
                   letterSpacing:
                     (((current.letter_spacing ?? 0) * 25.4) / 72) * scale,
                   transform: `rotate(${current.rotation_deg}deg)`,

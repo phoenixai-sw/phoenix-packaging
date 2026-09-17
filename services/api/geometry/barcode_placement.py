@@ -24,7 +24,8 @@ def place_barcode(scene, face_id, barcode, *, x_mm=None, y_mm=None):
     obj = {"id":identity,"type":"barcode","face_id":face_id,"x_mm":0,"y_mm":0,
            "width_mm":barcode["width_mm"],"height_mm":barcode["height_mm"],"rotation_deg":0,
            "z_index":min(10000,max((item["z_index"] for item in face["objects"]),default=0)+1),
-           "barcode_value":barcode["value"],"module_mm":barcode["module_mm"],"bar_height_mm":barcode["bar_height_mm"]}
+           "barcode_value":barcode["value"],"module_mm":barcode["module_mm"],"bar_height_mm":barcode["bar_height_mm"],
+           "barcode_usage":barcode.get("barcode_usage","retail"),"barcode_owned":False}
     if (x_mm is None) != (y_mm is None):
         raise GeometryValidationError("BARCODE_POSITION_REQUIRED", "직접 배치할 때는 X와 Y 좌표를 모두 입력해 주세요.")
     if x_mm is not None:
