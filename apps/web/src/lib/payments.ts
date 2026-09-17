@@ -1,3 +1,5 @@
+import { paymentReturnPaths } from "./payment-return-context";
+
 type PaymentRequest = {
   method: "CARD";
   amount: { currency: "KRW"; value: number };
@@ -23,10 +25,13 @@ export async function openTossPayment(
   order: {
     order_id: string;
     amount: number;
-    customer_key: string;
+    customer_key: string | null;
     checkout_kind?: string;
   },
+  context?: { serviceOrderId?: string; orderName?: string },
 ) {
+  if (!order.customer_key)
+    throw new Error("주문의 결제 식별자를 확인하지 못했습니다. 내역을 새로고침해 주세요.");
   if (!window.TossPayments)
     await new Promise<void>((resolve, reject) => {
       const script = document.createElement("script");
@@ -44,19 +49,20 @@ export async function openTossPayment(
     .TossPayments(clientKey)
     .payment({ customerKey: order.customer_key });
   const origin = window.location.origin;
+  const paths = paymentReturnPaths(order.order_id, order.checkout_kind === "billing_auth", context?.serviceOrderId);
   if (order.checkout_kind === "billing_auth")
     await payment.requestBillingAuth({
       method: "CARD",
-      successUrl: `${origin}/app/billing/return?order_id=${encodeURIComponent(order.order_id)}`,
-      failUrl: `${origin}/app/billing/return?failed=true`,
+      successUrl: `${origin}${paths.successPath}`,
+      failUrl: `${origin}${paths.failPath}`,
     });
   else
     await payment.requestPayment({
       method: "CARD",
       amount: { currency: "KRW", value: order.amount },
       orderId: order.order_id,
-      orderName: "Phoenix Packaging 크레딧",
-      successUrl: `${origin}/app/billing/return`,
-      failUrl: `${origin}/app/billing/return?failed=true`,
+      orderName: context?.orderName?.slice(0, 100) || "Phoenix Packaging 크레딧",
+      successUrl: `${origin}${paths.successPath}`,
+      failUrl: `${origin}${paths.failPath}`,
     });
 }

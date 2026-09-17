@@ -15,17 +15,31 @@ export type Dimensions = {
   depth_mm?: number | null;
 };
 
+export type FinishingDefinition = {
+  pouch_features?: PouchFeatures | null;
+  holes?: Array<Hole>;
+};
+
 export type FixedDefinition = {
   schema_version?: "2.0";
   family: "three-side-seal" | "stand-up-pouch" | "folding-box";
   dimension_semantics: Semantics;
-  feature_policy?: "none";
+  feature_policy?: "none" | "pouch-finishing-v1";
+  finishing?: FinishingDefinition | null;
   review_bleed_mm?: 3;
   recipe_id: "fixed-panel-net-v1";
   dimensions: Dimensions;
   panels: Array<Panel>;
   structural_parts?: Array<Part>;
   fold_lines?: Array<Line>;
+};
+
+export type Hole = {
+  id: string;
+  face_id: "front" | "back" | "bottom" | "left" | "right" | "top";
+  center_x_mm: number;
+  center_y_mm: number;
+  diameter_mm: number;
 };
 
 export type Line = {
@@ -69,6 +83,18 @@ export type Part = {
   attached_face_id: "front" | "back" | "left" | "right" | "top" | "bottom";
 };
 
+export type PouchFeatures = {
+  header_height_mm?: number;
+  zipper_enabled?: boolean;
+  zipper_y_mm?: number;
+  zipper_band_mm?: number;
+  tear_enabled?: boolean;
+  tear_y_mm?: number;
+  notch_depth_mm?: number;
+  notch_height_mm?: number;
+  notch_shape?: "round" | "v";
+};
+
 export type Range = {
   minimum: number;
   maximum: number;
@@ -93,7 +119,8 @@ export type SeparatedDefinition = {
   schema_version?: "2.0";
   family?: "three-side-seal";
   dimension_semantics: Semantics;
-  feature_policy?: "none";
+  feature_policy?: "none" | "pouch-finishing-v1";
+  finishing?: FinishingDefinition | null;
   review_bleed_mm?: 3;
   recipe_id: "three-side-seal-separated-v1";
   width_range_mm: Range;

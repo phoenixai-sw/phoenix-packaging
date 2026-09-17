@@ -14,19 +14,20 @@ from ..feature_models import AuditEvent
 from ..models import Project
 from .catalog import CATALOG,NOTICE,POLICY_VERSION
 from .models import ServiceOrder,ServiceOrderEvent,ServiceQuote
+from .checkout import checkout_payload,linked_order,make_quote_terms
 from .schemas import CatalogPayload,CreateServiceOrder,QuoteServiceOrder,ServiceOrderAction,AcceptServiceQuote,ServiceWorkTransition,ServiceOrderPayload,ServiceOrderList
 
 
-def payload(db,row):
+def service_payload(db,row,settings):
     quotes=list(db.scalars(select(ServiceQuote).where(ServiceQuote.order_id==row.id).order_by(ServiceQuote.number.desc())))
     events=list(db.scalars(select(ServiceOrderEvent).where(ServiceOrderEvent.order_id==row.id).order_by(ServiceOrderEvent.order_revision.desc())))
     keys=('id','service_code','project_id','request_note','catalog_snapshot','catalog_policy_version','status','revision','current_quote_id','accepted_quote_id','created_at','updated_at')
     def value(record,key):
         raw=getattr(record,key)
         return aware(raw) if key.endswith('_at') and raw is not None else raw
-    return {**{k:value(row,k) for k in keys},'quotes':[{k:value(q,k) for k in ('id','number','amount_inc_vat','currency','scope','exclusions','expires_at','policy_version','reason','created_at')} for q in quotes],
+    return {**{k:value(row,k) for k in keys},'quotes':[{**{k:value(q,k) for k in ('id','number','amount_inc_vat','currency','scope','exclusions','expires_at','policy_version','reason','created_at')},'checkout_terms':q.checkout_terms['public'] if q.checkout_terms else None} for q in quotes],
         'events':[{k:value(e,k) for k in ('id','order_revision','kind','note','quote_id','created_at')} for e in events],
-        'payment_status':'not_collected','credits_granted':0,'checkout_enabled':False,'admin_notice':NOTICE}
+        **checkout_payload(db,row,settings),'admin_notice':NOTICE}
 
 
 def _event(db,row,user,kind,note,quote_id=None):
@@ -43,6 +44,7 @@ def _change(db,row,user,revision,kind,note,**values):
 def install_service_order_routes(app,db_session):
     router=APIRouter(prefix='/v1',tags=['service-orders'],responses=ERROR_RESPONSES)
     def result(request,data):return {'data':data,'request_id':request.state.request_id}
+    def payload(db,row):return service_payload(db,row,app.state.billing_settings)
     def owner(request,db,mutate=False):
         user,_=require_auth(request,db,mutate=mutate)
         if user.role!='owner':raise APIError(403,'OWNER_REQUIRED','별도 서비스 신청과 견적 수락은 소유자만 할 수 있습니다.')
@@ -63,7 +65,8 @@ def install_service_order_routes(app,db_session):
     @router.get('/service-catalog',response_model=Envelope[CatalogPayload],response_model_exclude_unset=True)
     def catalog(request:Request,db=Depends(db_session)):
         require_auth(request,db)
-        return result(request,{'policy_version':POLICY_VERSION,'currency':'KRW','items':list(CATALOG.values()),'notice':NOTICE})
+        enabled=app.state.billing_settings.capabilities()['checkout_available']
+        return result(request,{'policy_version':POLICY_VERSION,'currency':'KRW','items':[{**item,'checkout_enabled':enabled} for item in CATALOG.values()],'notice':NOTICE})
 
     @router.post('/service-orders',status_code=201,response_model=Envelope[ServiceOrderPayload],response_model_exclude_unset=True)
     def create(body:CreateServiceOrder,request:Request,db=Depends(db_session)):
@@ -108,6 +111,8 @@ def install_service_order_routes(app,db_session):
     def cancel(identity:UUID,body:ServiceOrderAction,request:Request,db=Depends(db_session)):
         user=owner(request,db,True);row=load(db,identity,user,body.base_revision)
         if row.status not in {'requested','quoted','accepted'}:raise APIError(409,'SERVICE_CANCEL_NOT_ALLOWED','진행 중인 업무는 담당자와 범위를 확인해 주세요.')
+        payment=linked_order(db,row.id)
+        if payment and payment.status!='refunded':raise APIError(409,'SERVICE_PAYMENT_PENDING','연결된 결제의 승인·취소 결과를 확인해야 신청을 취소할 수 있습니다.')
         _change(db,row,user,body.base_revision,'canceled',body.note,status='canceled');db.commit();return result(request,payload(db,row))
 
     @router.get('/admin/service-orders',response_model=Envelope[ServiceOrderList],response_model_exclude_unset=True)
@@ -123,11 +128,14 @@ def install_service_order_routes(app,db_session):
     @router.post('/admin/service-orders/{identity}/quotes',response_model=Envelope[ServiceOrderPayload],response_model_exclude_unset=True)
     def quote(identity:UUID,body:QuoteServiceOrder,request:Request,db=Depends(db_session)):
         user=admin(request,db,True);row=load(db,identity,revision=body.base_revision)
-        if row.status not in {'requested','quoted'}:raise APIError(409,'SERVICE_QUOTE_LOCKED','수락한 견적을 변경할 수 없습니다. 새 신청에서 협의해 주세요.')
+        old_quote=db.get(ServiceQuote,row.accepted_quote_id) if row.accepted_quote_id else None
+        legacy_requote=row.status=='accepted' and old_quote and not old_quote.checkout_terms and not linked_order(db,row.id)
+        if row.status not in {'requested','quoted'} and not legacy_requote:raise APIError(409,'SERVICE_QUOTE_LOCKED','수락한 견적을 변경할 수 없습니다. 새 신청에서 협의해 주세요.')
         number=(db.scalar(select(func.max(ServiceQuote.number)).where(ServiceQuote.order_id==row.id)) or 0)+1
         q=ServiceQuote(tenant_id=row.tenant_id,order_id=row.id,number=number,amount_inc_vat=body.amount_inc_vat,scope=body.scope,exclusions=body.exclusions,
-            expires_at=utcnow()+timedelta(days=body.valid_days),policy_version=POLICY_VERSION,quoted_by=user.id,reason=body.reason)
-        db.add(q);db.flush();_change(db,row,user,body.base_revision,'quoted',body.reason,status='quoted',current_quote_id=q.id)
+            expires_at=utcnow()+timedelta(days=body.valid_days),policy_version=POLICY_VERSION,quoted_by=user.id,reason=body.reason,
+            checkout_terms=make_quote_terms(db,row.service_code,body.amount_inc_vat,body.scope,body.exclusions))
+        db.add(q);db.flush();_change(db,row,user,body.base_revision,'quoted',body.reason,status='quoted',current_quote_id=q.id,accepted_quote_id=None)
         db.commit();return result(request,payload(db,row))
 
     @router.post('/admin/service-orders/{identity}/transition',response_model=Envelope[ServiceOrderPayload],response_model_exclude_unset=True)
@@ -135,7 +143,11 @@ def install_service_order_routes(app,db_session):
         user=admin(request,db,True);row=load(db,identity,revision=body.base_revision)
         allowed={'requested':{'rejected'},'quoted':{'rejected'},'accepted':{'in_progress'},'in_progress':{'delivered'},'delivered':{'completed'}}
         if body.status not in allowed.get(row.status,set()):raise APIError(409,'SERVICE_TRANSITION_INVALID','현재 단계에서 가능한 업무 상태가 아닙니다.')
-        if row.service_code=='pilot_pro_first_month' and body.status!='rejected':raise APIError(409,'SUBSCRIPTION_FULFILLMENT_REQUIRED','모집 문의는 실제 구독 결제 없이 개통·완료로 처리할 수 없습니다.')
+        payment=linked_order(db,row.id)
+        accepted=db.get(ServiceQuote,row.accepted_quote_id) if row.accepted_quote_id else None
+        if row.service_code=='pilot_pro_first_month' and body.status!='rejected' and (not payment or payment.status!='paid'):raise APIError(409,'SUBSCRIPTION_FULFILLMENT_REQUIRED','모집 문의는 실제 구독 결제 없이 개통·완료로 처리할 수 없습니다.')
+        if body.status!='rejected' and accepted and accepted.checkout_terms and accepted.amount_inc_vat>0 and (not payment or payment.status!='paid'):
+            raise APIError(409,'SERVICE_PAYMENT_REQUIRED','수납 상태를 확인한 뒤 업무를 진행해 주세요.')
         _change(db,row,user,body.base_revision,body.status,body.note,status=body.status);db.commit();return result(request,payload(db,row))
 
     app.include_router(router)

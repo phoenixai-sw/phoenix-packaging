@@ -10,6 +10,7 @@ import {
 } from "@/lib/registered-structures";
 import { Feedback } from "./management";
 import { RegisteredStructurePreview } from "./registered-structure-preview";
+import type { FinishingApproval } from "./finishing-approval-picker";
 import styles from "./registered-structures.module.css";
 
 type RegistryStructure = {
@@ -24,15 +25,20 @@ type RegistryStructure = {
 export function RegisteredStructureAdmin({
   items,
   onRegistered,
+  onAction,
 }: {
   items: RegistryStructure[];
   onRegistered: (message: string) => void;
+  onAction: (action: "review" | "approve" | "revoke", id: string) => void;
 }) {
   const [definition, setDefinition] = useState("");
+  const [dimensions, setDimensions] = useState<Record<string, number>>({ width_mm: 160, height_mm: 230 });
   const [checked, setChecked] = useState<{
     input: string;
     normalized_definition: StructureDefinition;
     geometry: StructureGeometry;
+    approved_dimensions: Record<string, number>;
+    approved_finishing?: FinishingApproval | null;
   }>();
   const [name, setName] = useState(""),
     [manufacturer, setManufacturer] = useState(""),
@@ -59,9 +65,11 @@ export function RegisteredStructureAdmin({
       const result = await api<{
         normalized_definition: StructureDefinition;
         geometry: StructureGeometry;
+        approved_dimensions: Record<string, number>;
+        approved_finishing?: FinishingApproval | null;
       }>("/admin/structures/validate", {
         method: "POST",
-        body: JSON.stringify({ structure_definition }),
+        body: JSON.stringify({ structure_definition, inputs: dimensions }),
       });
       setChecked({ ...result, input: definition });
       setNotice(
@@ -94,6 +102,8 @@ export function RegisteredStructureAdmin({
           geometry_template_id: valid.normalized_definition.family,
           billing_family_key: familyKey,
           structure_definition: valid.normalized_definition,
+          approved_dimensions: valid.approved_dimensions,
+          ...(valid.approved_finishing ? { approved_finishing: valid.approved_finishing } : {}),
           review_available: publicReview,
         }),
       });
@@ -115,6 +125,7 @@ export function RegisteredStructureAdmin({
     setChecked(undefined);
     setDemo(true);
     setPublicReview(false);
+    setDimensions(value.recipe_id === "fixed-panel-net-v1" ? Object.fromEntries(Object.entries(value.dimensions).filter((entry): entry is [string, number] => typeof entry[1] === "number")) : { width_mm: 160, height_mm: 230 });
     setError("");
     setNotice("자체 시험 예시입니다. 제조사 승인 자료로 사용하지 마세요.");
   }
@@ -133,6 +144,7 @@ export function RegisteredStructureAdmin({
               <th>구조·출처</th>
               <th>공개 상태</th>
               <th>용도</th>
+              <th>제조 검토</th>
             </tr>
           </thead>
           <tbody>
@@ -152,9 +164,11 @@ export function RegisteredStructureAdmin({
                         : "비공개"}
                   </td>
                   <td>
-                    {item.is_demo ? "시험 예시 · " : ""}검토 전용 · 제작 사용
-                    불가
+                    {item.is_demo ? "시험 예시 · 제작 불가" : item.status === "approved" ? "승인 조건·가공·최신 검수 통과 시 제작 가능" : "검토 전용 · 제작 불가"}
                   </td>
+                  <td>{item.status === "approved" ? <button className="button button-light button-sm" onClick={() => onAction("revoke", item.id)}>승인 철회</button>
+                    : item.status === "draft" ? <button className="button button-light button-sm" disabled={item.is_demo} onClick={() => onAction("review", item.id)}>검토 요청</button>
+                    : <button className="button button-light button-sm" disabled={item.is_demo || item.status !== "review"} onClick={() => onAction("approve", item.id)}>증빙 확인 후 승인</button>}</td>
                 </tr>
               ))}
           </tbody>
@@ -193,6 +207,15 @@ export function RegisteredStructureAdmin({
               placeholder="제조 도면을 검토해 작성한 구조 정의를 입력하세요."
             />
           </label>
+          <fieldset className="registry-fieldset" disabled={busy}>
+            <legend>검토·승인 대상 완성 치수</legend>
+            <p className="field-hint">범위형 구조도 제조 승인 시에는 실제 사용할 규격을 고정합니다. 고정 패널의 치수는 등록 정의와 같아야 합니다.</p>
+            <div className="form-two-columns">{[["width_mm", "폭"], ["height_mm", "높이"], ["bottom_mm", "펼친 바닥 폭 (스탠드형만)"], ["depth_mm", "깊이 (상자만)"]].map(([key, label]) => <label className="field" key={key}>{label} mm<input type="number" min={1} step="0.1" value={dimensions[key] ?? ""} onChange={event => {
+              const next = { ...dimensions };
+              if (event.target.value === "") delete next[key]; else next[key] = Number(event.target.value);
+              setDimensions(next); setChecked(undefined);
+            }} /></label>)}</div>
+          </fieldset>
           <button
             type="button"
             className="button button-light"
@@ -278,9 +301,8 @@ export function RegisteredStructureAdmin({
                 사용자가 검토용으로 선택하도록 공개
               </label>
               <p className="field-hint">
-                공개는 제조 승인이 아닙니다. 현재 등록 구조는 제작용 출력, 추가
-                구멍·지퍼·뜯는 가공, 자동 객체 크기 변경을 지원하지 않습니다.
-                고정 패널은 등록 치수를 바꿀 수 없습니다.
+                공개는 제조 승인이 아닙니다. 제작에는 정확한 규격·재질·가공을 포함한 도면 증빙과 인쇄 조건 승인이 필요합니다.
+                지원하는 파우치 가공은 구조 정의에 고정하며 편집기에서 임의로 추가하지 않습니다. 고정 패널은 등록 치수를 바꿀 수 없습니다.
               </p>
               <button className="button button-dark" disabled={busy || !valid}>
                 {publicReview

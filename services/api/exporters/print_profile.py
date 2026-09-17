@@ -26,6 +26,7 @@ class PrintProfile(BaseModel):
     structure_delivery: Literal["separate_pdf"] = "separate_pdf"
     cut_name: Literal["CUT"] = "CUT"
     fold_name: Literal["FOLD"] = "FOLD"
+    finishing_delivery: Literal["none", "separate_process_pdf_v1"] = "none"
     spot_colors: Literal[False] = False
     white_ink: Literal[False] = False
     overprint: Literal[False] = False
@@ -35,7 +36,10 @@ class PrintProfile(BaseModel):
 
 def parse_print_profile(value):
     try:
-        return PrintProfile.model_validate(value).model_dump(mode="json")
+        normalized=PrintProfile.model_validate(value).model_dump(mode="json")
+        # Existing frozen profiles and manifests must retain their exact keys.
+        if normalized["finishing_delivery"]=="none":normalized.pop("finishing_delivery")
+        return normalized
     except ValidationError as exc:
         raise GeometryValidationError("UNSUPPORTED_PRINT_PROFILE", "ICC·도련·윤곽선·분리 CUT/FOLD의 지원 조건을 확인해 주세요. PDF/X·별색·화이트·오버프린트는 지원하지 않습니다.", "print_profile") from exc
 

@@ -95,14 +95,20 @@ def test_expiry_cancel_and_pro_inquiry_cannot_activate_entitlements(client,app):
 
 
 def test_work_state_transitions_keep_reasons_and_payment_separate(client,app):
+    from cryptography.fernet import Fernet
+    app.state.billing_settings.provider='mock';app.state.billing_settings.encryption_key=Fernet.generate_key().decode()
     auth=register(client);make_admin(app,auth);p=project(client)
     row=quote(client,create(client,'file_review',p['id']),55000)
     row=accept_quote(client,row).json()['data']
     assert client.post(f"/v1/admin/service-orders/{row['id']}/transition",json={'base_revision':row['revision'],'status':'completed','note':'단계 생략 시도'}).status_code==409
+    assert client.post(f"/v1/admin/service-orders/{row['id']}/transition",json={'base_revision':row['revision'],'status':'in_progress','note':'수납 전 업무 시작 차단'}).json()['code']=='SERVICE_PAYMENT_REQUIRED'
+    payment=client.post('/v1/billing/orders',json={'kind':'service','service_order_id':row['id'],'service_quote_id':row['accepted_quote_id'],'service_base_revision':row['revision']},headers={'Idempotency-Key':'work-payment'})
+    assert payment.status_code==201,payment.text
+    assert client.post('/v1/billing/mock-confirm',json={'order_id':payment.json()['data']['order_id']}).status_code==200
     for status in ('in_progress','delivered','completed'):
         changed=client.post(f"/v1/admin/service-orders/{row['id']}/transition",json={'base_revision':row['revision'],'status':status,'note':'내부 시험 업무 기록 — 실제 서비스 제공 아님'})
         assert changed.status_code==200,changed.text
-        row=changed.json()['data'];assert row['status']==status and row['payment_status']=='not_collected'
+        row=changed.json()['data'];assert row['status']==status and row['payment_status']=='paid'
     assert len(row['events'])==6
     assert client.post(f"/v1/service-orders/{row['id']}/cancel",json={'base_revision':row['revision'],'note':'완료 건 취소 시도'}).status_code==409
 

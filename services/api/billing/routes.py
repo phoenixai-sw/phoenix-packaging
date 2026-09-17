@@ -46,9 +46,41 @@ class QuoteBody(Body):
 
 
 class OrderBody(Body):
-    kind: Literal["subscription", "topup"]
+    kind: Literal["subscription", "topup", "service"]
     plan_id: Literal["starter", "pro", "partner"] | None = None
     credits: Literal[500, 1000] | None = None
+    service_order_id: UUID | None = None
+    service_quote_id: UUID | None = None
+    service_base_revision: int | None = Field(default=None,ge=1,strict=True)
+    recurring_consent: 'RecurringConsent | None' = None
+
+    @model_validator(mode='after')
+    def service_fields(self):
+        if self.kind=='service':
+            if self.service_order_id is None or self.service_quote_id is None or self.service_base_revision is None or self.plan_id is not None or self.credits is not None:
+                raise ValueError('서비스 주문은 수락한 견적과 버전으로만 요청합니다.')
+        elif any(value is not None for value in (self.service_order_id,self.service_quote_id,self.service_base_revision,self.recurring_consent)):
+            raise ValueError('서비스 수납 정보는 서비스 주문에만 사용합니다.')
+        return self
+
+
+class RecurringConsent(Body):
+    terms_version: str = Field(min_length=64,max_length=64,pattern='^[0-9a-f]+$')
+    first_amount_inc_vat:int=Field(gt=0,strict=True)
+    renewal_amount_inc_vat:int=Field(gt=0,strict=True)
+    currency:Literal['KRW']
+    automatic_renewal:Literal[True]
+    plan_id:Literal['pro']
+
+    @model_validator(mode='before')
+    @classmethod
+    def explicit_boolean(cls,value):
+        if isinstance(value,dict) and value.get('automatic_renewal') is not True:
+            raise ValueError('자동 갱신 명시적 동의가 필요합니다.')
+        return value
+
+
+OrderBody.model_rebuild()
 
 
 class ConfirmBody(Body):
@@ -153,7 +185,13 @@ def install_billing_routes(app, db_session, *, settings=None, provider=None):
     @router.post("/billing/orders", status_code=201, response_model=Envelope[P.PaymentOrderData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def order(body: OrderBody, request: Request, db=Depends(db_session)):
         user = actor(request, db, owner=True, mutate=True)
-        created = create_order(db, user.tenant_id, body.kind, operation(request), plan_id=body.plan_id, credits=body.credits, settings=settings)
+        if body.kind=='service':
+            from ..service_orders.checkout import create_service_order
+            created=create_service_order(db,user.tenant_id,operation(request),service_order_id=body.service_order_id,
+                service_quote_id=body.service_quote_id,service_base_revision=body.service_base_revision,
+                recurring_consent=body.recurring_consent.model_dump() if body.recurring_consent else None,actor_id=user.id,settings=settings)
+        else:
+            created = create_order(db, user.tenant_id, body.kind, operation(request), plan_id=body.plan_id, credits=body.credits, settings=settings)
         account = billing_account(db, user.tenant_id, settings)
         db.commit()
         return result(request, order_payload(created, account, settings))

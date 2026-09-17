@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import Link from "next/link";
 import { Check, Coins, LoaderCircle, Plus, RefreshCw } from "lucide-react";
 import {
   ManagementPage,
@@ -12,6 +13,8 @@ import { api, errorMessage } from "@/lib/api";
 import { useSession } from "@/components/workspace";
 import { openTossPayment } from "@/lib/payments";
 import { paymentOutcome, planSelection, refundOutcome, type PaymentOrderResult } from "@/lib/billing-state";
+import type { ApiData, ApiSchema } from "@/lib/api-contract";
+import { servicePaymentLabel } from "@/lib/service-payment-state";
 const creditLabels: Record<string, string> = {
   trial: "무료 체험",
   subscription: "월 지급",
@@ -24,74 +27,8 @@ const creditLabels: Record<string, string> = {
   REFUND: "환불",
   ADJUSTMENT: "조정",
 };
-type Order = {
-  order_id: string;
-  id?: string;
-  amount: number;
-  kind: string;
-  plan_id?: string;
-  credits: number;
-  status: string;
-  created_at?: string;
-  customer_key: string;
-  checkout_kind?: string;
-  error?: string;
-};
-type Billing = {
-  current_pricing_version: string;
-  agreed_plan_pricing_version: string | null;
-  policy: {
-    version: string;
-    plans: Array<{
-      id: string;
-      name: string;
-      monthly_inc_vat: number;
-      credits: number;
-      seats: number;
-    }>;
-    topups: Array<{ credits: number; inc_vat: number; expires_months: number }>;
-  };
-  subscription: null | {
-    plan_id: string;
-    status: string;
-    current_period_end?: string;
-    cancel_at_period_end?: boolean;
-    next_plan_id?: string;
-  };
-  summary: {
-    balance: number;
-    reserved: number;
-    consumed: number;
-    expired: number;
-    mode: string;
-    buckets: Array<{
-      id: string;
-      kind: string;
-      available: number;
-      reserved: number;
-      expires_at: string;
-    }>;
-    ledger: Array<{
-      id: string;
-      event: string;
-      amount: number;
-      reason: string;
-      created_at: string;
-    }>;
-  };
-  orders: Order[];
-  entitlements: { active_subscription: boolean };
-  payment_capabilities: {
-    provider: string;
-    test_mode: boolean;
-    checkout_available: boolean;
-    live_enabled: boolean;
-    mock_available: boolean;
-    client_key?: string;
-    billing_auth_available: boolean;
-  };
-  payment_errors?: string[];
-};
+type Order = ApiSchema<"PaymentOrderData">;
+type Billing = ApiData<"/v1/billing">;
 export default function BillingPage() {
   const session = useSession();
   const owner = roleOf(session) === "owner";
@@ -244,8 +181,8 @@ export default function BillingPage() {
                       : "결제 연동과 운영 정책 확인 전입니다. 현재 유료 결제는 열리지 않습니다."}
               </span>
             </div>
-            {data.payment_errors?.length ? (
-              <Feedback notice={data.payment_errors.join(" · ")} />
+            {data.payment_capabilities.message ? (
+              <Feedback notice={data.payment_capabilities.message} />
             ) : null}
             <div className="wallet-stats">
               {[
@@ -434,16 +371,17 @@ export default function BillingPage() {
                       <tr key={row.order_id || row.id}>
                         <td>{dateTime(row.created_at)}</td>
                         <td>
-                          {row.plan_id || `${row.credits} 크레딧`}
+                          {row.service_name || (row.service_order_id ? "별도 서비스" : row.plan_id || `${row.credits} 크레딧`)}
                           <small>{row.order_id || row.id}</small>
                         </td>
                         <td>{money(row.amount)}</td>
                         <td>
-                          {row.status}
+                          {servicePaymentLabel(row.status)}
                           <small>{row.error}</small>
                         </td>
                         <td>
-                          {owner && row.status === "paid" && (
+                          {owner && row.service_order_id && <Link className="button button-light button-sm" href={`/app/services?service_order_id=${encodeURIComponent(row.service_order_id)}`}>서비스 결제·환불 확인</Link>}
+                          {owner && !row.service_order_id && row.status === "paid" && (
                             <button
                               className="button button-light button-sm"
                               onClick={() => {
@@ -454,7 +392,7 @@ export default function BillingPage() {
                               환불 조건 확인
                             </button>
                           )}
-                          {owner && row.status === "pending" && (
+                          {owner && !row.service_order_id && row.status === "pending" && (
                             <button
                               className="button button-light button-sm"
                               onClick={() => setOrder(row)}

@@ -1,0 +1,9 @@
+.summary { display: grid; gap: .5rem; margin-top: .9rem; padding: .85rem; border: 1px solid var(--line, #dedbd2); border-radius: 12px; background: var(--surface, #fffdf7); }
+.summary p { margin: 0; font-size: .83rem; line-height: 1.5; }
+.summary button { justify-self: start; }
+.history { display: grid; gap: 1rem; padding: 1.25rem; min-width: 0; }
+.history > p { margin: 0; font-size: .85rem; line-height: 1.6; }
+.items { display: grid; gap: .85rem; margin: 0; padding: 0; list-style: none; }
+.item { display: grid; gap: .45rem; border: 1px solid var(--line, #dedbd2); border-radius: 12px; padding: 1rem; overflow-wrap: anywhere; }
+.item p { margin: 0; font-size: .86rem; line-height: 1.6; white-space: pre-wrap; }
+.item small { color: var(--muted, #656d61); line-height: 1.5; }

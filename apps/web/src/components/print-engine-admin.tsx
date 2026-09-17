@@ -8,6 +8,7 @@ export function PrintEngineAdmin({ onRegistered }: { onRegistered?: (message: st
   const [source, setSource] = useState(""), [license, setLicense] = useState("");
   const [name, setName] = useState(""), [manufacturer, setManufacturer] = useState(""), [material, setMaterial] = useState("");
   const [bleed, setBleed] = useState("3"), [ppi, setPpi] = useState("300"), [ink, setInk] = useState("300"), [layout, setLayout] = useState("face_pages");
+  const [finishing, setFinishing] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState("");
   const inFlight = useRef(false);
   async function upload() {
@@ -22,7 +23,8 @@ export function PrintEngineAdmin({ onRegistered }: { onRegistered?: (message: st
     if (!icc || inFlight.current) return;
     inFlight.current = true; setBusy(true); setError("");
     try { const result = await api<{ id: string }>("/admin/print-engine/profiles", { method: "POST", body: JSON.stringify({ name, manufacturer, material, source, license, review_available: true,
-      requirements: { icc_id: icc.id, icc_sha256: icc.sha256, bleed_mm: Number(bleed), min_ppi: Number(ppi), max_ink_percent: Number(ink), layout } }) });
+      requirements: { icc_id: icc.id, icc_sha256: icc.sha256, bleed_mm: Number(bleed), min_ppi: Number(ppi), max_ink_percent: Number(ink), layout,
+        ...(finishing ? { finishing_delivery: "separate_process_pdf_v1" } : {}) } }) });
       const message = `시험 가능한 미승인 출력 조건을 등록했습니다. 기존 제조 등록에서 별도 승인 증빙을 연결해 주세요. (${result.id})`;
       setNotice(message); onRegistered?.(message);
     } catch (e) { setError(errorMessage(e)); } finally { inFlight.current = false; setBusy(false); }
@@ -41,7 +43,8 @@ export function PrintEngineAdmin({ onRegistered }: { onRegistered?: (message: st
       <label>도련 mm<input type="number" min={0} max={10} step={0.001} value={bleed} onChange={e => setBleed(e.target.value)} /></label>
       <label>최소 원본 해상도 ppi<input type="number" min={72} max={2400} value={ppi} onChange={e => setPpi(e.target.value)} /></label>
       <label>총잉크량 상한 %<input type="number" min={100} max={400} value={ink} onChange={e => setInk(e.target.value)} /></label>
-      <p className="muted">일반 PDF · CMYK · 글꼴 윤곽선 · CUT/FOLD 별도 PDF. PDF/X·별색·화이트·오버프린트·반투명과 가공 구멍은 차단됩니다.</p>
+      <label className="compact-check"><input type="checkbox" checked={finishing} onChange={event => setFinishing(event.target.checked)} /> 걸이 구멍·노치의 CUT와 지퍼·개봉 안내 파일을 분리해서 납품</label>
+      <p className="muted">가공 치수까지 승인된 도면과 연결해야 합니다. 가공 안내는 인쇄 그림에 넣지 않습니다. 일반 PDF · CMYK · 글꼴 윤곽선 · CUT/FOLD 별도 PDF이며 PDF/X·별색·화이트·오버프린트·반투명은 지원하지 않습니다.</p>
       <button className="button" onClick={register} disabled={busy || !name.trim() || !manufacturer.trim() || !material.trim()}>미승인 조건 등록 · 시험에 공개</button></>}
     <Feedback error={error} notice={notice} />
   </section>;

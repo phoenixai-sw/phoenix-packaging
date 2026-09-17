@@ -20,6 +20,7 @@ supabase/.branches/
 /output/ops-ui/
 /output/ops-production/
 /output/spec-completion-ops-*/
+/output/checkout-finishing-*/
 test-results/
 playwright-report/
 *.log

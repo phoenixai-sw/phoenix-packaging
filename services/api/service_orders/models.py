@@ -40,6 +40,7 @@ class ServiceQuote(Base):
     policy_version:Mapped[str]=mapped_column(String(80))
     quoted_by:Mapped[str]=mapped_column(ForeignKey('users.id'))
     reason:Mapped[str]=mapped_column(String(500))
+    checkout_terms:Mapped[dict|None]=mapped_column(JSON,nullable=True)
     created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow)
 
 
@@ -54,4 +55,18 @@ class ServiceOrderEvent(Base):
     kind:Mapped[str]=mapped_column(String(40))
     note:Mapped[str]=mapped_column(Text)
     quote_id:Mapped[str|None]=mapped_column(ForeignKey('service_order_quotes.id'),nullable=True)
+    created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow)
+
+
+class ServiceCheckout(Base):
+    """Immutable link from one accepted quote to one reusable PG order."""
+    __tablename__='service_checkouts'
+    payment_order_id:Mapped[str]=mapped_column(ForeignKey('payment_orders.id'),primary_key=True)
+    tenant_id:Mapped[str]=mapped_column(ForeignKey('tenants.id'),index=True)
+    service_order_id:Mapped[str]=mapped_column(ForeignKey('service_orders.id'),unique=True)
+    service_quote_id:Mapped[str]=mapped_column(ForeignKey('service_order_quotes.id'))
+    actor_id:Mapped[str]=mapped_column(ForeignKey('users.id'))
+    accepted_revision:Mapped[int]=mapped_column(Integer)
+    snapshot:Mapped[dict]=mapped_column(JSON)
+    consent:Mapped[dict|None]=mapped_column(JSON,nullable=True)
     created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=utcnow)

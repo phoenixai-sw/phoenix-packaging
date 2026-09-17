@@ -115,7 +115,11 @@ def resolve_recipe(definition, inputs):
         _reject("STRUCTURE_NET_TOO_LARGE", "전개도는 각 변 2000mm 이하만 지원합니다.")
     for face in faces:
         face["registered_structure"]=True
-    return {"template_id":definition["family"],"geometry_template_id":definition["family"],"unit":"mm",**inputs,"faces":faces,"structural_parts":parts,"fold_lines":fold_lines,
+    geometry={"template_id":definition["family"],"geometry_template_id":definition["family"],"unit":"mm",**inputs,"faces":faces,"structural_parts":parts,"fold_lines":fold_lines,
             "net_width_mm":round(net_w,4),"net_height_mm":round(net_h,4),"holes":[],"assumptions":assumptions,
             "dimension_semantics":deepcopy(definition["dimension_semantics"]),"production_enabled":False,
             "approval_status":"registered_review_only","label":"등록 구조 검토 · 제작 사용 불가"}
+    if definition.get("finishing") is not None:
+        from .finishing import apply_registered_finishing
+        apply_registered_finishing(geometry,definition["finishing"])
+    return geometry

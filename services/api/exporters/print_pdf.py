@@ -36,6 +36,8 @@ def inspect_print(project, profile, resolver=None, *, test_mode=False):
     p=parse_print_profile(profile)
     scene=validate_scene(project["scene"],structure_snapshot=project.get("structure_snapshot"))
     geometry=geometry_for_scene(scene,structure_snapshot=project.get("structure_snapshot"))
+    if (geometry.get('holes') or geometry.get('pouch_features') is not None) and p.get('finishing_delivery')!='separate_process_pdf_v1':
+        raise ExportValidationError('FINISHING_DELIVERY_REQUIRED','구멍·개봉부·지퍼·노치에는 명시적인 분리 CUT·가공 안내 출력 프로필이 필요합니다.')
     paths=structure_paths(geometry,p["layout"])
     issues=[]
     def add(code,message,**kw):issues.append({"code":code,"message":message,"severity":"warning" if test_mode else "error",**kw})
@@ -104,6 +106,27 @@ def _paint_face(canvas,face,structural,paint,resolver,b,others=()):
         cut=canvas.beginPath();cut.rect(-b*mm,-b*mm,(w+2*b)*mm,(h+2*b)*mm)
         for x,y,rw,rh in others:cut.rect(x*mm,(h-y-rh)*mm,rw*mm,rh*mm)
         canvas.clipPath(cut,stroke=0,fillMode=0)
+    if structural:
+        from ..geometry.finishing_paths import circle_curves,notch_segments
+        regions=structural['regions'];feature=structural.get('_pouch_features')
+        if regions.get('hole') or regions.get('tear_notches'):
+            knockout=canvas.beginPath();knockout.rect(-b*mm,-b*mm,(w+2*b)*mm,(h+2*b)*mm)
+            def curve_path(segments):
+                for q in segments:knockout.curveTo(q[2]*mm,(h-q[3])*mm,q[4]*mm,(h-q[5])*mm,q[6]*mm,(h-q[7])*mm)
+            for hole in regions.get('hole',[]):
+                curves=circle_curves(hole['center_x_mm'],hole['center_y_mm'],hole['radius_mm'])
+                knockout.moveTo(curves[0][0]*mm,(h-curves[0][1])*mm);curve_path(curves);knockout.close()
+            if feature and feature['tear_enabled']:
+                for side in ('left','right'):
+                    parts=notch_segments(w,feature,side);segments=parts['curves'] or parts['lines']
+                    edge=0 if side=='left' else w;outside=-b-1 if side=='left' else w+b+1
+                    top=feature['tear_y_mm']-feature['notch_height_mm']/2;bottom=feature['tear_y_mm']+feature['notch_height_mm']/2
+                    knockout.moveTo(outside*mm,(h-top)*mm);knockout.lineTo(edge*mm,(h-top)*mm)
+                    if parts['curves']:curve_path(segments)
+                    else:
+                        for q in segments:knockout.lineTo(q[2]*mm,(h-q[3])*mm)
+                    knockout.lineTo(outside*mm,(h-bottom)*mm);knockout.close()
+            canvas.clipPath(knockout,stroke=0,fillMode=0)
     canvas.setFillColor(HexColor(face["background"]));canvas.rect(-b*mm,-b*mm,(w+2*b)*mm,(h+2*b)*mm,fill=1,stroke=0)
     for obj in sorted(face["objects"],key=lambda o:o["z_index"]):_draw_object(canvas,obj,h,resolver,[],print_paint=paint)
     canvas.restoreState()
@@ -117,14 +140,16 @@ def render_print_artifacts(project, output_dir, profile, icc, resolver=None, *, 
     _font()  # Barcode human-readable digits use the bundled font even on text-free scenes.
     paint=Paint(icc,p);out=Path(output_dir);out.mkdir(parents=True,exist_ok=False)
     lookup={f["id"]:f for f in scene["faces"]};payloads={}
-    for role in ("artwork","cut","fold"):
+    structural={f['id']:{**f,'_pouch_features':g.get('pouch_features')} for f in g['faces']}
+    finishing=bool(g.get('holes') or g.get('pouch_features') is not None)
+    for role in ("artwork","cut","fold")+(("process",) if finishing else ()):
         stream=BytesIO();c=PrintCanvas(stream,paint=paint,invariant=1,pageCompression=1,pdfVersion=(1,5),enforceColorSpace="CMYK")
         c.setTitle(f"Phoenix {role.upper()} — {'ENGINE TEST / NOT FOR PRODUCTION' if test_mode else 'ordinary ICC PDF'}")
         for page in paths:
             w,h=page["width_mm"],page["height_mm"]
             _page(c,w,h,b,test_mode)
             if role=="artwork":
-                if p["layout"]=="face_pages":_paint_face(c,lookup[page["face_id"]],None,paint,resolver,b)
+                if p["layout"]=="face_pages":_paint_face(c,lookup[page["face_id"]],structural[page['face_id']],paint,resolver,b)
                 else:
                     for sf in g["faces"]:
                         face=lookup[sf["id"]];net=sf["net"];x,y=net["x_mm"],net["y_mm"];fw,fh=face["width_mm"],face["height_mm"]
@@ -136,10 +161,26 @@ def render_print_artifacts(project, output_dir, profile, icc, resolver=None, *, 
                             if net["rotation_deg"]==180:lx,ly=fw-lx-rw,fh-ly-rh
                             others.append((lx,ly,rw,rh))
                         if net["rotation_deg"]==180:c.translate(fw*mm,fh*mm);c.rotate(180)
-                        _paint_face(c,face,sf,paint,resolver,b,others);c.restoreState()
+                        _paint_face(c,face,structural[sf['id']],paint,resolver,b,others);c.restoreState()
             else:
+                from ..geometry.finishing_paths import expected_segments
                 c.setStrokeColor(CMYKColor(0,0,0,1));c.setLineWidth(.1*mm)
-                for x1,y1,x2,y2 in page[role]:c.line(x1*mm,(h-y1)*mm,x2*mm,(h-y2)*mm)
+                segments=expected_segments(page,role)
+                if role=='process':c.setDash(1*mm,1*mm)
+                for x1,y1,x2,y2 in segments['lines']:c.line(x1*mm,(h-y1)*mm,x2*mm,(h-y2)*mm)
+                for q in segments['curves']:
+                    path=c.beginPath();path.moveTo(q[0]*mm,(h-q[1])*mm)
+                    path.curveTo(q[2]*mm,(h-q[3])*mm,q[4]*mm,(h-q[5])*mm,q[6]*mm,(h-q[7])*mm);c.drawPath(path,stroke=1,fill=0)
+                if role=='process':
+                    c.setDash();c.setFillColor(CMYKColor(0,0,0,1))
+                    legend='\n'.join(('PROCESS / 가공 배치 안내 · 재단선 아님',
+                                             'HEADER / TEAR: 개봉 위치 참고선 (절취선 가공 지시 아님)',
+                                             'ZIPPER: 지퍼 중심·부착 대역 / SEAL: 실링 영역',
+                                             '실제 외곽·원형 구멍·U/V 노치: cut.pdf / 접힘: fold.pdf',
+                                             '가공 좌표·종류: finishing.json / 제조 승인 조건과 함께 사용'))
+                    size=min(8,max(4,(w-30)/20))
+                    lines=_layout_text({'id':'process-legend','text':legend,'font_size_pt':size,'font_weight':400,'width_mm':w-30,'height_mm':h/2-5,'letter_spacing':0,'line_height':1.4})
+                    for i,text in enumerate(lines):draw_outline_line(c,text,15*mm,h/2*mm-i*size*1.4,size)
             c.showPage()
         c.save();data=_embed_icc(stream.getvalue(),icc)
         name='production.pdf' if role=='artwork' else role+'.pdf';(out/name).write_bytes(data);payloads[role]=data
@@ -161,6 +202,17 @@ def render_print_artifacts(project, output_dir, profile, icc, resolver=None, *, 
     preview.save(out/'preview.png')
     from .print_verification import verify_print_artifacts
     verified=verify_print_artifacts(payloads,scene,g,paths,p,test_mode)
+    finishing_manifest=None
+    if finishing:
+        from ..geometry.finishing import finishing_approval_for_geometry,DELIVERY
+        from ..geometry.snapshots import canonical_hash
+        finishing_manifest={'schema_version':'1.0','delivery':DELIVERY,'physical_specification':finishing_approval_for_geometry(g),
+            'coordinate_system':'top-left-mm','cut_file':'cut.pdf','process_file':'process.pdf','fold_file':'fold.pdf',
+            'artwork_knockouts':True,'outer_bleed_preserved':True,'cubic_tolerance_mm':.01,
+            'tear_line_role':'reference_only_not_perforation','manufacturer_approval_inferred':False,
+            'pages':[{key:value for key,value in page.items() if key!='rectangles'} for page in paths]}
+        finishing_manifest['physical_specification_hash']=canonical_hash(finishing_manifest['physical_specification'])
+        (out/'finishing.json').write_text(json.dumps(finishing_manifest,ensure_ascii=False,indent=2),encoding='utf-8')
     (out/'preflight.json').write_text(json.dumps({"issues":checked["issues"],"verification":verified},ensure_ascii=False,indent=2),encoding='utf-8')
     manifest={"schema_version":"2.0","adapter":ADAPTER_ID,"kind":"print_engine_test" if test_mode else "production",
         "review_only":test_mode,"manufacturer_approval":False,"pdf_x_conformance":"not_claimed","profile":p,
@@ -169,5 +221,6 @@ def render_print_artifacts(project, output_dir, profile, icc, resolver=None, *, 
         "original_texts":[{"face_id":f["id"],"object_id":o["id"],"text":o["text"]} for f in scene["faces"] for o in f["objects"] if o["type"]=="text" and o["visible"] and o["print_enabled"]],
         "images":paint.records,"issues":checked["issues"],"verification":verified,
         "files":[{"name":file.name,"sha256":sha256(file.read_bytes()).hexdigest(),"bytes":file.stat().st_size} for file in sorted(out.iterdir())]}
+    if finishing_manifest is not None:manifest['finishing']=finishing_manifest
     (out/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
     return manifest

@@ -3,7 +3,6 @@ import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
-  Check,
   Download,
   FileText,
   LoaderCircle,
@@ -18,9 +17,11 @@ import {
   exportStatusLabel,
   isExportInProgress,
   exportApprovalNotice,
+  exportAvailabilityNotice,
 } from "@/lib/export-state";
 import { Dialog } from "@/components/management";
 import { PrinterIntake } from "@/components/printer-intake";
+import { ExportIntakeHistory, ExportIntakeSummary } from "@/components/export-intake-history";
 import { useSession } from "@/components/workspace";
 import { canEdit } from "@/lib/business";
 import type { Project } from "@editor/model";
@@ -45,6 +46,15 @@ function CurrentApproval({ job }: { job: ExportJob }) {
     </div>
   );
 }
+function CurrentAvailability({ job }: { job: ExportJob }) {
+  const notice = exportAvailabilityNotice(job);
+  if (!notice) return null;
+  return <div className="alert alert-error"><div>
+    <strong>{notice.title}</strong><p>{notice.message}</p>
+    {notice.creditRestored > 0 && <p>복원한 크레딧: {notice.creditRestored}</p>}
+    {notice.nextCheckAt && <p>다음 재확인 가능 시각: {new Date(notice.nextCheckAt).toLocaleString("ko-KR")} · 이후 상태를 새로고침하세요.</p>}
+  </div></div>;
+}
 export default function Exports({
   params,
 }: {
@@ -53,6 +63,7 @@ export default function Exports({
   const { id } = use(params);
   const session = useSession();
   const [intakeJob, setIntakeJob] = useState<string>();
+  const [intakeHistoryJob, setIntakeHistoryJob] = useState<string>();
   const [notice, setNotice] = useState("");
   const [project, setProject] = useState<Project>();
   const [jobs, setJobs] = useState<ExportJob[]>([]);
@@ -197,6 +208,10 @@ export default function Exports({
                   </p>
                 )}
                 <CurrentApproval job={job} />
+                <CurrentAvailability job={job} />
+                {(job.kind === "review_export" || job.kind === "production_export") && (
+                  <ExportIntakeSummary summary={job.current_intake} onOpen={() => setIntakeHistoryJob(job.id)} />
+                )}
               </div>
               {job.status === "succeeded" && !job.download_url ? (
                 <span>파일 다운로드를 사용할 수 없습니다.</span>
@@ -237,7 +252,7 @@ export default function Exports({
                   )}{" "}
                   파일 준비 다시 시도
                 </button>
-              ) : job.status === "failed" ? (
+              ) : ["failed", "unavailable"].includes(job.status) ? (
                 <Link
                   className="button button-light button-sm"
                   href={`/app/projects/${id}/editor`}
@@ -266,10 +281,14 @@ export default function Exports({
             onDone={() => {
               setIntakeJob(undefined);
               setNotice("입고 결과를 기록했습니다.");
+              setRetry((value) => value + 1);
             }}
           />
         </Dialog>
       )}
+      {intakeHistoryJob && <Dialog title="출력본의 입고 기록" onClose={() => setIntakeHistoryJob(undefined)}>
+        <ExportIntakeHistory key={intakeHistoryJob} jobId={intakeHistoryJob} />
+      </Dialog>}
     </main>
   );
 }

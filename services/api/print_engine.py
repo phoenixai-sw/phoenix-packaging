@@ -74,10 +74,11 @@ class TestJobDTO(ContractModel):
     format: str='print_engine_zip'
 
 
-def _builtin(layout='face_pages'):
+def _builtin(layout='face_pages',finishing=False):
     return {'id':BUILTIN_ID,'name':'합성 CMYK 엔진 시험 — 제조 프로필 아님','manufacturer':'Phoenix internal test',
             'status':'draft','is_demo':True,'test_only':True,'requirements':parse_print_profile({'icc_id':BUILTIN_ICC,
-            'icc_sha256':sha256(ICC_PATH.read_bytes()).hexdigest(),'layout':layout})}
+            'icc_sha256':sha256(ICC_PATH.read_bytes()).hexdigest(),'layout':layout,
+            **({'finishing_delivery':'separate_process_pdf_v1'} if finishing else {})})}
 
 
 def _profile(db,identity,*,test_mode):
@@ -92,9 +93,9 @@ def _profile(db,identity,*,test_mode):
             'test_only':row.status!='approved' or row.is_demo,'requirements':parse_print_profile(row.details['requirements'])}
 
 
-def freeze_print_output(db,profile_id,*,test_mode,layout=None):
+def freeze_print_output(db,profile_id,*,test_mode,layout=None,finishing=False):
     profile=_profile(db,profile_id,test_mode=test_mode)
-    if profile_id==BUILTIN_ID and layout:profile=_builtin(layout)
+    if profile_id==BUILTIN_ID and (layout or finishing):profile=_builtin(layout or 'face_pages',finishing=finishing)
     p=profile['requirements']
     if p['icc_id']==BUILTIN_ICC:
         if not test_mode:raise APIError(422,'TEST_ICC_PRODUCTION_FORBIDDEN','합성 시험 ICC는 제작에 사용할 수 없습니다.')
@@ -112,7 +113,7 @@ def freeze_print_output(db,profile_id,*,test_mode,layout=None):
 
 
 def resolve_print_icc(db,storage,frozen):
-    expected=freeze_print_output(db,frozen['profile_id'],test_mode=frozen['mode']=='test',layout=frozen['requirements']['layout'])
+    expected=freeze_print_output(db,frozen['profile_id'],test_mode=frozen['mode']=='test',layout=frozen['requirements']['layout'],finishing=frozen['requirements'].get('finishing_delivery')=='separate_process_pdf_v1')
     if canonical_hash(expected)!=canonical_hash(frozen):raise APIError(409,'PRINT_PROFILE_CHANGED','출력 프로필·ICC가 변경되거나 철회되었습니다.')
     info=frozen['icc']
     raw=ICC_PATH.read_bytes() if info['id']==BUILTIN_ICC else storage.get(db.get(Evidence,info['evidence_id']).storage_key)
@@ -126,7 +127,7 @@ def check_test_access(db,tenant_id,snapshot,*,lock=False):
     check_archive_access(db,actor,{**snapshot,'editable_assets':[]},creating=True,lock=lock)
     statement=select(RegistryVersion).where(RegistryVersion.id.in_([snapshot['print_output']['profile_id'],snapshot['print_output']['icc']['id']])).order_by(RegistryVersion.id).execution_options(populate_existing=True)
     list(db.scalars(statement.with_for_update() if lock else statement))
-    expected=freeze_print_output(db,snapshot['print_output']['profile_id'],test_mode=True,layout=snapshot['print_output']['requirements']['layout'])
+    expected=freeze_print_output(db,snapshot['print_output']['profile_id'],test_mode=True,layout=snapshot['print_output']['requirements']['layout'],finishing=snapshot['print_output']['requirements'].get('finishing_delivery')=='separate_process_pdf_v1')
     if canonical_hash(expected)!=canonical_hash(snapshot['print_output']):raise APIError(409,'PRINT_PROFILE_CHANGED','시험 출력 프로필·ICC가 변경되었습니다.')
     for face in snapshot['scene']['faces']:
         for obj in face['objects']:
@@ -203,7 +204,9 @@ def install_print_engine_routes(app,db_session,project_payload,snapshot_revision
         user,_=require_auth(request,db,mutate=True);project=owned_record(db,Project,body.project_id,user.tenant_id)
         enforce_edit_lease(db,project,request)
         if project.base_revision!=body.base_revision:raise APIError(409,'REVISION_CONFLICT','최신 디자인을 저장한 뒤 시험 출력해 주세요.')
-        frozen=freeze_print_output(db,body.profile_id,test_mode=True,layout='net' if project.template_id!='three-side-seal' else 'face_pages')
+        from .geometry.snapshots import project_geometry
+        geometry=project_geometry(project)
+        frozen=freeze_print_output(db,body.profile_id,test_mode=True,layout='net' if project.template_id!='three-side-seal' else 'face_pages',finishing=bool(geometry.get('holes') or geometry.get('pouch_features') is not None))
         resolve_print_icc(db,app.state.storage,frozen)
         operation=request.headers.get('idempotency-key') or 'print-test:'+canonical_hash({'project':project.id,'revision':body.base_revision,'print_output':frozen})
         if not 1<=len(operation)<=160:raise APIError(422,'IDEMPOTENCY_KEY_INVALID','요청 식별자를 확인해 주세요.')

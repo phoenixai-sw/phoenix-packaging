@@ -6,6 +6,50 @@ from .images import AIGenerationResult, ImageSettings
 from .printing import ReviewManifest, ProductionManifest, PrintEngineManifest
 
 
+class ExportAvailability(ContractModel):
+    status: Literal['unchecked', 'available', 'suspect', 'temporarily_unverified', 'unavailable', 'compensated', 'deleted']
+    reason: str | None
+    checked_at: str | None
+    next_check_at: str | None
+    confirmed_at: str | None
+    retry_allowed: bool
+    credit_restored: int
+    message: str
+
+
+class IntakeSourceSummary(ContractModel):
+    status: Literal['submitted', 'accepted', 'rejected'] | None
+    last_recorded_at: str | None
+    technical_rejected: bool
+    record_count: int
+
+
+class ExportCurrentIntake(ContractModel):
+    manufacturer: IntakeSourceSummary
+    test: IntakeSourceSummary
+    unclassified_count: int
+    total_count: int
+
+
+class PrinterIntakeHistoryItem(ContractModel):
+    id: str
+    status: Literal['submitted', 'accepted', 'rejected']
+    category: str
+    manufacturer: str
+    notes: str
+    created_at: str
+    record_source: Literal['manufacturer', 'test', 'legacy']
+    rejection_kind: Literal['technical', 'aesthetic'] | None
+    verification: Literal['self_reported', 'test_record', 'unclassified']
+    evidence_attached: bool
+
+
+class PrinterIntakeHistory(ContractModel):
+    items: list[PrinterIntakeHistoryItem]
+    next_cursor: str | None
+    total: int
+
+
 class JobBase(ContractModel):
     id: str
     project_id: str
@@ -18,6 +62,7 @@ class JobBase(ContractModel):
     credit_charged: int
     credit_returned: int
     cancelable: bool
+    availability: ExportAvailability | None = None
 
 
 class AIGenerationJob(JobBase):
@@ -45,6 +90,7 @@ class PrintEngineResult(ContractModel):
 class ReviewExportJob(JobBase):
     kind: Literal['review_export']
     result: ReviewExportResult | PrintEngineResult | None
+    current_intake: ExportCurrentIntake | None = None
 
 
 class ProductionExportResult(ContractModel):
@@ -76,6 +122,7 @@ class ProductionExportJob(JobBase):
     kind: Literal['production_export']
     result: ProductionExportResult | None
     current_approval: ExportCurrentApproval | None = None
+    current_intake: ExportCurrentIntake | None = None
 
 
 class EditableExportResult(ContractModel):

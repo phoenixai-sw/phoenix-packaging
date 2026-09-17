@@ -13,6 +13,7 @@ from sqlalchemy import select, exists, or_
 
 from ..database import new_id, utcnow
 from ..metrics import models as metric_models  # register transaction-linked payment events
+from ..service_orders.models import ServiceCheckout
 from ..errors import APIError
 from .models import BillingAccount, BillingOutbox, CreditBucket, Invoice, Payment, PaymentEvent, PaymentOrder, Subscription, WebhookEvent
 from .policy import SEOUL, add_months, aware, plan, pricing, prorate
@@ -218,7 +219,14 @@ def subscription_payload(subscription):
 
 
 def order_payload(order, account=None, settings=None):
-    return {"id": order.id, "order_id": order.order_id, "kind": order.kind, "plan_id": order.plan_id, "amount": order.amount, "currency": order.currency, "credits": order.credits, "status": order.status, "error": order.error, "pricing_version": order.pricing_version, "created_at": aware(order.created_at).isoformat(), "checkout_kind": "billing_auth" if order.kind == "subscription" else "payment", "customer_key": settings.decrypt(account.customer_key_encrypted) if account is not None and settings is not None else None, "expires_at": (aware(order.created_at) + timedelta(minutes=5 if order.kind == "upgrade" else 30)).isoformat()}
+    from sqlalchemy.orm import object_session
+    from ..service_orders.models import ServiceCheckout
+    from ..service_orders.catalog import CATALOG
+    session=object_session(order)
+    link=session.get(ServiceCheckout,order.id) if session else None
+    extra={"service_order_id":link.service_order_id,"service_quote_id":link.service_quote_id,
+           "service_code":link.snapshot['service_code'],"service_name":CATALOG[link.snapshot['service_code']]['name']} if link else {}
+    return {"id": order.id, "order_id": order.order_id, "kind": order.kind, "plan_id": order.plan_id, "amount": order.amount, "currency": order.currency, "credits": order.credits, "status": order.status, "error": order.error, "pricing_version": order.pricing_version, "created_at": aware(order.created_at).isoformat(), "checkout_kind": "billing_auth" if order.kind == "subscription" else "payment", "customer_key": settings.decrypt(account.customer_key_encrypted) if account is not None and settings is not None else None, "expires_at": (aware(order.created_at) + timedelta(minutes=5 if order.kind == "upgrade" else 30)).isoformat(),**extra}
 
 
 def entitlements(db, tenant_id, now=None):
@@ -239,7 +247,7 @@ def enforce_membership_entitlement(db, user, now=None):
         raise APIError(403, "TEAM_ACCESS_EXPIRED", "구독 기간 종료 후에는 소유자만 작업 공간에 접근할 수 있습니다.")
 
 
-def create_order(db, tenant_id, kind, operation_key, *, plan_id=None, credits=None, settings, now=None):
+def create_order(db, tenant_id, kind, operation_key, *, plan_id=None, credits=None, settings, now=None, agreed_pricing=None):
     now = now or utcnow()
     settings.validate()
     ensure_trial(db, tenant_id, now=now)
@@ -254,7 +262,7 @@ def create_order(db, tenant_id, kind, operation_key, *, plan_id=None, credits=No
     billing_account(db, tenant_id, settings)
     subscription = db.scalar(select(Subscription).where(Subscription.tenant_id == tenant_id))
     invoice = None
-    agreed_pricing = pricing(db)
+    agreed_pricing = agreed_pricing or pricing(db)
     if kind == "subscription":
         selected = plan(plan_id,snapshot=agreed_pricing)
         if subscription and subscription.paid_until and aware(subscription.paid_until) > aware(now):
@@ -330,6 +338,13 @@ def _apply_paid(db, order, result, settings, now):
             raise APIError(409, "PAYMENT_TIMESTAMP_INVALID", "PG 승인 시각을 확인할 수 없습니다.") from None
     payment = Payment(tenant_id=order.tenant_id, order_id=order.id, provider_payment_key=result["paymentKey"], provider=settings.provider, amount=order.amount, currency=order.currency, status="DONE", approved_at=approved_at, created_at=now)
     db.add(payment)
+    from ..service_orders.checkout import validate_service_charge
+    try:
+        validate_service_charge(db,order)
+    except APIError:
+        order.status,order.error='reconciliation_required','서비스가 변경된 뒤 승인이 확인되어 운영 확인이 필요합니다.'
+        db.add(BillingOutbox(tenant_id=order.tenant_id,event_key=f'late-service:{order.id}',kind='payment.reconciliation_required',payload={'order_id':order.order_id},created_at=now))
+        db.flush();return order
     if order.kind == "subscription" and (not subscription or aware(subscription.current_period_start) != aware(order.period_start)):
         order.status, order.error = "reconciliation_required", "이전 구독 주문의 승인이 확인되어 운영 확인이 필요합니다."
         db.add(BillingOutbox(tenant_id=order.tenant_id, event_key=f"late-subscription:{order.id}", kind="payment.reconciliation_required", payload={"order_id": order.order_id}, created_at=now))
@@ -340,7 +355,8 @@ def _apply_paid(db, order, result, settings, now):
         db.add(BillingOutbox(tenant_id=order.tenant_id, event_key=f"late-upgrade:{order.id}", kind="payment.reconciliation_required", payload={"order_id": order.order_id}, created_at=now))
         db.flush()
         return order
-    wallet.ever_paid = True
+    # Service fees grant no credit/production entitlement and never renew.
+    if order.kind!='service':wallet.ever_paid = True
     order.status, order.error = "paid", None
     if order.kind == "subscription":
         subscription.anchor_day = aware(approved_at).astimezone(SEOUL).day
@@ -368,7 +384,8 @@ def _apply_paid(db, order, result, settings, now):
         subscription.pricing_snapshot = order.pricing_snapshot or subscription.pricing_snapshot
         subscription.next_plan_id = None
     kind = "purchase" if order.kind == "topup" else "monthly"
-    grant_credits(db, order.tenant_id, order.credits, kind=kind, scope="paid", expires_at=order.credits_expires_at, grant_key="order:" + order.id, reason="추가 충전 결제" if kind == "purchase" else "구독 결제 크레딧", invoice_id=order.invoice_id, now=now)
+    if order.kind!='service':
+        grant_credits(db, order.tenant_id, order.credits, kind=kind, scope="paid", expires_at=order.credits_expires_at, grant_key="order:" + order.id, reason="추가 충전 결제" if kind == "purchase" else "구독 결제 크레딧", invoice_id=order.invoice_id, now=now)
     db.add(BillingOutbox(tenant_id=order.tenant_id, event_key=f"payment-paid:{order.id}", kind="payment.paid", payload={"order_id": order.order_id, "credits": order.credits}, created_at=now))
     db.flush()
     from ..metrics.service import record_payment_paid
@@ -381,6 +398,11 @@ def _provider_outcome(db, order, provider, settings, execute, now, expected_paym
         # Query first: a lost response or duplicate callback never starts a new charge.
         result = provider.query(order.order_id)
         if result is None or result.get("status") in {"READY", "IN_PROGRESS"}:
+            from ..service_orders.checkout import validate_service_charge
+            validate_service_charge(db,order)
+            if db.get(ServiceCheckout,order.id):
+                if order.status=='reconciliation_required':raise APIError(409,'PAYMENT_RECONCILIATION_REQUIRED','결과가 불명확한 주문은 상태 재조회로 먼저 확인해 주세요.')
+                if aware(order.created_at)+timedelta(minutes=30)<=aware(now):raise APIError(409,'SERVICE_CHECKOUT_EXPIRED','결제 주문이 만료되었습니다. 상태를 조회하고 담당자에게 문의해 주세요.')
             result = execute()
         validate_provider_payment(order, result, settings, expected_payment_key)
         return sync_verified_payment(db, order, result, settings=settings, source="approval", now=now)
@@ -444,6 +466,11 @@ def bind_and_charge(db, tenant_id, order_id, auth_key, customer_key, *, provider
         return order
     if previous and previous.get("status") not in {"READY", "IN_PROGRESS"}:
         return sync_verified_payment(db, order, previous, settings=settings, source="billing_auth_requery", now=now)
+    from ..service_orders.checkout import validate_service_charge
+    validate_service_charge(db,order)
+    if db.get(ServiceCheckout,order.id):
+        if order.status=='reconciliation_required':raise APIError(409,'PAYMENT_RECONCILIATION_REQUIRED','결과가 불명확한 주문은 상태 재조회로 먼저 확인해 주세요.')
+        if aware(order.created_at)+timedelta(minutes=30)<=aware(now):raise APIError(409,'SERVICE_CHECKOUT_EXPIRED','결제 주문이 만료되었습니다. 상태를 조회하고 담당자에게 문의해 주세요.')
     issued = {"billingKey": settings.decrypt(account.billing_key_encrypted), "customerKey": customer_key, "mId": settings.merchant_id if settings.provider != "mock" else "mock"} if account.billing_key_encrypted and order.status in {"failed", "reconciliation_required"} else provider.issue_billing(auth_key, customer_key)
     if issued.get("customerKey") != customer_key or (settings.provider != "mock" and issued.get("mId") != settings.merchant_id) or not isinstance(issued.get("billingKey"), str):
         raise APIError(409, "BILLING_KEY_MISMATCH", "결제 수단 등록 결과가 일치하지 않습니다.")
@@ -475,7 +502,19 @@ def change_plan(db, tenant_id, new_plan_id, operation_key, *, settings, now=None
         if previous.request_hash != digest:
             raise APIError(409, "IDEMPOTENCY_CONFLICT", "상향 변경 요청 식별자가 중복됩니다.")
         return {"change": "payment_required", "order": order_payload(previous, billing_account(db, tenant_id, settings), settings)}
-    amount, credits = prorate(old, selected, subscription.current_period_start, subscription.current_period_end, now)
+    proration_old=old
+    # A promotional first month credits the amount actually paid when upgrading.
+    # Do not rewrite its normal price snapshot: renewals and reversed upgrades
+    # must still restore the agreed regular Pro price.
+    introductory=db.scalar(select(PaymentOrder).join(ServiceCheckout,ServiceCheckout.payment_order_id==PaymentOrder.id).where(
+        PaymentOrder.tenant_id==tenant_id,PaymentOrder.subscription_id==subscription.id,
+        PaymentOrder.kind=='subscription',PaymentOrder.status=='paid',PaymentOrder.plan_id==subscription.plan_id,
+        PaymentOrder.period_start==subscription.current_period_start))
+    if introductory:
+        link=db.get(ServiceCheckout,introductory.id)
+        if link.snapshot['service_code']=='pilot_pro_first_month':
+            proration_old={**old,'monthly_inc_vat':introductory.amount}
+    amount, credits = prorate(proration_old, selected, subscription.current_period_start, subscription.current_period_end, now)
     if amount == 0:
         raise APIError(409, "PERIOD_RENEWING", "갱신 직전입니다. 새 결제 주기가 시작되면 요금제를 변경해 주세요.")
     order = PaymentOrder(tenant_id=tenant_id, order_id="pp_" + new_id().replace("-", ""), operation_key=operation_key, request_hash=digest, kind="upgrade", plan_id=new_plan_id, source_plan_id=subscription.plan_id, amount=amount, credits=credits, pricing_version=agreed_pricing["version"],pricing_snapshot=agreed_pricing,source_pricing_snapshot=agreed_pricing, subscription_id=subscription.id, period_start=subscription.current_period_start, period_end=subscription.current_period_end, credits_expires_at=subscription.current_period_end, created_at=now)
@@ -676,7 +715,12 @@ def refund_order(db, tenant_id, order_id, reason, *, provider, settings, now=Non
     if order.status != "paid":
         raise APIError(409, "PAID_ORDER_REQUIRED", "결제 완료 주문만 환불할 수 있습니다.")
     bucket = db.scalar(select(CreditBucket).where(CreditBucket.tenant_id == tenant_id, CreditBucket.grant_key == "order:" + order.id))
-    if bucket is None or bucket.reserved or bucket.consumed or bucket.expired or bucket.available != bucket.granted:
+    from ..service_orders.checkout import checkout_link
+    from ..service_orders.models import ServiceOrder
+    link=checkout_link(db,order.id)
+    if link and order.kind=='service' and db.get(ServiceOrder,link.service_order_id).status!='accepted':
+        raise APIError(409,'REFUND_REVIEW_REQUIRED','업무가 이미 진행·완료되어 환불 범위를 운영 담당자와 확인해 주세요.')
+    if order.kind!='service' and (bucket is None or bucket.reserved or bucket.consumed or bucket.expired or bucket.available != bucket.granted):
         raise APIError(409, "REFUND_REVIEW_REQUIRED", "사용·예약·만료 내역이 있어 환불 검토가 필요합니다. 잔액을 임의 삭제하지 않습니다.")
     if order.kind == "upgrade" and reversible_upgrade(db, order, now) is None:
         raise APIError(409, "REFUND_REVIEW_REQUIRED", "이후 요금제 변경이 있거나 이전 요금제를 안전하게 복구할 수 없어 환불 검토가 필요합니다.")

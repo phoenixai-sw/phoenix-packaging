@@ -159,12 +159,15 @@ def _export_icc_bundle(project,output_dir,conditions,resolver,recheck,icc_bytes,
             'confirmed_fields':project['scene'].get('confirmed_fields',[]),'reviewed_face_ids':conditions['reviewed_face_ids'],
             'approval_evidence':{'template':conditions['template']['approval'],'profile':conditions['profile']['approval']},
             'manufacturer_intake_status':'not_submitted'}
+        if manifest.get('finishing'):
+            ticket['finishing']={'delivery':manifest['finishing']['delivery'],'physical_specification_hash':manifest['finishing']['physical_specification_hash'],
+                'cut_file':'cut.pdf','process_file':'process.pdf','specification_file':'finishing.json','tear_line_role':'reference_only_not_perforation'}
         _json(staging/'job-ticket.json',ticket)
         # The ticket is explicitly an information document, separate from CMYK artwork.
         canvas=Canvas(str(staging/'job-ticket.pdf'),pagesize=(210*mm,297*mm),invariant=1);_font();canvas.setFont(FONT_ID,10)
         for index,line in enumerate(['Phoenix Packaging 제작 작업 정보',f"프로젝트: {ticket['project_id']}",f"리비전: {ticket['revision_id']}",
             f"출력: 일반 PDF / ICC CMYK / 글꼴 윤곽선 / {profile['layout']} / 도련 {profile['bleed_mm']:g}mm",
-            'production.pdf: 인쇄 아트 / cut.pdf: CUT / fold.pdf: FOLD',
+            'production.pdf: 인쇄 아트 / cut.pdf: CUT / fold.pdf: FOLD'+(' / process.pdf: 가공 안내' if manifest.get('finishing') else ''),
             'PDF/X · 별색 · 화이트판 · 오버프린트 · 제조사 최종 입고 승인은 포함하지 않습니다.',
             f"ICC SHA256: {ticket['icc_sha256']}"]):canvas.drawString(15*mm,(275-index*10)*mm,line)
         canvas.save();_json(staging/'preflight.json',{**preflight,'final_verification':manifest['verification']})

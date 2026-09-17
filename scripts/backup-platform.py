@@ -62,7 +62,7 @@ def backup(output,key_path):
     # repeatable READ ONLY transaction. Pre-migration backup works with GC off.
     run_id=begin_backup(sessions,"암호화 애플리케이션 백업과 독립 복원 검증") if can_pin else None
     try:
-        content=BytesIO();manifest={"created_at":datetime.now().isoformat(),"tables":{},"objects":{}}
+        content=BytesIO();manifest={"created_at":datetime.now().isoformat(),"tables":{},"objects":{},"known_unavailable_exports":[]}
         with engine.connect() as connection,connection.begin(),ZipFile(content,"w",ZIP_DEFLATED) as archive:
             if engine.dialect.name=="postgresql": connection.exec_driver_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             available=set(inspect(connection).get_table_names());meta=MetaData()
@@ -76,7 +76,14 @@ def backup(output,key_path):
                 for row in rows:
                     keys=[]
                     if table.name in {"assets","approval_evidence","font_assets"} and not (row.get("metadata_json") or {}).get("_retention"): keys.append(row["storage_key"])
-                    if table.name=="jobs" and row.get("result") and row["result"].get("storage_key") and not row["result"].get("_retention"): keys.append(row["result"]["storage_key"])
+                    if table.name=="jobs" and row.get("result") and row["result"].get("storage_key") and not row["result"].get("_retention"):
+                        integrity=row['result'].get('_integrity') or {}
+                        if integrity.get('state')=='unavailable':
+                            # Loss evidence, original receipt and snapshot remain
+                            # in tables/jobs.json. Never archive corrupt bytes as
+                            # a replacement for the declared original artifact.
+                            manifest['known_unavailable_exports'].append({'job_id':row['id'],'reason':integrity.get('reason'),'confirmed_at':integrity.get('confirmed_at')})
+                        else:keys.append(row["result"]["storage_key"])
                     for object_key in keys:
                         if object_key in manifest["objects"]: continue
                         data=storage.get(object_key);archive_name="objects/"+str(len(manifest["objects"]))
@@ -153,7 +160,7 @@ def verify(output,key_path,restore_dir=None):
             if list(connection.exec_driver_sql("PRAGMA foreign_key_check")): raise ValueError("Restored foreign key violation")
     finally:
         engine.dispose()
-    report={"verified":True,"tables":len(manifest["tables"]),"rows_restored":count,"objects_verified":objects,"restore_target":"isolated local SQLite and copied object storage" if restore_dir else "isolated SQLite in-memory, application-level logical recovery","postgres_physical_restore_tested":False}
+    report={"verified":True,"tables":len(manifest["tables"]),"rows_restored":count,"objects_verified":objects,"known_unavailable_exports":len(manifest.get('known_unavailable_exports',[])),"restore_target":"isolated local SQLite and copied object storage" if restore_dir else "isolated SQLite in-memory, application-level logical recovery","postgres_physical_restore_tested":False}
     if restore_dir: (restore_dir/"verification.json").write_text(json.dumps(report,indent=2),encoding="utf-8")
     return report
 

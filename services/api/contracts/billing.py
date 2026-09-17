@@ -92,6 +92,10 @@ class PaymentOrderData(ContractModel):
     customer_key: str | None
     expires_at: str
     payment: PaymentSnapshot | None = None
+    service_order_id: str | None = None
+    service_quote_id: str | None = None
+    service_code: str | None = None
+    service_name: str | None = None
 
 
 class Entitlements(ContractModel):

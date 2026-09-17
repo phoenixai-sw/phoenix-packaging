@@ -3,6 +3,7 @@ from typing import Literal
 from uuid import UUID
 from pydantic import Field
 from ..contracts.base import ContractModel
+from ..contracts.billing import PaymentOrderData,SubscriptionData
 
 ServiceCode=Literal['file_review','onboarding','pilot_pro_first_month']
 ServiceStatus=Literal['requested','quoted','accepted','in_progress','delivered','completed','canceled','rejected']
@@ -14,9 +15,9 @@ class ServiceCatalogItem(ContractModel):
     suggested_amount_krw:int
     price_note:str
     scope:str
-    automatic_renewal:Literal[False]=False
-    credit_grant:Literal[0]=0
-    checkout_enabled:Literal[False]=False
+    automatic_renewal:bool=False
+    credit_grant:int=0
+    checkout_enabled:bool=False
 
 
 class CatalogPayload(ContractModel):
@@ -66,6 +67,30 @@ class ServiceQuotePayload(ContractModel):
     policy_version:str
     reason:str
     created_at:datetime
+    checkout_terms:'CheckoutTerms | None'=None
+
+
+class CheckoutTerms(ContractModel):
+    terms_version:str
+    service_code:ServiceCode
+    amount_inc_vat:int
+    currency:Literal['KRW']
+    vat_included:Literal[True]
+    checkout_kind:Literal['payment','billing_auth']
+    automatic_renewal:bool
+    credits:int
+    seats:int|None
+    plan_id:Literal['pro']|None
+    renewal_amount_inc_vat:int|None
+    renewal_interval:Literal['month']|None
+    pricing_version:str
+    policy_version:str
+    proposal_only:Literal[True]
+    first_period_discount_inc_vat:int
+    upgrade_proration_basis:Literal['paid_first_period_amount']|None
+
+
+ServiceQuotePayload.model_rebuild()
 
 
 class ServiceEventPayload(ContractModel):
@@ -92,9 +117,18 @@ class ServiceOrderPayload(ContractModel):
     updated_at:datetime
     quotes:list[ServiceQuotePayload]
     events:list[ServiceEventPayload]
-    payment_status:Literal['not_collected']='not_collected'
-    credits_granted:Literal[0]=0
-    checkout_enabled:Literal[False]=False
+    payment_status:str='not_collected'
+    credits_granted:int=0
+    checkout_enabled:bool=False
+    checkout_blocked_reason:str|None=None
+    checkout_terms:CheckoutTerms|None=None
+    payment_order:PaymentOrderData|None=None
+    payment_retry_allowed:bool=False
+    payment_retry_blocked_reason:str|None=None
+    refund_allowed:bool=False
+    refund_blocked_reason:str|None=None
+    subscription_active:bool=False
+    subscription:SubscriptionData|None=None
     admin_notice:str|None=None
 
 

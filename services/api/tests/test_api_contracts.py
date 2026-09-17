@@ -93,6 +93,7 @@ def test_historical_scene_read_does_not_round_coordinates_or_add_missing_fields(
 def test_legacy_completed_review_manifest_omissions_survive_http_without_rewriting_file(client, app, before_basic_profile):
     """Pre-finishing production records omitted these fields, not explicit nulls."""
     from copy import deepcopy
+    from hashlib import sha256
     from services.api.models import Job
     register(client)
     item = project(client)
@@ -104,6 +105,7 @@ def test_legacy_completed_review_manifest_omissions_survive_http_without_rewriti
     with app.state.session_factory() as db:
         job = db.get(Job, identity)
         assert job.status == 'succeeded', job.error
+        completed_at = job.updated_at
         historical = deepcopy(job.result)
         absent = ['structure_ref','font_weights','review_structure']
         if before_basic_profile:
@@ -123,6 +125,13 @@ def test_legacy_completed_review_manifest_omissions_survive_http_without_rewriti
             value = value['items'][0]
         assert value['result']['manifest'] == historical['manifest']
         assert all(key not in value['result']['manifest'] for key in absent)
-    assert client.get('/v1/exports/'+identity+'/download').content == raw
+    downloaded = client.get('/v1/exports/'+identity+'/download')
+    assert downloaded.status_code == 200, downloaded.text
+    assert downloaded.content == raw
     with app.state.session_factory() as db:
-        assert db.get(Job, identity).result == historical
+        job = db.get(Job, identity)
+        assert {key:value for key,value in job.result.items() if key != '_integrity'} == historical
+        assert job.result['_integrity']['state'] == 'healthy'
+        assert job.result['_integrity']['signature'] == sha256(raw).hexdigest() == historical['manifest']['sha256']
+        assert job.status == 'succeeded' and job.updated_at == completed_at
+        assert app.state.storage.get(historical['storage_key']) == raw

@@ -72,7 +72,9 @@ def test_completed_output_uses_frozen_versions_current_public_revocation_and_pre
             assert other.get(f'/v1/projects/{setup.project_id}/exports').status_code == 404
     with setup.factory() as db:
         job = db.get(Job, job_id)
-        assert job.status == 'succeeded' and job.snapshot == frozen_snapshot and job.result == frozen_result
+        assert job.status == 'succeeded' and job.snapshot == frozen_snapshot
+        assert {k:v for k,v in job.result.items() if k!='_integrity'} == frozen_result
+        assert job.result['_integrity']['state']=='healthy'
 
 
 def test_batch_projection_has_two_queries_and_never_exposes_legacy_internal_reason(setup):

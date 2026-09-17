@@ -19,6 +19,7 @@ import { api, errorMessage } from "@/lib/api";
 import { RegistryConditionFields } from "@/components/registry-condition-fields";
 import { RegisteredStructureAdmin } from "@/components/registered-structure-admin";
 import { PrintEngineAdmin } from "@/components/print-engine-admin";
+import { FinishingApprovalPicker, type FinishingDraft } from "@/components/finishing-approval-picker";
 import {
   ProviderBudgetSummary,
   type ProviderBudget,
@@ -88,6 +89,7 @@ export default function Admin() {
   );
   const [family, setFamily] = useState("");
   const [kind, setKind] = useState("three-side-seal");
+  const [finishing, setFinishing] = useState<FinishingDraft>();
   const [demo, setDemo] = useState(true);
   const [evidence, setEvidence] = useState("");
   const [notes, setNotes] = useState("");
@@ -107,6 +109,7 @@ export default function Admin() {
     setNotes("");
     setPublicReason("");
     setEvidence("");
+    setFinishing(undefined);
   }
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -147,6 +150,7 @@ export default function Admin() {
               geometry_template_id: kind,
               billing_family_key: dialog === "version" ? family : null,
               approved_dimensions: JSON.parse(dimensions),
+              ...(dialog === "version" && finishing ? { approved_finishing: finishing.approved_finishing } : {}),
               source,
               license,
               material,
@@ -225,6 +229,10 @@ export default function Admin() {
             </div>
             <RegisteredStructureAdmin
               items={versions.data?.items || []}
+              onAction={(action, id) => {
+                const item = versions.data?.items.find(version => version.id === id);
+                if (item) open(action, item);
+              }}
               onRegistered={(message) => {
                 setNotice(message);
                 versions.refresh();
@@ -531,7 +539,7 @@ export default function Admin() {
                   포장 구조
                   <select
                     value={kind}
-                    onChange={(e) => setKind(e.target.value)}
+                    onChange={(e) => { setKind(e.target.value); setFinishing(undefined); }}
                   >
                     <option value="three-side-seal">3면 실링</option>
                     <option value="stand-up-pouch">스탠드형</option>
@@ -557,7 +565,7 @@ export default function Admin() {
                         <textarea
                           rows={3}
                           value={dimensions}
-                          onChange={(e) => setDimensions(e.target.value)}
+                          onChange={(e) => { setDimensions(e.target.value); setFinishing(undefined); }}
                           spellCheck={false}
                         />
                       </label>
@@ -604,10 +612,15 @@ export default function Admin() {
                   kind={kind}
                   dimensions={dimensions}
                   requirements={requirements}
-                  onDimensions={setDimensions}
+                  onDimensions={(value) => { setDimensions(value); setFinishing(undefined); }}
                   onRequirements={setRequirements}
                   showDimensions={dialog === "version"}
                 />
+                {dialog === "version" && kind !== "folding-box" && <FinishingApprovalPicker key={`${kind}:${dimensions}`} value={finishing} onClear={() => setFinishing(undefined)} onPick={(value) => {
+                  setKind(value.geometry_template_id);
+                  setDimensions(JSON.stringify(value.approved_dimensions));
+                  setFinishing(value);
+                }} />}
                 <details className="production-requirements">
                   <summary>고급 인쇄 조건 JSON</summary>
                   <label className="field">

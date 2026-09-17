@@ -4,6 +4,16 @@
       "AIGenerationJob": {
         "additionalProperties": false,
         "properties": {
+          "availability": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExportAvailability"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "cancelable": {
             "title": "Cancelable",
             "type": "boolean"
@@ -1963,6 +1973,150 @@
         "title": "ChangePlanBody",
         "type": "object"
       },
+      "CheckoutTerms": {
+        "additionalProperties": false,
+        "properties": {
+          "amount_inc_vat": {
+            "title": "Amount Inc Vat",
+            "type": "integer"
+          },
+          "automatic_renewal": {
+            "title": "Automatic Renewal",
+            "type": "boolean"
+          },
+          "checkout_kind": {
+            "enum": [
+              "payment",
+              "billing_auth"
+            ],
+            "title": "Checkout Kind",
+            "type": "string"
+          },
+          "credits": {
+            "title": "Credits",
+            "type": "integer"
+          },
+          "currency": {
+            "const": "KRW",
+            "title": "Currency",
+            "type": "string"
+          },
+          "first_period_discount_inc_vat": {
+            "title": "First Period Discount Inc Vat",
+            "type": "integer"
+          },
+          "plan_id": {
+            "anyOf": [
+              {
+                "const": "pro",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Id"
+          },
+          "policy_version": {
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "pricing_version": {
+            "title": "Pricing Version",
+            "type": "string"
+          },
+          "proposal_only": {
+            "const": true,
+            "title": "Proposal Only",
+            "type": "boolean"
+          },
+          "renewal_amount_inc_vat": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Renewal Amount Inc Vat"
+          },
+          "renewal_interval": {
+            "anyOf": [
+              {
+                "const": "month",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Renewal Interval"
+          },
+          "seats": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seats"
+          },
+          "service_code": {
+            "enum": [
+              "file_review",
+              "onboarding",
+              "pilot_pro_first_month"
+            ],
+            "title": "Service Code",
+            "type": "string"
+          },
+          "terms_version": {
+            "title": "Terms Version",
+            "type": "string"
+          },
+          "upgrade_proration_basis": {
+            "anyOf": [
+              {
+                "const": "paid_first_period_amount",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upgrade Proration Basis"
+          },
+          "vat_included": {
+            "const": true,
+            "title": "Vat Included",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "terms_version",
+          "service_code",
+          "amount_inc_vat",
+          "currency",
+          "vat_included",
+          "checkout_kind",
+          "automatic_renewal",
+          "credits",
+          "seats",
+          "plan_id",
+          "renewal_amount_inc_vat",
+          "renewal_interval",
+          "pricing_version",
+          "policy_version",
+          "proposal_only",
+          "first_period_discount_inc_vat",
+          "upgrade_proration_basis"
+        ],
+        "title": "CheckoutTerms",
+        "type": "object"
+      },
       "CircleHole": {
         "additionalProperties": false,
         "properties": {
@@ -3348,6 +3502,16 @@
       "EditableExportJob": {
         "additionalProperties": false,
         "properties": {
+          "availability": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExportAvailability"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "cancelable": {
             "title": "Cancelable",
             "type": "boolean"
@@ -4168,6 +4332,24 @@
         "title": "Envelope[EvidenceData]",
         "type": "object"
       },
+      "Envelope_FinishingApprovalDraft_": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/FinishingApprovalDraft"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[FinishingApprovalDraft]",
+        "type": "object"
+      },
       "Envelope_FontData_": {
         "additionalProperties": false,
         "properties": {
@@ -4742,6 +4924,24 @@
           "request_id"
         ],
         "title": "Envelope[PrinterIntakeData]",
+        "type": "object"
+      },
+      "Envelope_PrinterIntakeHistory_": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PrinterIntakeHistory"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "data",
+          "request_id"
+        ],
+        "title": "Envelope[PrinterIntakeHistory]",
         "type": "object"
       },
       "Envelope_ProductData_": {
@@ -5390,6 +5590,92 @@
         "title": "ExportApprovalVersion",
         "type": "object"
       },
+      "ExportAvailability": {
+        "additionalProperties": false,
+        "properties": {
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "confirmed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed At"
+          },
+          "credit_restored": {
+            "title": "Credit Restored",
+            "type": "integer"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "next_check_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Check At"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "retry_allowed": {
+            "title": "Retry Allowed",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "unchecked",
+              "available",
+              "suspect",
+              "temporarily_unverified",
+              "unavailable",
+              "compensated",
+              "deleted"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "reason",
+          "checked_at",
+          "next_check_at",
+          "confirmed_at",
+          "retry_allowed",
+          "credit_restored",
+          "message"
+        ],
+        "title": "ExportAvailability",
+        "type": "object"
+      },
       "ExportCurrentApproval": {
         "additionalProperties": false,
         "properties": {
@@ -5420,6 +5706,33 @@
           "versions"
         ],
         "title": "ExportCurrentApproval",
+        "type": "object"
+      },
+      "ExportCurrentIntake": {
+        "additionalProperties": false,
+        "properties": {
+          "manufacturer": {
+            "$ref": "#/components/schemas/IntakeSourceSummary"
+          },
+          "test": {
+            "$ref": "#/components/schemas/IntakeSourceSummary"
+          },
+          "total_count": {
+            "title": "Total Count",
+            "type": "integer"
+          },
+          "unclassified_count": {
+            "title": "Unclassified Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "manufacturer",
+          "test",
+          "unclassified_count",
+          "total_count"
+        ],
+        "title": "ExportCurrentIntake",
         "type": "object"
       },
       "ExportInput": {
@@ -5538,6 +5851,513 @@
         "title": "Face",
         "type": "object"
       },
+      "FinishingApproval": {
+        "additionalProperties": false,
+        "properties": {
+          "geometry_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Geometry Hash",
+            "type": "string"
+          },
+          "holes": {
+            "items": {
+              "$ref": "#/components/schemas/PhysicalHole"
+            },
+            "maxItems": 8,
+            "title": "Holes",
+            "type": "array"
+          },
+          "pouch_features": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pouch Features"
+          },
+          "schema_version": {
+            "const": "1.0",
+            "default": "1.0",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "geometry_hash"
+        ],
+        "title": "FinishingApproval",
+        "type": "object"
+      },
+      "FinishingApprovalDraft": {
+        "additionalProperties": false,
+        "properties": {
+          "approved_dimensions": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Approved Dimensions",
+            "type": "object"
+          },
+          "approved_finishing": {
+            "$ref": "#/components/schemas/FinishingApproval"
+          },
+          "base_revision": {
+            "title": "Base Revision",
+            "type": "integer"
+          },
+          "geometry_template_id": {
+            "title": "Geometry Template Id",
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "base_revision",
+          "geometry_template_id",
+          "approved_dimensions",
+          "approved_finishing"
+        ],
+        "title": "FinishingApprovalDraft",
+        "type": "object"
+      },
+      "FinishingDefinition": {
+        "additionalProperties": false,
+        "properties": {
+          "holes": {
+            "items": {
+              "$ref": "#/components/schemas/Hole"
+            },
+            "maxItems": 8,
+            "title": "Holes",
+            "type": "array"
+          },
+          "pouch_features": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PouchFeatures"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "FinishingDefinition",
+        "type": "object"
+      },
+      "FinishingHole": {
+        "additionalProperties": false,
+        "properties": {
+          "center_x_mm": {
+            "title": "Center X Mm",
+            "type": "number"
+          },
+          "center_y_mm": {
+            "title": "Center Y Mm",
+            "type": "number"
+          },
+          "diameter_mm": {
+            "title": "Diameter Mm",
+            "type": "number"
+          },
+          "face_id": {
+            "title": "Face Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "face_id",
+          "center_x_mm",
+          "center_y_mm",
+          "diameter_mm"
+        ],
+        "title": "FinishingHole",
+        "type": "object"
+      },
+      "FinishingManifest": {
+        "additionalProperties": false,
+        "properties": {
+          "artwork_knockouts": {
+            "const": true,
+            "title": "Artwork Knockouts",
+            "type": "boolean"
+          },
+          "coordinate_system": {
+            "const": "top-left-mm",
+            "title": "Coordinate System",
+            "type": "string"
+          },
+          "cubic_tolerance_mm": {
+            "title": "Cubic Tolerance Mm",
+            "type": "number"
+          },
+          "cut_file": {
+            "const": "cut.pdf",
+            "title": "Cut File",
+            "type": "string"
+          },
+          "delivery": {
+            "const": "separate_process_pdf_v1",
+            "title": "Delivery",
+            "type": "string"
+          },
+          "fold_file": {
+            "const": "fold.pdf",
+            "title": "Fold File",
+            "type": "string"
+          },
+          "manufacturer_approval_inferred": {
+            "const": false,
+            "title": "Manufacturer Approval Inferred",
+            "type": "boolean"
+          },
+          "outer_bleed_preserved": {
+            "const": true,
+            "title": "Outer Bleed Preserved",
+            "type": "boolean"
+          },
+          "pages": {
+            "items": {
+              "$ref": "#/components/schemas/FinishingPage"
+            },
+            "title": "Pages",
+            "type": "array"
+          },
+          "physical_specification": {
+            "$ref": "#/components/schemas/FinishingApproval"
+          },
+          "physical_specification_hash": {
+            "title": "Physical Specification Hash",
+            "type": "string"
+          },
+          "process_file": {
+            "const": "process.pdf",
+            "title": "Process File",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "1.0",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "tear_line_role": {
+            "const": "reference_only_not_perforation",
+            "title": "Tear Line Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "delivery",
+          "physical_specification",
+          "physical_specification_hash",
+          "coordinate_system",
+          "cut_file",
+          "process_file",
+          "fold_file",
+          "artwork_knockouts",
+          "outer_bleed_preserved",
+          "cubic_tolerance_mm",
+          "tear_line_role",
+          "manufacturer_approval_inferred",
+          "pages"
+        ],
+        "title": "FinishingManifest",
+        "type": "object"
+      },
+      "FinishingNotch": {
+        "additionalProperties": false,
+        "properties": {
+          "depth_mm": {
+            "title": "Depth Mm",
+            "type": "number"
+          },
+          "edge_endpoints_mm": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Edge Endpoints Mm",
+            "type": "array"
+          },
+          "face_id": {
+            "title": "Face Id",
+            "type": "string"
+          },
+          "height_mm": {
+            "title": "Height Mm",
+            "type": "number"
+          },
+          "shape": {
+            "enum": [
+              "round",
+              "v"
+            ],
+            "title": "Shape",
+            "type": "string"
+          },
+          "side": {
+            "enum": [
+              "left",
+              "right"
+            ],
+            "title": "Side",
+            "type": "string"
+          }
+        },
+        "required": [
+          "face_id",
+          "side",
+          "shape",
+          "depth_mm",
+          "height_mm",
+          "edge_endpoints_mm"
+        ],
+        "title": "FinishingNotch",
+        "type": "object"
+      },
+      "FinishingPage": {
+        "additionalProperties": false,
+        "properties": {
+          "cut": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Cut",
+            "type": "array"
+          },
+          "cut_curves": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Cut Curves",
+            "type": "array"
+          },
+          "face_id": {
+            "title": "Face Id",
+            "type": "string"
+          },
+          "fold": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Fold",
+            "type": "array"
+          },
+          "height_mm": {
+            "title": "Height Mm",
+            "type": "number"
+          },
+          "holes": {
+            "items": {
+              "$ref": "#/components/schemas/FinishingHole"
+            },
+            "title": "Holes",
+            "type": "array"
+          },
+          "notches": {
+            "items": {
+              "$ref": "#/components/schemas/FinishingNotch"
+            },
+            "title": "Notches",
+            "type": "array"
+          },
+          "process": {
+            "items": {
+              "$ref": "#/components/schemas/FinishingProcess"
+            },
+            "title": "Process",
+            "type": "array"
+          },
+          "width_mm": {
+            "title": "Width Mm",
+            "type": "number"
+          }
+        },
+        "required": [
+          "face_id",
+          "width_mm",
+          "height_mm",
+          "cut",
+          "fold",
+          "cut_curves",
+          "holes",
+          "notches",
+          "process"
+        ],
+        "title": "FinishingPage",
+        "type": "object"
+      },
+      "FinishingPathCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "cubic_count": {
+            "title": "Cubic Count",
+            "type": "integer"
+          },
+          "face_id": {
+            "title": "Face Id",
+            "type": "string"
+          },
+          "line_count": {
+            "title": "Line Count",
+            "type": "integer"
+          },
+          "passed": {
+            "const": true,
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "role": {
+            "enum": [
+              "cut",
+              "fold",
+              "process"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "tolerance_mm": {
+            "title": "Tolerance Mm",
+            "type": "number"
+          }
+        },
+        "required": [
+          "role",
+          "face_id",
+          "line_count",
+          "cubic_count",
+          "tolerance_mm",
+          "passed"
+        ],
+        "title": "FinishingPathCheck",
+        "type": "object"
+      },
+      "FinishingPreviewBody": {
+        "additionalProperties": false,
+        "properties": {
+          "base_revision": {
+            "minimum": 1.0,
+            "title": "Base Revision",
+            "type": "integer"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "base_revision"
+        ],
+        "title": "FinishingPreviewBody",
+        "type": "object"
+      },
+      "FinishingProcess": {
+        "additionalProperties": false,
+        "properties": {
+          "face_id": {
+            "title": "Face Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "header_reference",
+              "zipper_band",
+              "tear_reference",
+              "zipper_center",
+              "seal_region"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "line_mm": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line Mm"
+          },
+          "polygon_mm": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Polygon Mm"
+          }
+        },
+        "required": [
+          "face_id",
+          "kind"
+        ],
+        "title": "FinishingProcess",
+        "type": "object"
+      },
+      "FinishingVerification": {
+        "additionalProperties": false,
+        "properties": {
+          "cubic_tolerance_mm": {
+            "title": "Cubic Tolerance Mm",
+            "type": "number"
+          },
+          "cut_duplicate_check": {
+            "const": "passed",
+            "title": "Cut Duplicate Check",
+            "type": "string"
+          },
+          "path_checks": {
+            "items": {
+              "$ref": "#/components/schemas/FinishingPathCheck"
+            },
+            "title": "Path Checks",
+            "type": "array"
+          },
+          "physical_tooling_tested": {
+            "const": false,
+            "title": "Physical Tooling Tested",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path_checks",
+          "cut_duplicate_check",
+          "physical_tooling_tested",
+          "cubic_tolerance_mm"
+        ],
+        "title": "FinishingVerification",
+        "type": "object"
+      },
       "FixedDefinition": {
         "additionalProperties": false,
         "properties": {
@@ -5557,10 +6377,23 @@
             "type": "string"
           },
           "feature_policy": {
-            "const": "none",
             "default": "none",
+            "enum": [
+              "none",
+              "pouch-finishing-v1"
+            ],
             "title": "Feature Policy",
             "type": "string"
+          },
+          "finishing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FinishingDefinition"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "fold_lines": {
             "items": {
@@ -8196,6 +9029,54 @@
         "title": "IntakeMetrics",
         "type": "object"
       },
+      "IntakeSourceSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "last_recorded_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Recorded At"
+          },
+          "record_count": {
+            "title": "Record Count",
+            "type": "integer"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "submitted",
+                  "accepted",
+                  "rejected"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "technical_rejected": {
+            "title": "Technical Rejected",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "status",
+          "last_recorded_at",
+          "technical_rejected",
+          "record_count"
+        ],
+        "title": "IntakeSourceSummary",
+        "type": "object"
+      },
       "IntakeStatistic": {
         "additionalProperties": false,
         "properties": {
@@ -9240,7 +10121,8 @@
           "kind": {
             "enum": [
               "subscription",
-              "topup"
+              "topup",
+              "service"
             ],
             "title": "Kind",
             "type": "string"
@@ -9260,6 +10142,52 @@
               }
             ],
             "title": "Plan Id"
+          },
+          "recurring_consent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecurringConsent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "service_base_revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Base Revision"
+          },
+          "service_order_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Order Id"
+          },
+          "service_quote_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Quote Id"
           }
         },
         "required": [
@@ -9761,6 +10689,50 @@
             "title": "Pricing Version",
             "type": "string"
           },
+          "service_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Code"
+          },
+          "service_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Name"
+          },
+          "service_order_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Order Id"
+          },
+          "service_quote_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Quote Id"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -9861,6 +10833,36 @@
           "synced_at"
         ],
         "title": "PaymentSnapshot",
+        "type": "object"
+      },
+      "PhysicalHole": {
+        "additionalProperties": false,
+        "properties": {
+          "center_x_mm": {
+            "maximum": 600.0,
+            "minimum": 0.0,
+            "title": "Center X Mm",
+            "type": "number"
+          },
+          "center_y_mm": {
+            "maximum": 800.0,
+            "minimum": 0.0,
+            "title": "Center Y Mm",
+            "type": "number"
+          },
+          "diameter_mm": {
+            "maximum": 10.0,
+            "minimum": 4.0,
+            "title": "Diameter Mm",
+            "type": "number"
+          }
+        },
+        "required": [
+          "center_x_mm",
+          "center_y_mm",
+          "diameter_mm"
+        ],
+        "title": "PhysicalHole",
         "type": "object"
       },
       "PixelDimensions": {
@@ -10530,6 +11532,15 @@
             "title": "Cut Name",
             "type": "string"
           },
+          "finishing_delivery": {
+            "default": "none",
+            "enum": [
+              "none",
+              "separate_process_pdf_v1"
+            ],
+            "title": "Finishing Delivery",
+            "type": "string"
+          },
           "fold_name": {
             "const": "FOLD",
             "default": "FOLD",
@@ -10716,6 +11727,16 @@
             },
             "title": "Files",
             "type": "array"
+          },
+          "finishing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FinishingManifest"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "fonts": {
             "items": {
@@ -11141,7 +12162,8 @@
             "enum": [
               "artwork",
               "cut",
-              "fold"
+              "fold",
+              "process"
             ],
             "title": "Role",
             "type": "string"
@@ -11235,6 +12257,15 @@
             "const": "CUT",
             "default": "CUT",
             "title": "Cut Name",
+            "type": "string"
+          },
+          "finishing_delivery": {
+            "default": "none",
+            "enum": [
+              "none",
+              "separate_process_pdf_v1"
+            ],
+            "title": "Finishing Delivery",
             "type": "string"
           },
           "fold_name": {
@@ -11367,6 +12398,16 @@
             "title": "Barcodes",
             "type": "array"
           },
+          "finishing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FinishingVerification"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "manufacturer_approval": {
             "const": false,
             "title": "Manufacturer Approval",
@@ -11450,6 +12491,125 @@
           "verification"
         ],
         "title": "PrinterIntakeData",
+        "type": "object"
+      },
+      "PrinterIntakeHistory": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PrinterIntakeHistoryItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "total"
+        ],
+        "title": "PrinterIntakeHistory",
+        "type": "object"
+      },
+      "PrinterIntakeHistoryItem": {
+        "additionalProperties": false,
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "evidence_attached": {
+            "title": "Evidence Attached",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "manufacturer": {
+            "title": "Manufacturer",
+            "type": "string"
+          },
+          "notes": {
+            "title": "Notes",
+            "type": "string"
+          },
+          "record_source": {
+            "enum": [
+              "manufacturer",
+              "test",
+              "legacy"
+            ],
+            "title": "Record Source",
+            "type": "string"
+          },
+          "rejection_kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "technical",
+                  "aesthetic"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejection Kind"
+          },
+          "status": {
+            "enum": [
+              "submitted",
+              "accepted",
+              "rejected"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "verification": {
+            "enum": [
+              "self_reported",
+              "test_record",
+              "unclassified"
+            ],
+            "title": "Verification",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "category",
+          "manufacturer",
+          "notes",
+          "created_at",
+          "record_source",
+          "rejection_kind",
+          "verification",
+          "evidence_attached"
+        ],
+        "title": "PrinterIntakeHistoryItem",
         "type": "object"
       },
       "ProductBody": {
@@ -11541,6 +12701,16 @@
       "ProductionExportJob": {
         "additionalProperties": false,
         "properties": {
+          "availability": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExportAvailability"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "cancelable": {
             "title": "Cancelable",
             "type": "boolean"
@@ -11565,6 +12735,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/ExportCurrentApproval"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current_intake": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExportCurrentIntake"
               },
               {
                 "type": "null"
@@ -13097,6 +14277,53 @@
         "title": "ReadinessItem",
         "type": "object"
       },
+      "RecurringConsent": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_renewal": {
+            "const": true,
+            "title": "Automatic Renewal",
+            "type": "boolean"
+          },
+          "currency": {
+            "const": "KRW",
+            "title": "Currency",
+            "type": "string"
+          },
+          "first_amount_inc_vat": {
+            "exclusiveMinimum": 0.0,
+            "title": "First Amount Inc Vat",
+            "type": "integer"
+          },
+          "plan_id": {
+            "const": "pro",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "renewal_amount_inc_vat": {
+            "exclusiveMinimum": 0.0,
+            "title": "Renewal Amount Inc Vat",
+            "type": "integer"
+          },
+          "terms_version": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]+$",
+            "title": "Terms Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "terms_version",
+          "first_amount_inc_vat",
+          "renewal_amount_inc_vat",
+          "currency",
+          "automatic_renewal",
+          "plan_id"
+        ],
+        "title": "RecurringConsent",
+        "type": "object"
+      },
       "RefundBody": {
         "additionalProperties": false,
         "properties": {
@@ -13404,6 +14631,17 @@
             "title": "Evidence Sha256",
             "type": "string"
           },
+          "finishing_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finishing Hash"
+          },
           "license": {
             "title": "License",
             "type": "string"
@@ -13471,6 +14709,16 @@
             },
             "title": "Approved Dimensions",
             "type": "object"
+          },
+          "approved_finishing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FinishingApproval"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "billing_family_key": {
             "anyOf": [
@@ -14144,6 +15392,16 @@
       "ReviewExportJob": {
         "additionalProperties": false,
         "properties": {
+          "availability": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExportAvailability"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "cancelable": {
             "title": "Cancelable",
             "type": "boolean"
@@ -14163,6 +15421,16 @@
           "credit_returned": {
             "title": "Credit Returned",
             "type": "integer"
+          },
+          "current_intake": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExportCurrentIntake"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "download_url": {
             "anyOf": [
@@ -15500,10 +16768,23 @@
             "type": "string"
           },
           "feature_policy": {
-            "const": "none",
             "default": "none",
+            "enum": [
+              "none",
+              "pouch-finishing-v1"
+            ],
             "title": "Feature Policy",
             "type": "string"
+          },
+          "finishing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FinishingDefinition"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "height_range_mm": {
             "$ref": "#/components/schemas/Range"
@@ -15567,13 +16848,11 @@
         "additionalProperties": false,
         "properties": {
           "automatic_renewal": {
-            "const": false,
             "default": false,
             "title": "Automatic Renewal",
             "type": "boolean"
           },
           "checkout_enabled": {
-            "const": false,
             "default": false,
             "title": "Checkout Enabled",
             "type": "boolean"
@@ -15588,7 +16867,6 @@
             "type": "string"
           },
           "credit_grant": {
-            "const": 0,
             "default": 0,
             "title": "Credit Grant",
             "type": "integer"
@@ -15749,11 +17027,31 @@
           "catalog_snapshot": {
             "$ref": "#/components/schemas/ServiceCatalogItem"
           },
+          "checkout_blocked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkout Blocked Reason"
+          },
           "checkout_enabled": {
-            "const": false,
             "default": false,
             "title": "Checkout Enabled",
             "type": "boolean"
+          },
+          "checkout_terms": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CheckoutTerms"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "created_at": {
             "format": "date-time",
@@ -15761,7 +17059,6 @@
             "type": "string"
           },
           "credits_granted": {
-            "const": 0,
             "default": 0,
             "title": "Credits Granted",
             "type": "integer"
@@ -15788,8 +17085,33 @@
             "title": "Id",
             "type": "string"
           },
+          "payment_order": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PaymentOrderData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "payment_retry_allowed": {
+            "default": false,
+            "title": "Payment Retry Allowed",
+            "type": "boolean"
+          },
+          "payment_retry_blocked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Retry Blocked Reason"
+          },
           "payment_status": {
-            "const": "not_collected",
             "default": "not_collected",
             "title": "Payment Status",
             "type": "string"
@@ -15811,6 +17133,22 @@
             },
             "title": "Quotes",
             "type": "array"
+          },
+          "refund_allowed": {
+            "default": false,
+            "title": "Refund Allowed",
+            "type": "boolean"
+          },
+          "refund_blocked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refund Blocked Reason"
           },
           "request_note": {
             "title": "Request Note",
@@ -15843,6 +17181,21 @@
             "title": "Status",
             "type": "string"
           },
+          "subscription": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubscriptionData"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subscription_active": {
+            "default": false,
+            "title": "Subscription Active",
+            "type": "boolean"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -15874,6 +17227,16 @@
           "amount_inc_vat": {
             "title": "Amount Inc Vat",
             "type": "integer"
+          },
+          "checkout_terms": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CheckoutTerms"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "created_at": {
             "format": "date-time",
@@ -16942,6 +18305,30 @@
       "StructureValidation": {
         "additionalProperties": false,
         "properties": {
+          "approved_dimensions": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved Dimensions"
+          },
+          "approved_finishing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FinishingApproval"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "definition_hash": {
             "title": "Definition Hash",
             "type": "string"
@@ -18176,6 +19563,16 @@
             "additionalProperties": true,
             "title": "Approved Dimensions",
             "type": "object"
+          },
+          "approved_finishing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FinishingApproval"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "billing_family_key": {
             "anyOf": [
@@ -23868,6 +25265,157 @@
         "summary": "Revoke Support",
         "tags": [
           "retention"
+        ]
+      }
+    },
+    "/v1/admin/template-finishing/preview": {
+      "post": {
+        "operationId": "finishing_preview_v1_admin_template_finishing_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FinishingPreviewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_FinishingApprovalDraft_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Access denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Resource unavailable"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Revision or idempotency conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Retired operation or unavailable asset"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Request too large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Input or semantic validation failed"
+          },
+          "423": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Editor lease required"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Rate or quota limit"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Internal error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Service unavailable"
+          }
+        },
+        "summary": "Finishing Preview",
+        "tags": [
+          "registry"
         ]
       }
     },
@@ -31985,6 +33533,185 @@
           }
         },
         "summary": "Get Job"
+      }
+    },
+    "/v1/jobs/{job_id}/printer-intakes": {
+      "get": {
+        "operationId": "export_intake_history_v1_jobs__job_id__printer_intakes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 36,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Before"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_PrinterIntakeHistory_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Malformed request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Access denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Resource unavailable"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Revision or idempotency conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Retired operation or unavailable asset"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Request too large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Input or semantic validation failed"
+          },
+          "423": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Editor lease required"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Rate or quota limit"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Internal error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorBody"
+                }
+              }
+            },
+            "description": "Service unavailable"
+          }
+        },
+        "summary": "Export Intake History"
       }
     },
     "/v1/jobs/{job_id}/retry": {

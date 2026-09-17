@@ -44,6 +44,11 @@ def process_all_jobs(sessions,storage,settings):
     except Exception as exc:
         logging.getLogger("phoenix.worker").error("asset_integrity_check_failed error_type=%s",type(exc).__name__)
         counts["assets_checked"]="retry_pending"
+    from .export_reconciliation import reconcile_exports
+    try:counts['exports_checked']=reconcile_exports(sessions,storage)
+    except Exception as exc:
+        logging.getLogger('phoenix.worker').error('export_integrity_check_failed error_type=%s',type(exc).__name__)
+        counts['exports_checked']='retry_pending'
     from .retention.service import refresh_notices
     from .retention.storage_lifecycle import process_known_orphans
     from .retention.deletion import process_deletion_requests
