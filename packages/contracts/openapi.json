@@ -3418,7 +3418,10 @@
             "enum": [
               "forest",
               "citrus",
-              "berry"
+              "berry",
+              "duck",
+              "nut",
+              "ocean"
             ],
             "title": "Palette",
             "type": "string"

@@ -3403,7 +3403,7 @@ export interface components {
              * @default forest
              * @enum {string}
              */
-            palette: "forest" | "citrus" | "berry";
+            palette: "forest" | "citrus" | "berry" | "duck" | "nut" | "ocean";
         };
         /** DemoTemplate */
         DemoTemplate: {
