@@ -227,8 +227,8 @@ export default function Auth() {
       <section className="auth-visual auth-visual-photographic">
         <img
           className="auth-background-image"
-          src={packagingMedia.matcha}
-          alt="차분한 그린 컬러의 말차 패키지 디자인 콘셉트"
+          src={packagingMedia.duck}
+          alt="따뜻한 오렌지와 오리 캐릭터의 오리 저키 파우치 디자인 콘셉트"
           width={1024}
           height={1024}
           decoding="async"

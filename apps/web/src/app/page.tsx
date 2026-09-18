@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { SiteHeader, SiteFooter } from "@/components/brand";
 import { BrandFilm } from "@/components/brand-film";
-import { packagingMedia } from "@/lib/media";
+import { packagingMedia, designConcepts } from "@/lib/media";
 
 export default function Home() {
   return (
@@ -52,7 +52,7 @@ export default function Home() {
           <figure className="editorial-hero-art">
             <img
               src={packagingMedia.hero}
-              alt="크림, 포레스트 그린, 코럴 컬러의 식품 패키지를 자연광 아래 배치한 디자인 콘셉트"
+              alt="오리 저키·제주 감귤·베리 그래놀라·말차 파우치를 햇살 아래 배치한 밝은 식품 패키지 디자인 콘셉트"
               width={1536}
               height={1024}
               fetchPriority="high"
@@ -111,61 +111,38 @@ export default function Home() {
             </p>
           </div>
           <div className="concept-grid">
-            <Link className="concept-card" href="/app/projects/new">
-              <div className="concept-image concept-image-matcha">
-                <img
-                  src={packagingMedia.matcha}
-                  alt="차분한 포레스트 그린과 아이보리로 표현한 프리미엄 말차 패키지 디자인 콘셉트"
-                  width={1024}
-                  height={1024}
-                  loading="lazy"
-                  decoding="async"
-                />
-                <span className="concept-label">디자인 콘셉트</span>
-                <span className="concept-open" aria-hidden="true">
-                  <ArrowUpRight size={22} />
-                </span>
-              </div>
-              <div className="concept-card-caption">
-                <div>
-                  <span>01 / TEA & WELLNESS</span>
-                  <h3>일상의 속도를 낮추는, 말차.</h3>
-                  <p>깊은 그린 · 섬세한 질감 · 차분한 여백</p>
+            {designConcepts.map((concept, index) => (
+              <Link
+                key={concept.key}
+                className={`concept-card ${index % 2 === 1 ? "concept-card-offset" : ""}`}
+                href="/app/projects/new"
+              >
+                <div className={`concept-image concept-image-${concept.key}`}>
+                  <img
+                    src={concept.image}
+                    alt={concept.alt}
+                    width={1024}
+                    height={1024}
+                    loading="lazy"
+                    decoding="async"
+                  />
+                  <span className="concept-label">디자인 콘셉트</span>
+                  <span className="concept-open" aria-hidden="true">
+                    <ArrowUpRight size={22} />
+                  </span>
                 </div>
-                <span className="concept-link">
-                  새 프로젝트로 시작 <ArrowUpRight size={15} />
-                </span>
-              </div>
-            </Link>
-            <Link
-              className="concept-card concept-card-offset"
-              href="/app/projects/new"
-            >
-              <div className="concept-image concept-image-granola">
-                <img
-                  src={packagingMedia.granola}
-                  alt="따뜻한 테라코타와 크림 컬러로 표현한 그래놀라 패키지 디자인 콘셉트"
-                  width={1024}
-                  height={1024}
-                  loading="lazy"
-                  decoding="async"
-                />
-                <span className="concept-label">디자인 콘셉트</span>
-                <span className="concept-open" aria-hidden="true">
-                  <ArrowUpRight size={22} />
-                </span>
-              </div>
-              <div className="concept-card-caption">
-                <div>
-                  <span>02 / DAILY GOODNESS</span>
-                  <h3>좋은 아침을 담은, 그래놀라.</h3>
-                  <p>따뜻한 테라코타 · 자연스러운 빛 · 기분 좋은 시작</p>
+                <div className="concept-card-caption">
+                  <div>
+                    <span>{concept.index}</span>
+                    <h3>{concept.title}</h3>
+                    <p>{concept.note}</p>
+                  </div>
+                  <span className="concept-link">
+                    새 프로젝트로 시작 <ArrowUpRight size={15} />
+                  </span>
                 </div>
-                <span className="concept-link">
-                  새 프로젝트로 시작 <ArrowUpRight size={15} />
-                </span>
-              </div>
-            </Link>
+              </Link>
+            ))}
           </div>
           <p className="concept-disclosure">
             AI로 제작한 디자인 콘셉트입니다. 새 프로젝트에서 포장 규격과 문구를

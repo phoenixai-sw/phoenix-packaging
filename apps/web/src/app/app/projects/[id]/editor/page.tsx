@@ -716,7 +716,7 @@ export default function EditorPage({
     });
     setSelected(object.id);
   }
-  async function demoBackground(palette: "forest" | "citrus" | "berry") {
+  async function demoBackground(palette: "forest" | "citrus" | "berry" | "duck" | "nut" | "ocean") {
     if (!current.current || readOnly) return;
     const targetFaceId = faceId;
     setUploading(true);
@@ -1997,9 +1997,12 @@ export default function EditorPage({
                     <div>
                       {(
                         [
-                          ["forest", "그린"],
-                          ["citrus", "시트러스"],
+                          ["forest", "말차 그린"],
+                          ["citrus", "제주 감귤"],
                           ["berry", "베리"],
+                          ["duck", "오리 캐릭터"],
+                          ["nut", "견과 크라프트"],
+                          ["ocean", "바다"],
                         ] as const
                       ).map(([palette, label]) => (
                         <button
@@ -2012,7 +2015,7 @@ export default function EditorPage({
                         </button>
                       ))}
                     </div>
-                    <p>자체 제작 예시 · 실제 AI 생성 아님</p>
+                    <p>미리 생성한 AI 예시 배경 · 크레딧 차감 없음</p>
                   </div>
                   <div className="editor-spec">
                     <span>

@@ -227,4 +227,4 @@ class ExportInput(StrictModel):
 
 
 class DemoBackgroundInput(StrictModel):
-    palette: Literal["forest", "citrus", "berry"] = "forest"
+    palette: Literal["forest", "citrus", "berry", "duck", "nut", "ocean"] = "forest"
