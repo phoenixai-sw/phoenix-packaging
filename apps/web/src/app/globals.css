@@ -1794,6 +1794,11 @@ input[type="checkbox"] {
   border-color: #f2c9bd;
   color: #a4412d;
 }
+.alert-warning {
+  background: #fdf3e6;
+  border-color: #f2d6b3;
+  color: #9a4a08;
+}
 .alert-info {
   background: #f4f5eb;
   border-color: #e2e6d3;
@@ -2573,7 +2578,7 @@ input[type="checkbox"] {
 }
 .pricing-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 20px;
 }
 .pricing-card {
@@ -3470,6 +3475,9 @@ input[type="checkbox"] {
   }
 }
 @media (max-width: 1200px) {
+  .pricing-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
   .section-wrap {
     width: calc(100% - 64px);
   }
@@ -6422,6 +6430,14 @@ input[type="checkbox"] {
 .image-region-selector > img { display:block; width:100%; height:auto; max-height:none; pointer-events:none; user-select:none; }
 .image-region-box { position:absolute; border:2px solid #ee5a3c; background:#ee5a3c24; pointer-events:none; box-shadow:0 0 0 1px #fff8; }
 .region-fields { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
+.editor-activity .low-balance { margin-left:8px; font-style:normal; color:#b4530a; font-weight:600; }
+.image-text-hit { position:absolute; margin:0; padding:0; border:1.5px dashed #2f6fed; background:#2f6fed14; cursor:pointer; border-radius:2px; }
+.image-text-hit:hover, .image-text-hit.selected { background:#2f6fed33; border-style:solid; }
+.image-text-hit:disabled { cursor:default; opacity:.5; }
+.image-text-lines { list-style:none; margin:8px 0 0; padding:0; display:grid; gap:4px; max-height:180px; overflow:auto; }
+.image-text-lines li { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:4px 8px; border:1px solid #e0ded4; border-radius:8px; background:#fbfaf6; }
+.image-text-lines .text-link { text-align:left; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.image-text-lines .text-link.selected { font-weight:700; color:#2f6fed; }
 .region-fields input { width:100%; }
 .image-compare { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
 .image-compare figure { margin:0; min-width:0; background:#f3f1eb; border:1px solid #e0ded4; border-radius:12px; overflow:hidden; }

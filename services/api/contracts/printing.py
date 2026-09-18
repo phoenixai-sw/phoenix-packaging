@@ -259,7 +259,7 @@ class ImageTransform(ContractModel):
 
 
 class PrintPageCheck(ContractModel):
-    role: Literal['artwork','cut','fold','process']
+    role: Literal['artwork','cut','fold','process','combined']
     page: int
     boxes_mm: dict[str,list[float]]
     tolerance_mm: float
@@ -335,12 +335,30 @@ class FinishingManifest(ContractModel):
     pages: list[FinishingPage]
 
 
+class CombinedFileCheck(ContractModel):
+    file: Literal['artwork-with-dieline.pdf']
+    layers: list[str]
+    spot_colors: list[str]
+    segments_matched: int
+    tolerance_mm: float
+    authoritative: Literal[False]
+
+
 class PrintVerification(ContractModel):
     page_checks: list[PrintPageCheck]
     barcodes: list[BarcodeCheck]
     pdf_x: Literal['not_claimed']
     manufacturer_approval: Literal[False]
     finishing: FinishingVerification | None = None
+    combined_file: CombinedFileCheck | None = None
+
+
+class CombinedFileInfo(ContractModel):
+    name: Literal['artwork-with-dieline.pdf']
+    layers: list[str]
+    dieline_spot_colors: dict[str,str]
+    authoritative: Literal[False]
+    note: str
 
 
 class PrintEngineVersion(ContractModel):
@@ -350,11 +368,12 @@ class PrintEngineVersion(ContractModel):
 class PrintEngineManifest(ContractModel):
     schema_version: Literal['2.0']
     adapter: Literal['icc-cmyk-outline-v1']
-    kind: Literal['print_engine_test','production']
+    kind: Literal['print_engine_test','print_request','production']
     review_only: bool
     manufacturer_approval: Literal[False]
     pdf_x_conformance: Literal['not_claimed']
     profile: PrintProfile
+    combined_file: CombinedFileInfo | None = None
     geometry_hash: str
     structure_ref: StructureRef | None
     icc: ICCInfo
@@ -377,7 +396,7 @@ class PrintEngineManifest(ContractModel):
 
 
 class PrintEngineResult(ContractModel):
-    format: Literal['print_engine_zip']
+    format: Literal['print_engine_zip','print_request_zip']
     media_type: Literal['application/zip']
     filename: str
     sha256: str

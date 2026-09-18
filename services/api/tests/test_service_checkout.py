@@ -97,7 +97,7 @@ def test_owner_tenant_csrf_and_caller_price_injection(service):
 
 def test_pilot_explicit_consent_frozen_price_renewal_and_existing_subscription_block(service):
     app,client,auth=service;row=accepted(client,'pilot_pro_first_month',99000)
-    terms=row['checkout_terms'];assert (terms['amount_inc_vat'],terms['renewal_amount_inc_vat'],terms['credits'],terms['seats'])==(99000,108900,1500,3)
+    terms=row['checkout_terms'];assert (terms['amount_inc_vat'],terms['renewal_amount_inc_vat'],terms['credits'],terms['seats'])==(99000,550000,1500,3)
     assert client.post('/v1/billing/orders',json=request_body(row,False),headers={'Idempotency-Key':'no-consent'}).json()['code']=='RECURRING_CONSENT_REQUIRED'
     bad=request_body(row);bad['recurring_consent']['renewal_amount_inc_vat']=99000
     assert client.post('/v1/billing/orders',json=bad,headers={'Idempotency-Key':'wrong-consent'}).json()['code']=='RECURRING_CONSENT_REQUIRED'
@@ -105,7 +105,7 @@ def test_pilot_explicit_consent_frozen_price_renewal_and_existing_subscription_b
     pay(client,order)
     with app.state.session_factory() as db:
         sub=db.scalar(select(Subscription));due=aware(sub.current_period_end)
-        assert sub.plan_id=='pro' and sub.pricing_snapshot['plans'][1]['monthly_inc_vat']==108900
+        assert sub.plan_id=='pro' and sub.pricing_snapshot['plans'][1]['monthly_inc_vat']==550000
         assert entitlements(db,auth['tenant']['id'])['seats']==3
         assert db.scalar(select(CreditBucket).where(CreditBucket.kind=='monthly')).granted==1500
     provider=MockProvider()
@@ -113,7 +113,7 @@ def test_pilot_explicit_consent_frozen_price_renewal_and_existing_subscription_b
     process_due_invoices(app.state.session_factory,provider=provider,settings=app.state.billing_settings,now=due+timedelta(seconds=2))
     with app.state.session_factory() as db:
         renewal=db.scalar(select(PaymentOrder).where(PaymentOrder.kind=='renewal'))
-        assert renewal.amount==108900 and renewal.credits==1500 and renewal.status=='paid'
+        assert renewal.amount==550000 and renewal.credits==1500 and renewal.status=='paid'
         assert db.scalar(select(func.count()).select_from(Invoice))==2
     second=accepted(client,'pilot_pro_first_month',99000)
     assert client.post('/v1/billing/orders',json=request_body(second),headers={'Idempotency-Key':'second-pilot'}).json()['code']=='PILOT_NEW_SUBSCRIBER_REQUIRED'
@@ -242,15 +242,15 @@ def test_revoked_request_after_external_charge_records_money_without_fulfillment
 
 def test_pilot_upgrade_prorates_actual_first_payment_without_discounting_future_renewal(service):
     app,client,auth=service;row=accepted(client,'pilot_pro_first_month',99000);order=payment(client,row);pay(client,order)
-    assert row['checkout_terms']['first_period_discount_inc_vat']==9900
+    assert row['checkout_terms']['first_period_discount_inc_vat']==550000-99000
     assert row['checkout_terms']['upgrade_proration_basis']=='paid_first_period_amount'
     with app.state.session_factory.begin() as db:
         sub=db.scalar(select(Subscription))
         changed=change_plan(db,auth['tenant']['id'],'partner','first-month-upgrade',settings=app.state.billing_settings,now=aware(sub.current_period_start))
-        assert changed['order']['amount']==273900-99000
+        assert changed['order']['amount']==990000-99000
         upgrade=db.get(PaymentOrder,changed['order']['id'])
-        assert upgrade.source_pricing_snapshot['plans'][1]['monthly_inc_vat']==108900
-        assert sub.pricing_snapshot['plans'][1]['monthly_inc_vat']==108900
+        assert upgrade.source_pricing_snapshot['plans'][1]['monthly_inc_vat']==550000
+        assert sub.pricing_snapshot['plans'][1]['monthly_inc_vat']==550000
 
 
 @pytest.mark.parametrize('field,value',[('automatic_renewal',1),('automatic_renewal','true'),('automatic_renewal',False),('first_amount_inc_vat',True),('renewal_amount_inc_vat','108900'),('currency','USD')])

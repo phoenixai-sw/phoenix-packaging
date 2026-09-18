@@ -74,7 +74,8 @@ def _check_export(raw,kind,*,result=None,snapshot=None,project_id=None,revision_
     """
     result=result or {};snapshot=snapshot or {}
     require(0<len(raw)<=256*1024*1024,"Recovered export exceeds supported size")
-    engine_test=result.get("format")=="print_engine_zip"
+    engine_test=result.get("format") in ("print_engine_zip","print_request_zip")
+    print_request=result.get("format")=="print_request_zip"
     if kind=="review_export" and not engine_test:
         require(len(PdfReader(BytesIO(raw)).pages)>0,"Recovered review PDF has no pages")
         return
@@ -120,10 +121,15 @@ def _check_export(raw,kind,*,result=None,snapshot=None,project_id=None,revision_
             return
         required={'production.pdf','preview.png','preflight.json','manifest.json'}
         if kind=='production_export':required|={'job-ticket.json','job-ticket.pdf'}
-        if engine_test or manifest.get('adapter')=='icc-cmyk-outline-v1':required|={'cut.pdf','fold.pdf'}
+        if engine_test or manifest.get('adapter')=='icc-cmyk-outline-v1':
+            required|={'cut.pdf','fold.pdf'}
+            # Bundles rendered before the layered combined file existed remain valid.
+            if 'artwork-with-dieline.pdf' in names:required|={'artwork-with-dieline.pdf'}
+            if 'process.pdf' in names:required|={'process.pdf','finishing.json'}
         require(set(names)==required,"Recovered print bundle members differ")
-        require(manifest.get('kind')==('print_engine_test' if engine_test else 'production'),"Recovered print purpose differs")
-        if engine_test:require(manifest.get('review_only') is True,"Recovered test output must stay review-only")
+        require(manifest.get('kind')==('print_request' if print_request else 'print_engine_test' if engine_test else 'production'),"Recovered print purpose differs")
+        if engine_test:require(manifest.get('manufacturer_approval') is False,"Recovered test/request output must stay unapproved")
+        if engine_test and not print_request:require(manifest.get('review_only') is True,"Recovered test output must stay review-only")
         for name in names:
             if name.endswith('.pdf'):require(len(PdfReader(BytesIO(archive.read(name))).pages)>0,"Recovered print PDF has no pages")
             elif name.endswith('.json'):json.loads(archive.read(name))

@@ -239,3 +239,24 @@ def _immutable(*_):
 for _model in (LedgerEntry, Payment, PaymentEvent):
     event.listen(_model, "before_update", _immutable)
     event.listen(_model, "before_delete", _immutable)
+
+
+class ReferralCode(Base):
+    __tablename__ = "referral_codes"
+    tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), primary_key=True)
+    code: Mapped[str] = mapped_column(String(16), unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Referral(Base):
+    __tablename__ = "referrals"
+    __table_args__ = (CheckConstraint("status IN ('pending','granted','void')", name="ck_referral_status"),
+                      CheckConstraint("referrer_tenant_id <> referred_tenant_id", name="ck_referral_not_self"))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    referrer_tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), index=True)
+    referred_tenant_id: Mapped[str] = mapped_column(ForeignKey("tenants.id"), unique=True)
+    code: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    note: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

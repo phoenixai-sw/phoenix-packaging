@@ -15,6 +15,7 @@ import { openTossPayment } from "@/lib/payments";
 import { paymentOutcome, planSelection, refundOutcome, type PaymentOrderResult } from "@/lib/billing-state";
 import type { ApiData, ApiSchema } from "@/lib/api-contract";
 import { servicePaymentLabel } from "@/lib/service-payment-state";
+import { ReferralTools } from "@/components/referral-tools";
 const creditLabels: Record<string, string> = {
   trial: "무료 체험",
   subscription: "월 지급",
@@ -183,6 +184,15 @@ export default function BillingPage() {
             </div>
             {data.payment_capabilities.message ? (
               <Feedback notice={data.payment_capabilities.message} />
+            ) : null}
+            {data.summary.low_balance?.active ? (
+              <div className="alert alert-warning" role="status">
+                <Coins size={18} />
+                <span>
+                  사용 가능 크레딧이 이번 지급량의 20% 이하입니다. 추가 충전, 요금제
+                  변경 또는 다음 지급일을 확인하세요.
+                </span>
+              </div>
             ) : null}
             <div className="wallet-stats">
               {[
@@ -353,6 +363,7 @@ export default function BillingPage() {
                 </table>
               </div>
             </section>
+            <ReferralTools owner={owner} />
             <section className="management-card">
               <h2>결제 내역</h2>
               <div className="management-table-wrap">

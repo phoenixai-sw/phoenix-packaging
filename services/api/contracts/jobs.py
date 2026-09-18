@@ -78,7 +78,7 @@ class ReviewExportResult(ContractModel):
 
 
 class PrintEngineResult(ContractModel):
-    format: Literal['print_engine_zip']
+    format: Literal['print_engine_zip','print_request_zip']
     media_type: Literal['application/zip']
     filename: str
     sha256: str
