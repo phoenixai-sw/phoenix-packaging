@@ -236,7 +236,9 @@ export default function Exports({
                       ? "편집용 ZIP 다운로드"
                       : job.result && "format" in job.result && job.result.format === "print_engine_zip"
                         ? "시험 ZIP 다운로드"
-                        : "다운로드"}
+                        : job.result && "format" in job.result && job.result.format === "print_request_zip"
+                          ? "인쇄 의뢰본 ZIP 다운로드"
+                          : "다운로드"}
                   </a>
                 </div>
               ) : canRetryExport(job) ? (

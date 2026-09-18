@@ -182,6 +182,7 @@ export function Workspace({ children }: { children: React.ReactNode }) {
             )}
             {session.user.is_admin && <>
               <Link href="/admin/services" className={pathname.startsWith("/admin/services") ? "active" : ""}><Users size={18} /> 서비스 견적 관리</Link>
+              <Link href="/admin/inquiries" className={pathname.startsWith("/admin/inquiries") ? "active" : ""}><Users size={18} /> 문의 관리</Link>
               <Link href="/admin/operations" className={pathname.startsWith("/admin/operations") ? "active" : ""}><ShieldCheck size={18} /> 보관·지원 관리</Link>
               <Link href="/admin/policies" className={pathname.startsWith("/admin/policies") ? "active" : ""}><Wallet size={18} /> 요금·모델 정책</Link>
               <Link href="/admin/metrics" className={pathname.startsWith("/admin/metrics") ? "active" : ""}><LayoutGrid size={18} /> 성과·원가 확인</Link>

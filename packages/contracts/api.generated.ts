@@ -107,6 +107,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/inquiries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Listing */
+        get: operations["listing_v1_admin_inquiries_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/inquiries/{inquiry_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update */
+        patch: operations["update_v1_admin_inquiries__inquiry_id__patch"];
+        trace?: never;
+    };
     "/v1/admin/metrics": {
         parameters: {
             query?: never;
@@ -1202,6 +1236,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/inquiries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit */
+        post: operations["submit_v1_inquiries_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/internal/jobs/process": {
         parameters: {
             query?: never;
@@ -1815,6 +1866,40 @@ export interface paths {
         put?: never;
         /** Quote */
         post: operations["quote_v1_quotes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/referrals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Referrals */
+        get: operations["referrals_v1_referrals_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/referrals/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Claim */
+        post: operations["claim_v1_referrals_claim_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2908,6 +2993,48 @@ export interface components {
             /** Utm Source */
             utm_source: string | null;
         };
+        /** CombinedFileCheck */
+        CombinedFileCheck: {
+            /**
+             * Authoritative
+             * @constant
+             */
+            authoritative: false;
+            /**
+             * File
+             * @constant
+             */
+            file: "artwork-with-dieline.pdf";
+            /** Layers */
+            layers: string[];
+            /** Segments Matched */
+            segments_matched: number;
+            /** Spot Colors */
+            spot_colors: string[];
+            /** Tolerance Mm */
+            tolerance_mm: number;
+        };
+        /** CombinedFileInfo */
+        CombinedFileInfo: {
+            /**
+             * Authoritative
+             * @constant
+             */
+            authoritative: false;
+            /** Dieline Spot Colors */
+            dieline_spot_colors: {
+                [key: string]: string;
+            };
+            /** Layers */
+            layers: string[];
+            /**
+             * Name
+             * @constant
+             */
+            name: "artwork-with-dieline.pdf";
+            /** Note */
+            note: string;
+        };
         /** ComposeBody */
         ComposeBody: {
             /** Company Prefix */
@@ -3247,6 +3374,7 @@ export interface components {
             expired: number;
             /** Ledger */
             ledger: components["schemas"]["CreditLedgerEntry"][];
+            low_balance?: components["schemas"]["LowBalanceNotice"] | null;
             /** Mode */
             mode: string;
             /** Payments Enabled */
@@ -3449,6 +3577,11 @@ export interface components {
             manufacturer: string;
             /** Name */
             name: string;
+            /**
+             * Print Request Available
+             * @default false
+             */
+            print_request_available: boolean;
             requirements: components["schemas"]["PrintProfile"];
             /** Status */
             status: string;
@@ -3686,6 +3819,24 @@ export interface components {
             /** Request Id */
             request_id: string;
         };
+        /** Envelope[InquiryData] */
+        Envelope_InquiryData_: {
+            data: components["schemas"]["InquiryData"];
+            /** Request Id */
+            request_id: string;
+        };
+        /** Envelope[InquiryList] */
+        Envelope_InquiryList_: {
+            data: components["schemas"]["InquiryList"];
+            /** Request Id */
+            request_id: string;
+        };
+        /** Envelope[InquiryReceipt] */
+        Envelope_InquiryReceipt_: {
+            data: components["schemas"]["InquiryReceipt"];
+            /** Request Id */
+            request_id: string;
+        };
         /** Envelope[Items[AIGenerationJob]] */
         Envelope_Items_AIGenerationJob__: {
             data: components["schemas"]["Items_AIGenerationJob_"];
@@ -3851,6 +4002,12 @@ export interface components {
         /** Envelope[QuoteData] */
         Envelope_QuoteData_: {
             data: components["schemas"]["QuoteData"];
+            /** Request Id */
+            request_id: string;
+        };
+        /** Envelope[ReferralOverview] */
+        Envelope_ReferralOverview_: {
+            data: components["schemas"]["ReferralOverview"];
             /** Request Id */
             request_id: string;
         };
@@ -5108,6 +5265,101 @@ export interface components {
             /** Message */
             message: string;
         };
+        /** InquiryBody */
+        InquiryBody: {
+            /** Company */
+            company: string;
+            /**
+             * Consent
+             * @constant
+             */
+            consent: true;
+            /**
+             * Email
+             * Format: email
+             */
+            email: string;
+            /** Has Dieline */
+            has_dieline: boolean;
+            /** Message */
+            message?: string | null;
+            /** Monthly Changes */
+            monthly_changes: number;
+            /** Name */
+            name: string;
+            /** Next Order Date */
+            next_order_date?: string | null;
+            /**
+             * Package Type
+             * @enum {string}
+             */
+            package_type: "three_side_seal" | "stand_up_pouch" | "folding_box" | "other";
+            /** Phone */
+            phone?: string | null;
+            /**
+             * Source
+             * @default web
+             */
+            source: string;
+        };
+        /** InquiryData */
+        InquiryData: {
+            /** Company */
+            company: string;
+            /** Email */
+            email: string;
+            /** Has Dieline */
+            has_dieline: boolean;
+            /** Id */
+            id: string;
+            /** Message */
+            message: string | null;
+            /** Monthly Changes */
+            monthly_changes: number;
+            /** Name */
+            name: string;
+            /** Next Order Date */
+            next_order_date: string | null;
+            /** Note */
+            note: string | null;
+            /** Package Type */
+            package_type: string;
+            /** Phone */
+            phone: string | null;
+            /** Received At */
+            received_at: string;
+            /** Source */
+            source: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "new" | "contacted" | "closed";
+            /** Updated At */
+            updated_at: string;
+        };
+        /** InquiryList */
+        InquiryList: {
+            /** Items */
+            items: components["schemas"]["InquiryData"][];
+        };
+        /** InquiryReceipt */
+        InquiryReceipt: {
+            /** Id */
+            id: string;
+            /** Received At */
+            received_at: string;
+        };
+        /** InquiryUpdate */
+        InquiryUpdate: {
+            /** Note */
+            note?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "new" | "contacted" | "closed";
+        };
         /** InspectBody */
         InspectBody: {
             /** Base Revision */
@@ -5333,6 +5585,15 @@ export interface components {
         LogoutData: {
             /** Logged Out */
             logged_out: boolean;
+        };
+        /** LowBalanceNotice */
+        LowBalanceNotice: {
+            /** Active */
+            active: boolean;
+            /** Basis Credits */
+            basis_credits: number;
+            /** Threshold Ratio */
+            threshold_ratio: number;
         };
         /** ManufacturingPreparation */
         ManufacturingPreparation: {
@@ -6197,6 +6458,7 @@ export interface components {
                 [key: string]: components["schemas"]["RegistryApproval"];
             } | null;
             capabilities?: components["schemas"]["PrintCapabilities"] | null;
+            combined_file?: components["schemas"]["CombinedFileInfo"] | null;
             engine: components["schemas"]["PrintEngineVersion"];
             /** Files */
             files: components["schemas"]["BundleFile"][];
@@ -6216,7 +6478,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "print_engine_test" | "production";
+            kind: "print_engine_test" | "print_request" | "production";
             /** Manifest Hash Policy */
             manifest_hash_policy?: string | null;
             /**
@@ -6258,9 +6520,9 @@ export interface components {
             filename: string;
             /**
              * Format
-             * @constant
+             * @enum {string}
              */
-            format: "print_engine_zip";
+            format: "print_engine_zip" | "print_request_zip";
             manifest: components["schemas"]["PrintEngineManifest"];
             /**
              * Media Type
@@ -6328,7 +6590,7 @@ export interface components {
              * Role
              * @enum {string}
              */
-            role: "artwork" | "cut" | "fold" | "process";
+            role: "artwork" | "cut" | "fold" | "process" | "combined";
             /**
              * Text Outlined
              * @constant
@@ -6482,6 +6744,7 @@ export interface components {
         PrintVerification: {
             /** Barcodes */
             barcodes: components["schemas"]["BarcodeCheck"][];
+            combined_file?: components["schemas"]["CombinedFileCheck"] | null;
             finishing?: components["schemas"]["FinishingVerification"] | null;
             /**
              * Manufacturer Approval
@@ -7092,6 +7355,54 @@ export interface components {
             renewal_amount_inc_vat: number;
             /** Terms Version */
             terms_version: string;
+        };
+        /** ReferralClaimBody */
+        ReferralClaimBody: {
+            /** Code */
+            code: string;
+        };
+        /** ReferralOverview */
+        ReferralOverview: {
+            /** Claimed Code */
+            claimed_code: string | null;
+            /** Code */
+            code: string;
+            /** Granted This Month */
+            granted_this_month: number;
+            policy: components["schemas"]["ReferralPolicy"];
+            /** Referrals */
+            referrals: components["schemas"]["ReferralRecord"][];
+        };
+        /** ReferralPolicy */
+        ReferralPolicy: {
+            /** Bonus Credits */
+            bonus_credits: number;
+            /** Bonus Valid Days */
+            bonus_valid_days: number;
+            /** Cancellation Window Days */
+            cancellation_window_days: number;
+            /** Claim Window Days */
+            claim_window_days: number;
+            /** Monthly Grant Limit */
+            monthly_grant_limit: number;
+            /** Scope */
+            scope: string;
+            /** Version */
+            version: string;
+        };
+        /** ReferralRecord */
+        ReferralRecord: {
+            /** Created At */
+            created_at: string;
+            /** Granted At */
+            granted_at: string | null;
+            /** Id */
+            id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "granted" | "void";
         };
         /** RefundBody */
         RefundBody: {
@@ -8552,6 +8863,12 @@ export interface components {
         TestBody: {
             /** Base Revision */
             base_revision: number;
+            /**
+             * Mode
+             * @default engine_test
+             * @enum {string}
+             */
+            mode: "engine_test" | "print_request";
             /** Profile Id */
             profile_id: string;
             /**
@@ -8570,8 +8887,9 @@ export interface components {
             /**
              * Format
              * @default print_engine_zip
+             * @enum {string}
              */
-            format: string;
+            format: "print_engine_zip" | "print_request_zip";
             /** Id */
             id: string;
             /**
@@ -8954,6 +9272,7 @@ export interface components {
             expired: number;
             /** Ledger */
             ledger: components["schemas"]["CreditLedgerEntry"][];
+            low_balance?: components["schemas"]["LowBalanceNotice"] | null;
             /** Reserved */
             reserved: number;
             /** Trial Expires At */
@@ -10088,6 +10407,268 @@ export interface operations {
                 };
                 content: {
                     "application/octet-stream": string;
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Resource unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Revision or idempotency conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Retired operation or unavailable asset */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Request too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Input or semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Editor lease required */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Rate or quota limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+        };
+    };
+    listing_v1_admin_inquiries_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_InquiryList_"];
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Resource unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Revision or idempotency conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Retired operation or unavailable asset */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Request too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Input or semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Editor lease required */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Rate or quota limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+        };
+    };
+    update_v1_admin_inquiries__inquiry_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                inquiry_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InquiryUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_InquiryData_"];
                 };
             };
             /** @description Malformed request */
@@ -19580,6 +20161,138 @@ export interface operations {
             };
         };
     };
+    submit_v1_inquiries_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InquiryBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_InquiryReceipt_"];
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Resource unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Revision or idempotency conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Retired operation or unavailable asset */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Request too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Input or semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Editor lease required */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Rate or quota limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+        };
+    };
     process_jobs_v1_internal_jobs_process_get: {
         parameters: {
             query?: never;
@@ -25124,6 +25837,266 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_QuoteData_"];
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Resource unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Revision or idempotency conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Retired operation or unavailable asset */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Request too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Input or semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Editor lease required */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Rate or quota limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+        };
+    };
+    referrals_v1_referrals_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_ReferralOverview_"];
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Resource unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Revision or idempotency conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Retired operation or unavailable asset */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Request too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Input or semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Editor lease required */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Rate or quota limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+        };
+    };
+    claim_v1_referrals_claim_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReferralClaimBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_ReferralOverview_"];
                 };
             };
             /** @description Malformed request */

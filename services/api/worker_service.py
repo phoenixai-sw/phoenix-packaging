@@ -30,6 +30,13 @@ def process_all_jobs(sessions,storage,settings):
         except Exception as exc:
             logging.getLogger("phoenix.worker").error("billing_dispatch_failed error_type=%s",type(exc).__name__)
             counts["invoices"]="retry_pending"
+    from .billing.referrals import process_referral_bonuses
+    try:
+        with sessions() as db:
+            counts["referral_bonuses"]=process_referral_bonuses(db);db.commit()
+    except Exception as exc:
+        logging.getLogger("phoenix.worker").error("referral_bonus_failed error_type=%s",type(exc).__name__)
+        counts["referral_bonuses"]="retry_pending"
     from .uploads import cleanup_quarantine
     try: counts["uploads_cleaned"]=cleanup_quarantine(sessions,storage)
     except Exception as exc:

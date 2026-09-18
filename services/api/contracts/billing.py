@@ -26,9 +26,16 @@ class CreditLedgerEntry(ContractModel):
     operation_key: str | None
 
 
+class LowBalanceNotice(ContractModel):
+    threshold_ratio: float
+    basis_credits: int
+    active: bool
+
+
 class WalletSummary(ContractModel):
     balance: int
     available: int
+    low_balance: LowBalanceNotice | None = None
     reserved: int
     consumed: int
     expired: int
@@ -148,6 +155,31 @@ class PricingPolicy(ContractModel):
     topups: list[TopupPrice]
     trial: TrialPolicy
     actions: dict[str, int]
+
+
+class ReferralPolicy(ContractModel):
+    version: str
+    bonus_credits: int
+    bonus_valid_days: int
+    monthly_grant_limit: int
+    cancellation_window_days: int
+    claim_window_days: int
+    scope: str
+
+
+class ReferralRecord(ContractModel):
+    id: str
+    status: Literal['pending', 'granted', 'void']
+    created_at: str
+    granted_at: str | None
+
+
+class ReferralOverview(ContractModel):
+    code: str
+    policy: ReferralPolicy
+    granted_this_month: int
+    claimed_code: str | None
+    referrals: list[ReferralRecord]
 
 
 class BillingData(ContractModel):

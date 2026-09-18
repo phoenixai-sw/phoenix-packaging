@@ -7,7 +7,7 @@ from pathlib import Path
 from PIL import features
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import ArrayObject, DictionaryObject, NameObject, NumberObject, DecodedStreamObject, TextStringObject
-from reportlab.lib.colors import CMYKColor, HexColor
+from reportlab.lib.colors import CMYKColor, CMYKColorSep, HexColor
 from reportlab.lib.units import mm
 from reportlab.pdfgen.canvas import Canvas
 from ..geometry import validate_scene, geometry_for_scene
@@ -32,15 +32,16 @@ class Paint(PrintColor):
     line=staticmethod(draw_outline_line)
 
 
-def inspect_print(project, profile, resolver=None, *, test_mode=False):
-    p=parse_print_profile(profile)
+def inspect_print(project, profile, resolver=None, *, test_mode=False, print_request=False):
+    """test_mode and print_request downgrade blockers to warnings; production keeps them as errors."""
+    p=parse_print_profile(profile);lenient=test_mode or print_request
     scene=validate_scene(project["scene"],structure_snapshot=project.get("structure_snapshot"))
     geometry=geometry_for_scene(scene,structure_snapshot=project.get("structure_snapshot"))
     if (geometry.get('holes') or geometry.get('pouch_features') is not None) and p.get('finishing_delivery')!='separate_process_pdf_v1':
         raise ExportValidationError('FINISHING_DELIVERY_REQUIRED','구멍·개봉부·지퍼·노치에는 명시적인 분리 CUT·가공 안내 출력 프로필이 필요합니다.')
     paths=structure_paths(geometry,p["layout"])
     issues=[]
-    def add(code,message,**kw):issues.append({"code":code,"message":message,"severity":"warning" if test_mode else "error",**kw})
+    def add(code,message,**kw):issues.append({"code":code,"message":message,"severity":"warning" if lenient else "error",**kw})
     if p["layout"]=="face_pages" and scene.get("template_kind","three-side-seal")!="three-side-seal":
         raise ExportValidationError("PRINT_LAYOUT_REQUIRED","상자·스탠드 구조는 등록된 전개도 출력이 필요합니다. 면별 직사각 칼선을 실제 전개도로 사용하지 않습니다.")
     for face in scene["faces"]:
@@ -86,15 +87,62 @@ def _embed_icc(data,icc):
     output=BytesIO();writer.write(output);return output.getvalue()
 
 
-def _page(canvas,w,h,bleed,test):
+MODE_TITLES={'test':'ENGINE TEST / NOT FOR PRODUCTION','print_request':'PRINT REQUEST / manufacturer approval not recorded','production':'ordinary ICC PDF'}
+DIELINE_SPOTS={'cut':('CutContour',CMYKColorSep(0,1,0,0,spotName='CutContour')),'fold':('Crease',CMYKColorSep(1,0,0,0,spotName='Crease'))}
+COMBINED_NAME='artwork-with-dieline.pdf'
+
+
+def _page(canvas,w,h,bleed,test,stamp=True):
     footer=12 if test else 0
     canvas.setPageSize(((w+2*bleed)*mm,(h+2*bleed+footer)*mm))
     canvas.setTrimBox((bleed*mm,(bleed+footer)*mm,(w+bleed)*mm,(h+bleed+footer)*mm))
     canvas.setBleedBox((0,footer*mm,(w+2*bleed)*mm,(h+2*bleed+footer)*mm))
-    if test:
+    if test and stamp:
         canvas.setFillColor(CMYKColor(0,0,0,1))
         draw_outline_line(canvas,"ENGINE TEST / 검토용 · 제작 사용 불가",4*mm,4*mm,7)
     canvas.translate(bleed*mm,(bleed+footer)*mm)
+
+
+def _dieline_overlay(paths,b,test,paint):
+    """Spot-colour CUT/FOLD strokes for the layered combined file. Coordinates equal cut.pdf/fold.pdf."""
+    from ..geometry.finishing_paths import expected_segments
+    # SEP_CMYK keeps the named separations; plain "CMYK" enforcement would flatten them to process colour.
+    stream=BytesIO();c=PrintCanvas(stream,paint=paint,invariant=1,pageCompression=1,pdfVersion=(1,5),enforceColorSpace="SEP_CMYK")
+    for page in paths:
+        w,h=page["width_mm"],page["height_mm"];_page(c,w,h,b,test,stamp=False)
+        for role,(_,color) in DIELINE_SPOTS.items():
+            c.setStrokeColor(color);c.setLineWidth(.1*mm)
+            segments=expected_segments(page,role)
+            for x1,y1,x2,y2 in segments['lines']:c.line(x1*mm,(h-y1)*mm,x2*mm,(h-y2)*mm)
+            for q in segments['curves']:
+                path=c.beginPath();path.moveTo(q[0]*mm,(h-q[1])*mm)
+                path.curveTo(q[2]*mm,(h-q[3])*mm,q[4]*mm,(h-q[5])*mm,q[6]*mm,(h-q[7])*mm);c.drawPath(path,stroke=1,fill=0)
+        c.showPage()
+    c.save();return stream.getvalue()
+
+
+def _wrap_optional_content(page,label,ocg_ref):
+    """Wrap the page's whole content in one optional-content group and register it under /Properties."""
+    resources=page['/Resources'];properties=resources.get('/Properties',DictionaryObject())
+    properties[NameObject(label)]=ocg_ref;resources[NameObject('/Properties')]=properties
+    stream=DecodedStreamObject();stream.set_data(b'/OC '+label.encode()+b' BDC\n'+page.get_contents().get_data()+b'\nEMC\n')
+    page.replace_contents(stream)
+
+
+def combine_with_dieline(artwork,overlay):
+    """Artwork and dieline as two named layers (OCG) in one ordinary PDF; the separate files stay authoritative."""
+    writer=PdfWriter(clone_from=BytesIO(artwork));dieline=PdfWriter(clone_from=BytesIO(overlay))
+    groups=[]
+    for name in ('Artwork','Dieline'):
+        groups.append(writer._add_object(DictionaryObject({NameObject('/Type'):NameObject('/OCG'),NameObject('/Name'):TextStringObject(name)})))
+    for page,over in zip(writer.pages,dieline.pages):
+        _wrap_optional_content(page,'/PhxArtwork',groups[0])
+        _wrap_optional_content(over,'/PhxDieline',groups[1])
+        page.merge_page(over)
+    order=ArrayObject(groups)
+    writer._root_object[NameObject('/OCProperties')]=DictionaryObject({NameObject('/OCGs'):ArrayObject(groups),
+        NameObject('/D'):DictionaryObject({NameObject('/Order'):order,NameObject('/ON'):ArrayObject(groups)})})
+    output=BytesIO();writer.write(output);return output.getvalue()
 
 
 def _paint_face(canvas,face,structural,paint,resolver,b,others=()):
@@ -132,8 +180,11 @@ def _paint_face(canvas,face,structural,paint,resolver,b,others=()):
     canvas.restoreState()
 
 
-def render_print_artifacts(project, output_dir, profile, icc, resolver=None, *, test_mode=False):
-    checked=inspect_print(project,profile,resolver,test_mode=test_mode)
+def render_print_artifacts(project, output_dir, profile, icc, resolver=None, *, test_mode=False, print_request=False):
+    """test_mode stamps every page; print_request omits the stamp but still records no manufacturer approval."""
+    if test_mode and print_request:raise ExportValidationError('PRINT_MODE_CONFLICT','시험 출력과 인쇄 의뢰본은 동시에 만들 수 없습니다.')
+    mode='test' if test_mode else 'print_request' if print_request else 'production'
+    checked=inspect_print(project,profile,resolver,test_mode=test_mode,print_request=print_request)
     if any(i["severity"]=="error" for i in checked["issues"]):
         issue=checked["issues"][0];raise ExportValidationError(issue["code"],issue["message"])
     p,scene,g,paths=(checked[k] for k in ("profile","scene","geometry","paths"));b=p["bleed_mm"]
@@ -144,7 +195,7 @@ def render_print_artifacts(project, output_dir, profile, icc, resolver=None, *, 
     finishing=bool(g.get('holes') or g.get('pouch_features') is not None)
     for role in ("artwork","cut","fold")+(("process",) if finishing else ()):
         stream=BytesIO();c=PrintCanvas(stream,paint=paint,invariant=1,pageCompression=1,pdfVersion=(1,5),enforceColorSpace="CMYK")
-        c.setTitle(f"Phoenix {role.upper()} — {'ENGINE TEST / NOT FOR PRODUCTION' if test_mode else 'ordinary ICC PDF'}")
+        c.setTitle(f"Phoenix {role.upper()} — {MODE_TITLES[mode]}")
         for page in paths:
             w,h=page["width_mm"],page["height_mm"]
             _page(c,w,h,b,test_mode)
@@ -184,6 +235,7 @@ def render_print_artifacts(project, output_dir, profile, icc, resolver=None, *, 
             c.showPage()
         c.save();data=_embed_icc(stream.getvalue(),icc)
         name='production.pdf' if role=='artwork' else role+'.pdf';(out/name).write_bytes(data);payloads[role]=data
+    combined=combine_with_dieline(payloads['artwork'],_dieline_overlay(paths,b,test_mode,paint));(out/COMBINED_NAME).write_bytes(combined)
     # The preview is a screen rendering, not a physical contract proof.
     import pypdfium2 as pdfium
     from PIL import Image
@@ -201,7 +253,7 @@ def render_print_artifacts(project, output_dir, profile, icc, resolver=None, *, 
     for index,tile in enumerate(tiles):preview.paste(tile,((index%3)*450+15,(index//3)*630+15))
     preview.save(out/'preview.png')
     from .print_verification import verify_print_artifacts
-    verified=verify_print_artifacts(payloads,scene,g,paths,p,test_mode)
+    verified=verify_print_artifacts(payloads,scene,g,paths,p,test_mode,combined=combined)
     finishing_manifest=None
     if finishing:
         from ..geometry.finishing import finishing_approval_for_geometry,DELIVERY
@@ -214,8 +266,10 @@ def render_print_artifacts(project, output_dir, profile, icc, resolver=None, *, 
         finishing_manifest['physical_specification_hash']=canonical_hash(finishing_manifest['physical_specification'])
         (out/'finishing.json').write_text(json.dumps(finishing_manifest,ensure_ascii=False,indent=2),encoding='utf-8')
     (out/'preflight.json').write_text(json.dumps({"issues":checked["issues"],"verification":verified},ensure_ascii=False,indent=2),encoding='utf-8')
-    manifest={"schema_version":"2.0","adapter":ADAPTER_ID,"kind":"print_engine_test" if test_mode else "production",
+    manifest={"schema_version":"2.0","adapter":ADAPTER_ID,"kind":"print_engine_test" if test_mode else "print_request" if print_request else "production",
         "review_only":test_mode,"manufacturer_approval":False,"pdf_x_conformance":"not_claimed","profile":p,
+        "combined_file":{"name":COMBINED_NAME,"layers":["Artwork","Dieline"],"dieline_spot_colors":{role:name for role,(name,_) in DIELINE_SPOTS.items()},
+                         "authoritative":False,"note":"cut.pdf/fold.pdf are the verified dieline files; the combined file repeats them as a spot-colour layer for RIPs that need one file."},
         "geometry_hash":g["geometry_hash"],"structure_ref":deepcopy(scene.get("structure_ref")),"icc":paint.info,
         "engine":{"littlecms":features.version('littlecms2')},"fonts":[{**f,"embedded":False,"outlined":True} for f in _font_manifest(scene,resolver)],
         "original_texts":[{"face_id":f["id"],"object_id":o["id"],"text":o["text"]} for f in scene["faces"] for o in f["objects"] if o["type"]=="text" and o["visible"] and o["print_enabled"]],

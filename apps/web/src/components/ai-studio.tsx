@@ -10,6 +10,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { api, errorMessage } from "@/lib/api";
+import { uploadAsset } from "@/lib/assets";
 import type { ApiSchema } from "@/lib/api-contract";
 import styles from "./ai-layout-context.module.css";
 import {
@@ -149,6 +150,9 @@ export function AIStudio({
   const [quality, setQuality] = useState<ImageQuality>(DEFAULT_IMAGE_QUALITY);
   const [count, setCount] = useState(1);
   const [reference, setReference] = useState("");
+  // Reference photos uploaded here go to the asset library without being placed on the face.
+  const [uploaded, setUploaded] = useState<Array<{ id: string; name: string }>>([]);
+  const [uploading, setUploading] = useState(false);
   const [quote, setQuote] = useState<ConfirmedQuote>();
   const [job, setJob] = useState<Job>();
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -179,8 +183,15 @@ export function AIStudio({
     reference,
   };
   gate.current.update(selection);
+  // Completed results can be re-edited directly, without placing them on the face first.
+  const resultReferences = jobs.flatMap((item) =>
+    (item.result?.assets || []).map((asset, index) => ({ id: asset.id, name: `생성 결과 · ${asset.name || `시안 ${index + 1}`}` })),
+  );
+  const referenceOptions = [...uploaded, ...referenceAssets, ...resultReferences].filter(
+    (item, index, list) => list.findIndex((other) => other.id === item.id) === index,
+  );
   const referenceAvailable =
-    !edit || referenceAssets.some((asset) => asset.id === reference);
+    !edit || referenceOptions.some((asset) => asset.id === reference);
   if (readOnly || (edit && !referenceAvailable)) gate.current.invalidate();
   const modelOption = capabilities?.models.find((item) => item.id === model);
   const qualityOption = capabilities?.qualities.find(
@@ -585,17 +596,42 @@ export function AIStudio({
                 }}
               >
                 <option value="">선택하세요</option>
-                {referenceAssets
-                  .filter(
-                    (item, index, list) =>
-                      list.findIndex((other) => other.id === item.id) === index,
-                  )
-                  .map((asset, index) => (
-                    <option key={asset.id} value={asset.id}>
-                      {asset.name || `현재 면의 이미지 ${index + 1}`}
-                    </option>
-                  ))}
+                {referenceOptions.map((asset, index) => (
+                  <option key={asset.id} value={asset.id}>
+                    {asset.name || `현재 면의 이미지 ${index + 1}`}
+                  </option>
+                ))}
               </select>
+            </label>
+          )}
+          {edit && (
+            <label className="field">
+              참고 이미지 올리기 (면에 배치하지 않고 수정 원본으로만 사용)
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                disabled={locked || uploading}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file) return;
+                  setUploading(true);
+                  setError("");
+                  try {
+                    const asset = await uploadAsset(file, projectId);
+                    if (!mounted.current) return;
+                    const name = asset.name || file.name;
+                    setUploaded((list) => [{ id: asset.id, name }, ...list.filter((item) => item.id !== asset.id)]);
+                    setReference(asset.id);
+                    change();
+                    setNotice(`참고 이미지 "${name}"을(를) 보관함에 올리고 수정 원본으로 선택했습니다.`);
+                  } catch (err) {
+                    if (mounted.current) setError(errorMessage(err));
+                  } finally {
+                    if (mounted.current) setUploading(false);
+                  }
+                }}
+              />
             </label>
           )}
           <label className="field">
@@ -822,6 +858,18 @@ export function AIStudio({
                       onClick={() => void selectAsset(asset)}
                     >
                       이 면의 배경으로 적용
+                    </button>
+                    <button
+                      className="button button-light button-sm"
+                      disabled={locked}
+                      onClick={() => {
+                        setMode("edit");
+                        setReference(asset.id);
+                        change();
+                        setNotice("이 결과를 수정 원본으로 선택했습니다. 바꿀 내용을 적고 견적을 확인해 주세요.");
+                      }}
+                    >
+                      이 결과를 다시 수정
                     </button>
                   </article>
                 )),

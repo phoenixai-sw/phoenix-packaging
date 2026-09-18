@@ -13,7 +13,11 @@ import {
   imageRegionPixels,
   textRemovalInputKey,
   regionPlacement,
+  detectedLineRegion,
+  estimateFontSizePt,
+  sampleTextColors,
   type ImageRegion,
+  type DetectedTextLine,
 } from "@editor/image-tools";
 import type { Scene, SceneObject } from "@editor/model";
 import type { ApplyPreparedScene } from "./image-quality-tools";
@@ -82,6 +86,10 @@ export function ImageTextTools({
     [color, setColor] = useState("#172d26"),
     [cover, setCover] = useState("#fff3de");
   const [zoomResult, setZoomResult] = useState(true);
+  // Lines found over the whole (cropped) image; clicking one prefills region, text, size and colours.
+  const [detected, setDetected] = useState<DetectedTextLine[]>([]),
+    [selectedLine, setSelectedLine] = useState("");
+  const sourceBlob = useRef<Blob | null>(null);
   const [confidence, setConfidence] = useState<number>(),
     [ocrStatus, setOcrStatus] = useState(""),
     [ocrBusy, setOcrBusy] = useState(false);
@@ -289,6 +297,96 @@ export function ImageTextTools({
       if (active.current && attempt === ocrAttempt.current) setOcrBusy(false);
     }
   }
+  async function loadSourceBlob() {
+    if (sourceBlob.current) return sourceBlob.current;
+    const response = await fetch(`/api/v1/assets/${object.asset_id}/content`, { credentials: "same-origin" });
+    if (!response.ok) throw new Error("원본 이미지를 불러오지 못했습니다.");
+    sourceBlob.current = await response.blob();
+    return sourceBlob.current;
+  }
+  async function detectAll() {
+    if (!dimensions.width || ocrBusy) return;
+    setError("");
+    setOcrBusy(true);
+    setOcrStatus("이미지 전체에서 글자를 찾습니다…");
+    const attempt = ++ocrAttempt.current;
+    const bounds = object.crop || { x: 0, y: 0, width: 1, height: 1 };
+    let ownedWorker: Worker | null = null;
+    try {
+      const blob = await loadSourceBlob();
+      const { createWorker } = await import("tesseract.js");
+      if (!active.current || attempt !== ocrAttempt.current) return;
+      const created = await createWorker(["kor", "eng"], 1, {
+        workerPath: "/ocr/worker.min.js", corePath: "/ocr", langPath: "/ocr", workerBlobURL: false,
+        logger: (m) => {
+          if (active.current && attempt === ocrAttempt.current)
+            setOcrStatus(m.status === "recognizing text" ? `글자 찾는 중 ${Math.round(m.progress * 100)}%` : "한국어·영어 모델 불러오는 중…");
+        },
+      });
+      if (!active.current || attempt !== ocrAttempt.current) { await created.terminate(); return; }
+      worker.current = created;
+      ownedWorker = created;
+      const { data } = await created.recognize(blob, { rectangle: imageRegionPixels(bounds, dimensions.width, dimensions.height) }, { blocks: true });
+      if (!active.current || attempt !== ocrAttempt.current) return;
+      const lines: DetectedTextLine[] = [];
+      for (const block of data.blocks || [])
+        for (const paragraph of block.paragraphs || [])
+          for (const line of paragraph.lines || []) {
+            const text = line.text.trim();
+            // Skip empty, low-confidence and symbol-only lines (edge artefacts such as "=" or "|").
+            if (!text || line.confidence < 25 || !/[\p{L}\p{N}]/u.test(text)) continue;
+            try {
+              lines.push({ id: crypto.randomUUID(), text, confidence: line.confidence,
+                region: detectedLineRegion(line.bbox, dimensions.width, dimensions.height, bounds) });
+            } catch {
+              // A degenerate box outside the crop is skipped.
+            }
+          }
+      setDetected(lines);
+      setSelectedLine("");
+      setOcrStatus(lines.length ? `${lines.length}줄을 찾았습니다. 바꿀 글자를 클릭하세요.` : "글자를 찾지 못했습니다. 영역을 직접 드래그해 주세요.");
+    } catch (e) {
+      if (active.current && attempt === ocrAttempt.current) {
+        setError(`글자를 자동으로 찾지 못했습니다. 영역을 직접 선택할 수 있습니다. ${errorMessage(e)}`);
+        setOcrStatus("");
+      }
+    } finally {
+      if (ownedWorker) { await ownedWorker.terminate(); if (worker.current === ownedWorker) worker.current = null; }
+      if (active.current && attempt === ocrAttempt.current) setOcrBusy(false);
+    }
+  }
+  async function chooseLine(line: DetectedTextLine) {
+    if (readOnly || object.locked || !draftReady || working || busy) return;
+    invalidate();
+    setSelectedLine(line.id);
+    setRegion(line.region);
+    setSourceText(line.text);
+    setText(line.text);
+    setConfidence(line.confidence);
+    try {
+      const placement = regionPlacement(object, line.region);
+      setFontSize(estimateFontSizePt(placement.height_mm));
+    } catch {
+      // Keep the current size when the region falls outside the crop.
+    }
+    try {
+      const blob = await loadSourceBlob();
+      const bitmap = await createImageBitmap(blob);
+      const box = imageRegionPixels(line.region, bitmap.width, bitmap.height);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, box.width); canvas.height = Math.max(1, box.height);
+      const context = canvas.getContext("2d");
+      if (context) {
+        context.drawImage(bitmap, box.left, box.top, box.width, box.height, 0, 0, canvas.width, canvas.height);
+        const colors = sampleTextColors(context.getImageData(0, 0, canvas.width, canvas.height).data);
+        setColor(colors.text); setCover(colors.cover);
+      }
+      bitmap.close();
+    } catch {
+      // Colour sampling is a convenience; the pickers stay editable.
+    }
+    setOcrStatus("원문·영역·크기·색을 채웠습니다. 새 문구를 적고 확인한 뒤 적용하세요.");
+  }
   async function cancelOCR() {
     ocrAttempt.current++;
     const running = worker.current;
@@ -475,6 +573,24 @@ export function ImageTextTools({
                 })
               }
             />
+            {detected.map((line) => (
+              <button
+                key={line.id}
+                type="button"
+                className={`image-text-hit${selectedLine === line.id ? " selected" : ""}`}
+                title={line.text}
+                aria-label={`글자 선택: ${line.text}`}
+                disabled={busy || working || ocrBusy}
+                style={{
+                  left: `${line.region.x * 100}%`,
+                  top: `${line.region.y * 100}%`,
+                  width: `${line.region.width * 100}%`,
+                  height: `${line.region.height * 100}%`,
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); void chooseLine(line); }}
+              />
+            ))}
             <div
               className="image-region-box"
               style={{
@@ -485,6 +601,32 @@ export function ImageTextTools({
               }}
             />
           </div>
+          <div className="button-row">
+            <button
+              className="button"
+              disabled={ocrBusy || busy || working || !dimensions.width}
+              onClick={() => void detectAll()}
+            >
+              이미지 속 글자 모두 찾기 · 무료
+            </button>
+          </div>
+          {detected.length > 0 && (
+            <ul className="image-text-lines" aria-label="찾은 글자 줄">
+              {detected.map((line) => (
+                <li key={line.id}>
+                  <button
+                    type="button"
+                    className={`text-link${selectedLine === line.id ? " selected" : ""}`}
+                    disabled={busy || working || ocrBusy}
+                    onClick={() => void chooseLine(line)}
+                  >
+                    {line.text}
+                  </button>
+                  <span className="field-hint">{line.confidence.toFixed(0)}%</span>
+                </li>
+              ))}
+            </ul>
+          )}
           <div className="region-fields">
             {(
               [

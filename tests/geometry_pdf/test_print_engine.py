@@ -74,7 +74,7 @@ def test_net_cut_has_no_shared_panel_edges_and_same_art_registration(tmp_path):
     scene=new_scene('folding-box',160,230,depth_mm=60)
     scene.update(template_version_id='own-test',structure_ref=structure_ref(snap),geometry_hash=snap['geometry_hash'])
     result=render_print_artifacts({'scene':scene,'structure_snapshot':snap},tmp_path/'print',profile(layout='net'),ICC.read_bytes(),test_mode=True)
-    assert len(result['verification']['page_checks'])==3
+    assert len(result['verification']['page_checks'])==4
     from services.api.geometry.print_paths import structure_paths
     page=structure_paths(snap['geometry'],'net')[0]
     cuts={tuple(sorted((tuple(line[:2]),tuple(line[2:])))) for line in page['cut']}

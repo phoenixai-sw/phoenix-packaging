@@ -11,19 +11,23 @@ export function EditorActivity({
   onAI: () => void;
 }) {
   const [credits, setCredits] = useState<number>(),
+    [lowBalance, setLowBalance] = useState(false),
     [jobs, setJobs] = useState<Job[]>([]),
     [failed, setFailed] = useState(false);
   useEffect(() => {
     let active = true;
     const refresh = async () => {
       const result = await Promise.allSettled([
-        api<{ balance: number }>("/credits"),
+        api<{ balance: number; low_balance?: { active: boolean } | null }>("/credits"),
         api<{ items: Job[] }>(`/projects/${projectId}/generations`),
         api<{ items: Job[] }>(`/projects/${projectId}/exports`),
       ]);
       if (!active) return;
       setFailed(result.some((r) => r.status === "rejected"));
-      if (result[0].status === "fulfilled") setCredits(result[0].value.balance);
+      if (result[0].status === "fulfilled") {
+        setCredits(result[0].value.balance);
+        setLowBalance(!!result[0].value.low_balance?.active);
+      }
       setJobs(
         result
           .slice(1)
@@ -59,6 +63,11 @@ export function EditorActivity({
           {credits === undefined ? "—" : credits.toLocaleString()}
         </strong>{" "}
         · 충전/결제
+        {lowBalance && (
+          <em className="low-balance" role="status">
+            잔액 20% 이하 · 충전 또는 요금제 확인
+          </em>
+        )}
       </Link>
       <button onClick={onAI}>
         작업 {running.length ? `${running.length}건 진행 중` : "대기 없음"}

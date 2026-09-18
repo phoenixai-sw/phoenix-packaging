@@ -70,7 +70,7 @@ def test_vector_cuts_actual_pdf_knockout_and_preserved_bleed(tmp_path,shape,blee
     manifest=render_print_artifacts(item,out,p,ICC.read_bytes(),test_mode=True)
     from services.api.contracts.printing import PrintEngineManifest
     PrintEngineManifest.model_validate(manifest)
-    assert len(list(out.iterdir()))==8
+    assert len(list(out.iterdir()))==9
     assert len(manifest['verification']['finishing']['path_checks'])==6
     assert manifest['finishing']['physical_specification']['holes'][0]['center_x_mm']==65
     paths=manifest['finishing']['pages'];assert paths[1]['holes'][0]['center_x_mm']==95
@@ -141,7 +141,7 @@ def test_missing_delivery_is_closed_and_legacy_outputs_unchanged(tmp_path):
     item={'scene':new_scene('three-side-seal',160,230)}
     result=render_print_artifacts(item,tmp_path/'plain',profile(),ICC.read_bytes(),test_mode=True)
     assert 'finishing' not in result and 'finishing' not in result['verification']
-    assert 'finishing_delivery' not in result['profile'] and len(list((tmp_path/'plain').iterdir()))==6
+    assert 'finishing_delivery' not in result['profile'] and len(list((tmp_path/'plain').iterdir()))==7
 
 
 def test_registered_custom_top_seal_cannot_overlap_zipper():
@@ -218,7 +218,7 @@ def test_worker_exact_approval_ten_files_changed_hole_charges_revert_is_free(app
         job=db.get(Job,first);assert job.status=='succeeded',job.error
         assert job.result['credits_charged']==40
         with ZipFile(BytesIO(s.storage.get(job.result['storage_key']))) as archive:
-            assert len(archive.namelist())==10
+            assert len(archive.namelist())==11
             manifest=json.loads(archive.read('manifest.json'))
             from services.api.contracts.printing import PrintEngineManifest
             PrintEngineManifest.model_validate(manifest)

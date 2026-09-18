@@ -34,6 +34,7 @@ from .models import Asset, Job, LoginSession, Project, Revision, Tenant, User
 from .schemas import CreateProjectInput, DemoBackgroundInput, ExportInput, RevisionInput, SaveDraftInput
 from .storage import SupabaseStorage, build_storage
 from . import feature_models
+from . import inquiries as inquiry_models  # noqa: F401  (table registration)
 from .service_orders import models as service_order_models
 from .operations import models as operation_models
 from .metrics import models as metric_models
@@ -593,6 +594,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_retention_routes(app,db_session)
     from .service_orders.routes import install_service_order_routes
     install_service_order_routes(app,db_session)
+    from .inquiries import install_inquiry_routes
+    install_inquiry_routes(app,db_session)
     from .print_engine import install_print_engine_routes
     install_print_engine_routes(app,db_session,project_payload,snapshot_revision)
     install_registry_routes(app,db_session,project_payload,snapshot_revision)

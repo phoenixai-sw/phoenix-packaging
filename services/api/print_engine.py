@@ -1,6 +1,7 @@
 """ICC registry and durable, visibly unapproved engine tests. No client approval flags."""
 from copy import deepcopy
 from datetime import timedelta
+from typing import Literal
 from hashlib import sha256
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -34,6 +35,7 @@ class EngineProfileDTO(ContractModel):
     is_demo: bool
     test_only: bool
     requirements: PrintProfile
+    print_request_available: bool=False
 
 
 class ProfilesDTO(ContractModel):
@@ -64,6 +66,7 @@ class TestBody(ContractModel):
     project_id: UUID
     base_revision: int=Field(ge=1)
     profile_id: str=Field(min_length=1,max_length=100)
+    mode: Literal['engine_test','print_request']='engine_test'
 
 
 class TestJobDTO(ContractModel):
@@ -71,31 +74,43 @@ class TestJobDTO(ContractModel):
     status: str
     review_only: bool=True
     credits_charged: int=0
-    format: str='print_engine_zip'
+    format: Literal['print_engine_zip','print_request_zip']='print_engine_zip'
 
 
 def _builtin(layout='face_pages',finishing=False):
-    return {'id':BUILTIN_ID,'name':'합성 CMYK 엔진 시험 — 제조 프로필 아님','manufacturer':'Phoenix internal test',
+    return {'id':BUILTIN_ID,'name':'합성 CMYK 엔진 시험 — 제조 프로필 아님','manufacturer':'Phoenix internal test','print_request_available':False,
             'status':'draft','is_demo':True,'test_only':True,'requirements':parse_print_profile({'icc_id':BUILTIN_ICC,
             'icc_sha256':sha256(ICC_PATH.read_bytes()).hexdigest(),'layout':layout,
             **({'finishing_delivery':'separate_process_pdf_v1'} if finishing else {})})}
 
 
-def _profile(db,identity,*,test_mode):
+def _profile(db,identity,*,test_mode,print_request=False):
     if identity==BUILTIN_ID:
+        if print_request:raise APIError(422,'TEST_ICC_PRODUCTION_FORBIDDEN','합성 시험 ICC로는 인쇄 의뢰본을 만들 수 없습니다. 실제 ICC 프로필을 선택해 주세요.')
         if not test_mode:raise APIError(422,'TEST_ICC_PRODUCTION_FORBIDDEN','합성 시험 ICC는 제작에 사용할 수 없습니다.')
         return _builtin()
     row=db.get(RegistryVersion,identity)
     if not row or row.kind!='profile' or row.status=='revoked' or row.details.get('requirements',{}).get('adapter_id')!=ADAPTER_ID:
         raise APIError(404,'PRINT_PROFILE_NOT_FOUND','ICC 출력 프로필을 찾을 수 없습니다.')
-    if test_mode and row.details.get('review_available') is not True:raise APIError(404,'PRINT_PROFILE_NOT_FOUND','시험용으로 공개한 ICC 프로필이 아닙니다.')
+    if (test_mode or print_request) and row.details.get('review_available') is not True:raise APIError(404,'PRINT_PROFILE_NOT_FOUND','시험용으로 공개한 ICC 프로필이 아닙니다.')
     return {'id':row.id,'name':row.name,'manufacturer':row.manufacturer,'status':row.status,'is_demo':row.is_demo,
-            'test_only':row.status!='approved' or row.is_demo,'requirements':parse_print_profile(row.details['requirements'])}
+            'test_only':row.status!='approved' or row.is_demo,'requirements':parse_print_profile(row.details['requirements']),'print_request_available':True}
 
 
-def freeze_print_output(db,profile_id,*,test_mode,layout=None,finishing=False):
-    profile=_profile(db,profile_id,test_mode=test_mode)
+def _mode_flags(mode):
+    return {'test_mode':mode=='test','print_request':mode=='print_request'}
+
+
+def freeze_print_output(db,profile_id,*,test_mode,layout=None,finishing=False,print_request=False):
+    """print_request: customer-visible real-ICC profile, no engine-test stamp, still no manufacturer approval."""
+    if test_mode and print_request:raise APIError(422,'PRINT_MODE_CONFLICT','시험 출력과 인쇄 의뢰본은 동시에 만들 수 없습니다.')
+    profile=_profile(db,profile_id,test_mode=test_mode,print_request=print_request)
     if profile_id==BUILTIN_ID and (layout or finishing):profile=_builtin(layout or 'face_pages',finishing=finishing)
+    if print_request and (layout or finishing):
+        # The registered profile fixes ICC and bleed; the project decides net/face pages and finishing delivery.
+        requirements=dict(profile['requirements']);requirements['layout']=layout or requirements['layout']
+        if finishing:requirements['finishing_delivery']='separate_process_pdf_v1'
+        profile['requirements']=parse_print_profile(requirements)
     p=profile['requirements']
     if p['icc_id']==BUILTIN_ICC:
         if not test_mode:raise APIError(422,'TEST_ICC_PRODUCTION_FORBIDDEN','합성 시험 ICC는 제작에 사용할 수 없습니다.')
@@ -109,11 +124,11 @@ def freeze_print_output(db,profile_id,*,test_mode,layout=None,finishing=False):
         if not test_mode and (p['icc_sha256']==sha256(ICC_PATH.read_bytes()).hexdigest() or row.details.get('description','').startswith('Phoenix SYNTHETIC')):
             raise APIError(422,'TEST_ICC_PRODUCTION_FORBIDDEN','합성 시험 ICC는 제작 프로필로 사용할 수 없습니다.')
         icc={'id':row.id,'evidence_id':evidence.id,'sha256':evidence.sha256,'source':row.details['source'],'license':row.details['license'],'test_only':False}
-    return {'version':'1.0','mode':'test' if test_mode else 'production','profile_id':profile_id,'requirements':p,'icc':icc}
+    return {'version':'1.0','mode':'test' if test_mode else 'print_request' if print_request else 'production','profile_id':profile_id,'requirements':p,'icc':icc}
 
 
 def resolve_print_icc(db,storage,frozen):
-    expected=freeze_print_output(db,frozen['profile_id'],test_mode=frozen['mode']=='test',layout=frozen['requirements']['layout'],finishing=frozen['requirements'].get('finishing_delivery')=='separate_process_pdf_v1')
+    expected=freeze_print_output(db,frozen['profile_id'],**_mode_flags(frozen['mode']),layout=frozen['requirements']['layout'],finishing=frozen['requirements'].get('finishing_delivery')=='separate_process_pdf_v1')
     if canonical_hash(expected)!=canonical_hash(frozen):raise APIError(409,'PRINT_PROFILE_CHANGED','출력 프로필·ICC가 변경되거나 철회되었습니다.')
     info=frozen['icc']
     raw=ICC_PATH.read_bytes() if info['id']==BUILTIN_ICC else storage.get(db.get(Evidence,info['evidence_id']).storage_key)
@@ -127,7 +142,7 @@ def check_test_access(db,tenant_id,snapshot,*,lock=False):
     check_archive_access(db,actor,{**snapshot,'editable_assets':[]},creating=True,lock=lock)
     statement=select(RegistryVersion).where(RegistryVersion.id.in_([snapshot['print_output']['profile_id'],snapshot['print_output']['icc']['id']])).order_by(RegistryVersion.id).execution_options(populate_existing=True)
     list(db.scalars(statement.with_for_update() if lock else statement))
-    expected=freeze_print_output(db,snapshot['print_output']['profile_id'],test_mode=True,layout=snapshot['print_output']['requirements']['layout'],finishing=snapshot['print_output']['requirements'].get('finishing_delivery')=='separate_process_pdf_v1')
+    expected=freeze_print_output(db,snapshot['print_output']['profile_id'],**_mode_flags(snapshot['print_output']['mode']),layout=snapshot['print_output']['requirements']['layout'],finishing=snapshot['print_output']['requirements'].get('finishing_delivery')=='separate_process_pdf_v1')
     if canonical_hash(expected)!=canonical_hash(snapshot['print_output']):raise APIError(409,'PRINT_PROFILE_CHANGED','시험 출력 프로필·ICC가 변경되었습니다.')
     for face in snapshot['scene']['faces']:
         for obj in face['objects']:
@@ -163,7 +178,7 @@ def freeze_print_assets(db,storage,project):
 def install_print_engine_routes(app,db_session,project_payload,snapshot_revision):
     router=APIRouter(prefix='/v1',tags=['print-engine'])
     def result(request,value):return {'data':value,'request_id':request.state.request_id}
-    def test_job(job):return {'id':job.id,'status':job.status,'format':'print_engine_zip','review_only':True,'credits_charged':0}
+    def test_job(job):return {'id':job.id,'status':job.status,'format':'print_request_zip' if (job.snapshot or {}).get('print_output',{}).get('mode')=='print_request' else 'print_engine_zip','review_only':True,'credits_charged':0}
     def admin(request,db):
         user,_=require_auth(request,db,mutate=True,authorize_write=False,enforce_membership=False)
         if not user.is_admin:raise APIError(403,'ADMIN_REQUIRED','플랫폼 관리자 권한이 필요합니다.')
@@ -206,7 +221,8 @@ def install_print_engine_routes(app,db_session,project_payload,snapshot_revision
         if project.base_revision!=body.base_revision:raise APIError(409,'REVISION_CONFLICT','최신 디자인을 저장한 뒤 시험 출력해 주세요.')
         from .geometry.snapshots import project_geometry
         geometry=project_geometry(project)
-        frozen=freeze_print_output(db,body.profile_id,test_mode=True,layout='net' if project.template_id!='three-side-seal' else 'face_pages',finishing=bool(geometry.get('holes') or geometry.get('pouch_features') is not None))
+        request_mode=body.mode=='print_request'
+        frozen=freeze_print_output(db,body.profile_id,test_mode=not request_mode,print_request=request_mode,layout='net' if project.template_id!='three-side-seal' else 'face_pages',finishing=bool(geometry.get('holes') or geometry.get('pouch_features') is not None))
         resolve_print_icc(db,app.state.storage,frozen)
         operation=request.headers.get('idempotency-key') or 'print-test:'+canonical_hash({'project':project.id,'revision':body.base_revision,'print_output':frozen})
         if not 1<=len(operation)<=160:raise APIError(422,'IDEMPOTENCY_KEY_INVALID','요청 식별자를 확인해 주세요.')
@@ -227,7 +243,7 @@ def install_print_engine_routes(app,db_session,project_payload,snapshot_revision
         from .font_assets.service import freeze_fonts,attach_font_resolver
         snapshot['font_assets']=freeze_fonts(db,user.tenant_id,snapshot['scene'])
         attach_font_resolver(resolver,db,app.state.storage,user.tenant_id,snapshot)
-        inspect_print(snapshot,frozen['requirements'],resolver,test_mode=True)
+        inspect_print(snapshot,frozen['requirements'],resolver,test_mode=not request_mode,print_request=request_mode)
         job=Job(tenant_id=user.tenant_id,project_id=project.id,revision_id=revision.id,kind='review_export',operation_key=operation,request_hash=digest,snapshot=snapshot)
         db.add(job)
         try:db.commit()

@@ -54,12 +54,42 @@ def _verify_segments(operations,spec,role,bleed,footer):
     return {'role':role,'face_id':spec['face_id'],'line_count':len(actual['lines']),'cubic_count':len(actual['curves']),'tolerance_mm':.01,'passed':True}
 
 
-def verify_print_artifacts(payloads,scene,geometry,paths,profile,test_mode):
+def _verify_dieline_layer(pdf,paths,bleed,footer):
+    """The combined file must carry both named layers, the two spot colours, and every CUT/FOLD segment."""
+    from ..geometry.finishing_paths import expected_segments
+    from .print_pdf import DIELINE_SPOTS
+    catalog=pdf.trailer['/Root'];groups=catalog.get('/OCProperties',{}).get('/OCGs',[])
+    names=sorted(str(g.get_object()['/Name']) for g in groups)
+    if names!=['Artwork','Dieline']:raise ExportValidationError('PRINT_DIELINE_LAYER_MISSING','합본 PDF에 Artwork·Dieline 레이어가 없습니다.')
+    spots=set();matched=0
+    for page,spec in zip(pdf.pages,paths):
+        for space in page['/Resources'].get('/ColorSpace',{}).values():
+            value=space.get_object()
+            if isinstance(value,list) and value[0]=='/Separation':spots.add(str(value[1]).lstrip('/'))
+        operations=ContentStream(page.get_contents(),pdf).operations
+        if b'BDC' not in {op for _,op in operations}:raise ExportValidationError('PRINT_DIELINE_LAYER_MISSING','합본 PDF 페이지에 레이어 표시가 없습니다.')
+        actual=_stroked_segments(operations)
+        for role in ('cut','fold'):
+            for key,segments in expected_segments(spec,role).items():
+                for segment in segments:
+                    normalized=[coordinate for x,y in zip(segment[::2],segment[1::2]) for coordinate in ((x+bleed)*mm,(spec['height_mm']-y+bleed+footer)*mm)]
+                    pairs=list(zip(normalized[::2],normalized[1::2]));reverse=[v for pair in reversed(pairs) for v in pair]
+                    if not any(min(max(abs(a-b) for a,b in zip(path,normalized)),max(abs(a-b) for a,b in zip(path,reverse)))<=.01*mm for path in actual[key]):
+                        raise ExportValidationError('PRINT_DIELINE_LAYER_MISMATCH','합본 PDF의 칼선 레이어가 CUT/FOLD 파일과 다릅니다.')
+                    matched+=1
+    expected_spots={name for name,_ in DIELINE_SPOTS.values()}
+    if matched and not expected_spots<=spots:raise ExportValidationError('PRINT_DIELINE_SPOT_MISSING','합본 PDF에 CutContour·Crease 별색이 없습니다.')
+    return {'file':'artwork-with-dieline.pdf','layers':names,'spot_colors':sorted(spots),'segments_matched':matched,'tolerance_mm':.01,'authoritative':False}
+
+
+def verify_print_artifacts(payloads,scene,geometry,paths,profile,test_mode,combined=None):
     checks=[];b=profile['bleed_mm'];footer=12 if test_mode else 0
     finishing=bool(geometry.get('holes') or geometry.get('pouch_features') is not None);finishing_checks=[]
     if finishing and set(payloads)!={'artwork','cut','fold','process'}:raise ExportValidationError('PRINT_FINISHING_FILE_MISSING','가공 출력에는 아트·CUT·FOLD·PROCESS 네 PDF가 필요합니다.')
-    for role,data in payloads.items():
+    combined_check=None
+    for role,data in list(payloads.items())+([('combined',combined)] if combined is not None else []):
         pdf=PdfReader(BytesIO(data))
+        if role=='combined':combined_check=_verify_dieline_layer(pdf,paths,b,footer)
         if len(pdf.pages)!=len(paths):raise ExportValidationError('PRINT_PAGE_COUNT','출력 페이지 수가 구조와 다릅니다.')
         if '/GTS_PDFXVersion' in pdf.metadata:raise ExportValidationError('FALSE_PDFX_CLAIM','검증하지 않은 PDF/X 선언을 허용하지 않습니다.')
         intent=pdf.trailer['/Root']['/OutputIntents'][0].get_object()['/DestOutputProfile'].get_object()
@@ -111,5 +141,6 @@ def verify_print_artifacts(payloads,scene,geometry,paths,profile,test_mode):
                 barcodes.append({'face_id':face['id'],'object_id':obj['id'],'value':obj['barcode_value'],'digital_decode':'passed','raster_dpi':300,'physical_scan':'not_tested'})
     finally:doc.close()
     result={'page_checks':checks,'barcodes':barcodes,'pdf_x':'not_claimed','manufacturer_approval':False}
+    if combined_check is not None:result['combined_file']=combined_check
     if finishing:result['finishing']={'path_checks':finishing_checks,'cut_duplicate_check':'passed','physical_tooling_tested':False,'cubic_tolerance_mm':.01}
     return result

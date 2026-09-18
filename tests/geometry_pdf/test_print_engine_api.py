@@ -49,7 +49,7 @@ def test_durable_engine_zip_idempotency_download_and_no_credits(app):
             from services.api.contracts.printing import PrintEngineManifest
             PrintEngineManifest.model_validate(manifest)
             from hashlib import sha256
-            assert len(manifest['files'])==5
+            assert len(manifest['files'])==6
             for file in manifest['files']:assert file['sha256']==sha256(z.read(file['name'])).hexdigest()
         with app.state.session_factory() as db:
             from services.api.billing.models import Reservation
@@ -89,7 +89,7 @@ def test_builtin_finishing_trial_persists_manifest_process_and_zero_charge(app):
         downloaded=client.get('/v1/exports/'+job_id+'/download')
         assert downloaded.status_code==200
         with ZipFile(BytesIO(downloaded.content)) as archive:
-            assert len(archive.namelist())==8
+            assert len(archive.namelist())==9
             assert {'process.pdf','finishing.json'} <= set(archive.namelist())
             manifest=json.loads(archive.read('manifest.json'))
             from services.api.contracts.printing import PrintEngineManifest

@@ -202,3 +202,45 @@ test("a completed paid cleanup remains reusable after replacement wording or sty
       textRemovalInputKey(changed),
     );
 });
+import { detectedLineRegion, estimateFontSizePt, sampleTextColors } from "../src/image-tools.ts";
+test("detected OCR lines become padded regions clamped to the crop", () => {
+  const region = detectedLineRegion({ x0: 100, y0: 200, x1: 500, y1: 240 }, 1000, 1000);
+  assert.deepEqual(region, { x: 0.09, y: 0.19, width: 0.42, height: 0.06 });
+  const clamped = detectedLineRegion({ x0: 0, y0: 0, x1: 300, y1: 40 }, 1000, 1000, { x: 0.05, y: 0.02, width: 0.5, height: 0.5 });
+  assert.equal(clamped.x, 0.05);
+  assert.equal(clamped.y, 0.02);
+  assert.throws(() => detectedLineRegion({ x0: 0, y0: 0, x1: 1, y1: 1 }, 0, 10));
+});
+test("font size estimate refills the line box and stays within schema limits", () => {
+  assert.equal(estimateFontSizePt(6), 12.5);
+  assert.equal(estimateFontSizePt(0.1), 4);
+  assert.equal(estimateFontSizePt(500), 400);
+});
+test("colour sampling picks dark letters on a light cover and inverts for light text", () => {
+  const light = [];
+  for (let i = 0; i < 90; i++) light.push(250, 240, 220, 255);
+  for (let i = 0; i < 10; i++) light.push(20, 40, 60, 255);
+  assert.deepEqual(sampleTextColors(light), { text: "#14283c", cover: "#faf0dc" });
+  const dark = [];
+  for (let i = 0; i < 90; i++) dark.push(10, 20, 30, 255);
+  for (let i = 0; i < 10; i++) dark.push(240, 240, 240, 255);
+  const sampled = sampleTextColors(dark);
+  assert.equal(sampled.cover, "#0a141e");
+  assert.equal(sampled.text, "#f0f0f0");
+  assert.deepEqual(sampleTextColors([0, 0, 0, 0]), { text: "#172d26", cover: "#fff3de" });
+});
+test("replacing text keeps locked layers untouched and stacks cover/text on top", () => {
+  const scene = {
+    faces: [{ id: "front", width_mm: 100, height_mm: 100, background: "#fff", objects: [
+      { id: "bg", type: "image", face_id: "front", asset_id: "a", x_mm: 0, y_mm: 0, width_mm: 100, height_mm: 100, rotation_deg: 0, z_index: 3, locked: true, visible: true, print_enabled: true, opacity: 1 },
+      { id: "img", type: "image", face_id: "front", asset_id: "b", x_mm: 10, y_mm: 10, width_mm: 50, height_mm: 50, rotation_deg: 0, z_index: 7, visible: true, print_enabled: true, opacity: 1 },
+    ] }],
+  };
+  const next = applyImageText(scene, "img", { x: 0.1, y: 0.1, width: 0.5, height: 0.2 },
+    { text: "새 문구", font_size_pt: 12, font_weight: 700, color: "#112233" }, { coverColor: "#ffffff" }, { text: "t", cover: "c" });
+  const objects = next.faces[0].objects;
+  assert.deepEqual(objects.find((o) => o.id === "bg"), scene.faces[0].objects[0]);
+  assert.equal(objects.find((o) => o.id === "img").z_index, 7);
+  assert.equal(objects.find((o) => o.id === "c").z_index, 8);
+  assert.equal(objects.find((o) => o.id === "t").z_index, 9);
+});

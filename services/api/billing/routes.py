@@ -14,12 +14,17 @@ from .models import BillingAccount, PaymentOrder, Subscription
 from .payments import BillingSettings, ProviderError, billing_account, bind_and_charge, build_provider, cancel_renewal, change_plan, confirm_order, create_order, entitlements, order_payload, reconcile_webhook, refund_order, subscription_payload, sync_order
 from .policy import pricing, aware
 from ..database import utcnow
+from .referrals import claim_referral, referral_overview
 from .service import create_quote, quote_payload, wallet_summary
 from .sync import payment_snapshot
 
 
 class Body(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class ReferralClaimBody(Body):
+    code: str = Field(min_length=4, max_length=16)
 
 
 class QuoteBody(Body):
@@ -235,6 +240,21 @@ def install_billing_routes(app, db_session, *, settings=None, provider=None):
         change = change_plan(db, user.tenant_id, body.plan_id, operation(request), settings=settings)
         db.commit()
         return result(request, change)
+
+    @router.get("/referrals", response_model=Envelope[P.ReferralOverview], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
+    def referrals(request: Request, db=Depends(db_session)):
+        user = actor(request, db, mutate=False)
+        overview = referral_overview(db, user.tenant_id)
+        db.commit()
+        return result(request, overview)
+
+    @router.post("/referrals/claim", status_code=201, response_model=Envelope[P.ReferralOverview], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
+    def claim(body: ReferralClaimBody, request: Request, db=Depends(db_session)):
+        user = actor(request, db, owner=True, mutate=True)
+        claim_referral(db, user.tenant_id, body.code)
+        overview = referral_overview(db, user.tenant_id)
+        db.commit()
+        return result(request, overview)
 
     @router.post("/billing/cancel-renewal", response_model=Envelope[P.SubscriptionData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def cancel(request: Request, db=Depends(db_session)):

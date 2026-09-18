@@ -20,7 +20,8 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
   }
   const suppliedOrigin = request.headers.get('origin');
   if (suppliedOrigin) headers.set('origin', suppliedOrigin);
-  if (request.method === 'GET' && path.join('/') === 'v1/auth/google/challenge') {
+  const signedRoute = (request.method === 'GET' && path.join('/') === 'v1/auth/google/challenge') || (request.method === 'POST' && path.join('/') === 'v1/inquiries');
+  if (signedRoute) {
     try {
       const signed = authRateHeaders(request.headers);
       for (const [name, value] of Object.entries(signed || {})) headers.set(name, value);

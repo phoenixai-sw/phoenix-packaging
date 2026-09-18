@@ -77,6 +77,8 @@ export function canRetryReviewExport(job: ExportJobState) {
 export function exportKindLabel(kind?: string, resultFormat?: string) {
   if (kind === "review_export" && resultFormat === "print_engine_zip")
     return "CMYK 출력 시험 ZIP";
+  if (kind === "review_export" && resultFormat === "print_request_zip")
+    return "인쇄 의뢰본 ZIP";
   return (
     (
       {

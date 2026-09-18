@@ -109,6 +109,34 @@ export default function Pricing() {
               </Link>
             </article>
           ))}
+          <article className="pricing-card" aria-label="커스텀 요금제">
+            <span className="eyebrow">Custom</span>
+            <h2>우리 팀에 맞춘 조건</h2>
+            <div className="plan-price">
+              별도 협의
+              <small>/ 월</small>
+            </div>
+            <p className="price-tax">좌석·크레딧·검수 범위 협의</p>
+            <div className="plan-allowance">
+              <strong>맞춤 크레딧</strong>
+              <span>좌석 협의</span>
+            </div>
+            <ul>
+              {[
+                "고객사 수와 작업량에 맞춘 크레딧",
+                "전담 검수·도입 지원 포함 여부 협의",
+                "제조사 도면·출력 조건 등록 지원",
+              ].map((item) => (
+                <li key={item}>
+                  <Check size={16} />
+                  {item}
+                </li>
+              ))}
+            </ul>
+            <Link className="button full-width button-light" href="/contact">
+              별도 협의 신청 <ArrowUpRight size={17} />
+            </Link>
+          </article>
         </div>
         <section className="pricing-details">
           <div>

@@ -134,12 +134,18 @@ export function applyImageText(
       ? { ...o, asset_id: mode.assetId }
       : { ...o },
   );
-  // Normalize order to retain room for the added cover/text without exceeding the schema's z limit.
-  nextObjects
-    .sort((a, b) => a.z_index - b.z_index)
-    .forEach((o, index) => {
-      o.z_index = index;
-    });
+  // Keep existing z values (locked layers must stay byte-identical); renormalize only when the
+  // schema's z limit would be exceeded by the two added layers.
+  const topZ = Math.max(0, ...nextObjects.map((o) => o.z_index));
+  let nextZ = topZ + 1;
+  if (topZ + 2 > 10000) {
+    nextObjects
+      .sort((a, b) => a.z_index - b.z_index)
+      .forEach((o, index) => {
+        o.z_index = index;
+      });
+    nextZ = nextObjects.length;
+  }
   const base = {
     ...placement,
     face_id: face.id,
@@ -154,7 +160,7 @@ export function applyImageText(
       shape: "rect",
       fill: mode.coverColor,
       color: mode.coverColor,
-      z_index: nextObjects.length,
+      z_index: nextZ++,
     });
   if (replacement.text)
     nextObjects.push({
@@ -168,7 +174,7 @@ export function applyImageText(
       color: replacement.color,
       align: "left",
       line_height: 1.2,
-      z_index: nextObjects.length,
+      z_index: nextZ++,
     });
   return {
     ...scene,
@@ -176,4 +182,65 @@ export function applyImageText(
       item.id === face.id ? { ...item, objects: nextObjects } : item,
     ),
   };
+}
+
+/** A text line found by browser OCR, in source-normalized coordinates like ImageRegion. */
+export type DetectedTextLine = {
+  id: string;
+  text: string;
+  confidence: number;
+  region: ImageRegion;
+};
+/** Convert an OCR pixel box to a padded source-normalized region clamped to `bounds` (the crop or whole image). */
+export function detectedLineRegion(
+  box: { x0: number; y0: number; x1: number; y1: number },
+  width: number,
+  height: number,
+  bounds: ImageRegion = { x: 0, y: 0, width: 1, height: 1 },
+  paddingRatio = 0.25,
+): ImageRegion {
+  if (!(width > 0) || !(height > 0)) throw new Error("원본 이미지 크기를 확인하지 못했습니다.");
+  const boxHeight = Math.max(1, box.y1 - box.y0);
+  const pad = boxHeight * paddingRatio;
+  const left = Math.max(bounds.x, (box.x0 - pad) / width);
+  const top = Math.max(bounds.y, (box.y0 - pad) / height);
+  const right = Math.min(bounds.x + bounds.width, (box.x1 + pad) / width);
+  const bottom = Math.min(bounds.y + bounds.height, (box.y1 + pad) / height);
+  const round = (v: number) => Math.round(v * 1e6) / 1e6;
+  return validateImageRegion({
+    x: round(left),
+    y: round(top),
+    width: round(Math.max(right - left, 1 / width)),
+    height: round(Math.max(bottom - top, 1 / height)),
+  });
+}
+/** Font size that roughly refills a line box: Korean glyphs fill about 90% of the em box, and the box carries padding. */
+export function estimateFontSizePt(lineHeightMm: number, paddingRatio = 0.25): number {
+  const glyphMm = lineHeightMm / (1 + 2 * paddingRatio);
+  const pt = (glyphMm / 0.9) / 0.3528;
+  return Math.min(400, Math.max(4, Math.round(pt * 2) / 2));
+}
+/** Split region pixels into dark/light clusters: the darker cluster is the letter colour, the lighter the background cover. */
+export function sampleTextColors(rgba: ArrayLike<number>): { text: string; cover: string } {
+  const pixels: Array<[number, number, number, number]> = [];
+  for (let i = 0; i + 3 < rgba.length; i += 4) {
+    if (rgba[i + 3] < 128) continue;
+    const r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
+    pixels.push([r, g, b, 0.2126 * r + 0.7152 * g + 0.0722 * b]);
+  }
+  if (!pixels.length) return { text: "#172d26", cover: "#fff3de" };
+  pixels.sort((a, b) => a[3] - b[3]);
+  const mean = (slice: Array<[number, number, number, number]>) => {
+    const sum = slice.reduce((acc, p) => [acc[0] + p[0], acc[1] + p[1], acc[2] + p[2]], [0, 0, 0]);
+    return sum.map((v) => Math.round(v / slice.length));
+  };
+  const hex = (c: number[]) => "#" + c.map((v) => v.toString(16).padStart(2, "0")).join("");
+  // Two-tone split at the luminance midpoint; the majority side is the background cover.
+  const threshold = (pixels[0][3] + pixels[pixels.length - 1][3]) / 2;
+  const split = pixels.findIndex((p) => p[3] > threshold);
+  const darkSlice = pixels.slice(0, split <= 0 ? Math.max(1, Math.round(pixels.length * 0.15)) : split);
+  const lightSlice = pixels.slice(split <= 0 ? pixels.length - Math.max(1, Math.round(pixels.length * 0.4)) : split);
+  const dark = mean(darkSlice), light = mean(lightSlice.length ? lightSlice : darkSlice);
+  const darkMajority = darkSlice.length > lightSlice.length;
+  return darkMajority ? { text: hex(light), cover: hex(dark) } : { text: hex(dark), cover: hex(light) };
 }

@@ -52,11 +52,11 @@ def test_actual_cmyk_production_worker_eight_file_bundle_and_atomic_charge(cmyk_
         job=db.get(Job,identity);assert job.status=='succeeded',job.error
         assert job.result['credits_charged']==40 and job.result['review_only'] is False
         with ZipFile(BytesIO(s.storage.get(job.result['storage_key']))) as z:
-            assert len(z.namelist())==8
+            assert len(z.namelist())==9
             manifest=json.loads(z.read('manifest.json'));PrintEngineManifest.model_validate(manifest)
             assert manifest['adapter']=='icc-cmyk-outline-v1' and not manifest['review_only']
             assert manifest['pdf_x_conformance']=='not_claimed'
-            assert len(manifest['files'])==7
+            assert len(manifest['files'])==8
             for file in manifest['files']:assert sha256(z.read(file['name'])).hexdigest()==file['sha256']
         assert db.scalar(select(func.sum(LedgerEntry.amount)).where(LedgerEntry.event=='CAPTURE'))==40
         event=db.scalar(select(MetricEvent).where(MetricEvent.name=='production_export_succeeded',MetricEvent.job_id==identity))

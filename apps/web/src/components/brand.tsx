@@ -26,6 +26,7 @@ export function SiteHeader() {
           <Link href="/#how-it-works">만드는 방법</Link>
           <Link href="/#design-concepts">디자인 예시</Link>
           <Link href="/pricing">요금 안내</Link>
+          <Link href="/contact">문의</Link>
         </nav>
         <div className="header-actions">
           <Link className="login-link" href="/auth?mode=login">

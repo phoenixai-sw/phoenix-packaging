@@ -74,7 +74,8 @@ def process_pending_jobs(session_factory, storage, limit=1) -> int:
                 from .font_assets.service import attach_font_resolver
                 attach_font_resolver(asset_resolver,session_factory,storage,tenant_id,snapshot)
 
-                engine_test = snapshot.get("print_output", {}).get("mode") == "test"
+                print_mode = snapshot.get("print_output", {}).get("mode")
+                engine_test = print_mode in ("test", "print_request")
                 if engine_test:
                     from .print_engine import resolve_print_icc,check_test_access
                     from .exporters.print_pdf import render_print_artifacts
@@ -82,7 +83,7 @@ def process_pending_jobs(session_factory, storage, limit=1) -> int:
                     with session_factory() as db:
                         check_test_access(db,tenant_id,snapshot)
                         icc=resolve_print_icc(db,storage,snapshot["print_output"])
-                    manifest=render_print_artifacts(snapshot,temp/"engine",snapshot["print_output"]["requirements"],icc,asset_resolver,test_mode=True)
+                    manifest=render_print_artifacts(snapshot,temp/"engine",snapshot["print_output"]["requirements"],icc,asset_resolver,test_mode=print_mode=="test",print_request=print_mode=="print_request")
                     output=temp/"engine-test.zip"
                     with ZipFile(output,"w",ZIP_DEFLATED) as archive:
                         for path in sorted((temp/"engine").iterdir()):archive.write(path,path.name)
@@ -108,7 +109,9 @@ def process_pending_jobs(session_factory, storage, limit=1) -> int:
                 extra={}
                 if engine_test:
                     check_test_access(db,tenant_id,snapshot,lock=True)
-                    extra={"format":"print_engine_zip","media_type":"application/zip","filename":f"phoenix-print-engine-test-{job_id}.zip","sha256":sha256(raw).hexdigest()}
+                    request_mode=print_mode=="print_request"
+                    extra={"format":"print_request_zip" if request_mode else "print_engine_zip","media_type":"application/zip",
+                           "filename":f"phoenix-print-request-{job_id}.zip" if request_mode else f"phoenix-print-engine-test-{job_id}.zip","sha256":sha256(raw).hexdigest()}
                 won = db.execute(update(Job).where(Job.id == job_id, Job.status == "running", Job.lease_id == lease_id).values(status="succeeded", result={"storage_key": key, "manifest": manifest, "review_only": True, "credits_charged": 0,**extra}, error=None, updated_at=utcnow()))
                 if won.rowcount == 1:
                     mark_published(db, key)

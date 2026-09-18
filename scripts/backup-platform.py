@@ -16,6 +16,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from cryptography.fernet import Fernet
 from sqlalchemy import MetaData,Table,select,inspect,DateTime,Date,Numeric
 from services.api import models,feature_models
+from services.api import inquiries as inquiry_models  # noqa: F401  (table registration)
 from services.api.billing import models as billing_models
 from services.api.service_orders import models as service_order_models
 from services.api.operations import models as operation_models
