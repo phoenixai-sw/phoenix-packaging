@@ -13,6 +13,7 @@ import {
 import { useSession } from "@/components/workspace";
 import { canEdit } from "@/lib/business";
 import { packagingMedia } from "@/lib/media";
+import { Mascot } from "@/components/brand";
 import { ProjectPreview } from "@/components/project-preview";
 import { api, errorMessage } from "@/lib/api";
 import type { Project } from "@editor/model";
@@ -49,10 +50,13 @@ export default function Dashboard() {
   );
   return (
     <main className="dashboard-content">
-      <div className="page-heading">
-        <div className="eyebrow">YOUR CREATIVE SPACE</div>
-        <h1>{session?.user.name}님의 작업 공간</h1>
-        <p>작은 아이디어가 좋은 패키지가 되는 곳.</p>
+      <div className="page-heading page-heading-mascot">
+        <div>
+          <div className="eyebrow">YOUR CREATIVE SPACE</div>
+          <h1>{session?.user.name}님의 작업 공간</h1>
+          <p>작은 아이디어가 좋은 패키지가 되는 곳.</p>
+        </div>
+        <Mascot size={96} />
       </div>
       <section className="dashboard-banner dashboard-banner-photographic">
         <div>

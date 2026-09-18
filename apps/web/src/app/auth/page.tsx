@@ -6,7 +6,7 @@ import Link from "next/link";
 import Script from "next/script";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, LoaderCircle, ShieldCheck } from "lucide-react";
-import { Brand } from "@/components/brand";
+import { CompanyLogo, Brand } from "@/components/brand";
 import { packagingMedia } from "@/lib/media";
 import { api, errorMessage, Session } from "@/lib/api";
 
@@ -233,7 +233,7 @@ export default function Auth() {
           height={1024}
           decoding="async"
         />
-        <Brand />
+        <CompanyLogo size={132} className="auth-company-logo" />
         <div className="auth-visual-copy">
           <span className="eyebrow">SMALL BRAND. BIG POSSIBILITIES.</span>
           <h2>

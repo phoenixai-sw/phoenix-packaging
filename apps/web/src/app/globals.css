@@ -6543,3 +6543,14 @@ body {
 input, select, textarea { border-radius: 12px !important; }
 .management-table th { background: #fff3e8; }
 .image-text-lines li { border-radius: 12px; }
+
+/* Phoenix AI company logo usage */
+.brand-mark img { width: 40px; height: 28px; object-fit: contain; display: block; }
+.company-logo { display: block; object-fit: contain; }
+.site-footer-company { display: flex; align-items: center; gap: 14px; margin-top: 10px; }
+.site-footer-company span { color: var(--muted); font-size: 12px; }
+.auth-company-logo { position: relative; z-index: 1; margin-bottom: 18px; filter: drop-shadow(0 6px 16px rgba(0,0,0,.18)); }
+.page-heading-mascot { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.phoenix-mascot { display: block; object-fit: contain; filter: drop-shadow(0 8px 18px rgba(240,115,63,.25)); }
+.management-empty .phoenix-mascot { margin: 0 auto 6px; opacity: .95; }
+@media (max-width: 700px) { .page-heading-mascot .phoenix-mascot { width: 64px; height: auto; } }

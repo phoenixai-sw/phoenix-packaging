@@ -1,21 +1,41 @@
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
+/** Phoenix AI Co., Ltd. logo, used by context:
+ *  - `mark` (default): the orange phoenix bird next to the "phoenix PACKAGING" wordmark for headers and sidebars
+ *  - `lockup`: the full "Phoenix AI Co., Ltd." logo for footers, sign-in and formal screens
+ *  - `mascot`: the friendly phoenix for empty states and welcome moments */
+export const phoenixLogo = {
+  mark: "/brand/phoenix-mark.png",
+  lockup: "/brand/phoenix-ai-logo.png",
+  lockupLarge: "/brand/phoenix-ai-logo-large.png",
+  mascot: "/brand/phoenix-mascot.png",
+} as const;
 export function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <Link href="/" className="brand" aria-label="Phoenix Packaging 홈">
       <span className="brand-mark">
-        <svg viewBox="0 0 32 32" aria-hidden="true">
-          <path
-            d="M6 4h10l-5 9h9l-4 7H8L6 4Zm12 0h8l-6 11h-8l6-11Zm-9 18h9l-4 8H6l3-8Z"
-            fill="currentColor"
-          />
-        </svg>
+        <img src={phoenixLogo.mark} alt="" width={40} height={28} decoding="async" />
       </span>
       <span>
         phoenix<span className="brand-sub">{compact ? "" : "PACKAGING"}</span>
       </span>
     </Link>
   );
+}
+export function CompanyLogo({ size = 96, className = "" }: { size?: number; className?: string }) {
+  return (
+    <img
+      className={`company-logo ${className}`.trim()}
+      src={size > 160 ? phoenixLogo.lockupLarge : phoenixLogo.lockup}
+      alt="Phoenix AI Co., Ltd."
+      width={size}
+      height={Math.round(size * 1.2)}
+      decoding="async"
+    />
+  );
+}
+export function Mascot({ size = 120, className = "" }: { size?: number; className?: string }) {
+  return <img className={`phoenix-mascot ${className}`.trim()} src={phoenixLogo.mascot} alt="" width={size} height={Math.round(size * 0.97)} decoding="async" />;
 }
 export function SiteHeader() {
   return (
@@ -45,7 +65,10 @@ export function SiteFooter() {
     <footer className="site-footer">
       <Brand />
       <p>좋은 제품의 다음 모습, 피닉스 패키징.</p>
-      <span>© {new Date().getFullYear()} Phoenix AI · 개발 시험 서비스</span>
+      <div className="site-footer-company">
+        <CompanyLogo size={72} />
+        <span>© {new Date().getFullYear()} Phoenix AI Co., Ltd. · 개발 시험 서비스</span>
+      </div>
     </footer>
   );
 }
