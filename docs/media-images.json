@@ -1,7 +1,9 @@
 {
-  "created_at": "2026-09-16",
-  "method": "imagegen CLI generate-batch",
-  "prompt_file": "docs/media-image-prompts.jsonl",
+  "created_at": "2026-09-18T05:28:00.710694+00:00",
+  "method": "scripts/generate-brand-media.py",
+  "model": "gpt-image-2.5-sunburst",
+  "quality": "xhigh",
+  "estimated_total_cost_usd": 0.4517,
   "images": [
     {
       "file": "apps/web/public/media/granola-design.webp",
@@ -22,13 +24,134 @@
       "quality": "high"
     },
     {
+      "file": "apps/web/public/media/concept-duck.webp",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 134464,
+      "sha256": "ca07686832c3e04b8378d3d717335a1d427cabb6bfd2fc140e8cebe174438c4e",
+      "model": "gpt-image-2.5-sunburst",
+      "quality": "xhigh",
+      "size": "1024x1024",
+      "prompt": "Use case: product-mockup. High-end product photograph of one bright stand-up pouch for a Korean duck jerky snack for dogs and people, Joyful, bright and modern Korean food-brand aesthetic: fresh saturated but harmonious colours, soft natural light, friendly rounded illustration touches, clean premium finish, nothing dull or beige-heavy. Warm tangerine-orange pouch with a cute friendly duck character illustration in a cream circle, playful Korean title typography, a small round hang hole at the top, matte finish, standing on a sunny cream studio surface with soft coral shadow, a few jerky sticks beside it.",
+      "usage": {
+        "input_tokens": 127,
+        "input_tokens_details": {
+          "image_tokens": 0,
+          "text_tokens": 127
+        },
+        "output_tokens": 3122,
+        "output_tokens_details": {
+          "image_tokens": 3122,
+          "text_tokens": 0
+        },
+        "total_tokens": 3249
+      },
+      "estimated_cost_usd": 0.0943,
+      "request_id_recorded": true
+    },
+    {
       "file": "apps/web/public/media/packaging-hero.webp",
       "width": 1536,
       "height": 1024,
-      "bytes": 362178,
-      "sha256": "f76d3050cae2a6b6ea16b88e33cb35a0ec137394b209f31ee218070d9665a636",
+      "bytes": 319840,
+      "sha256": "80dc547ecbfe9f81c3b2ce3aad15406ef074c3f06a90f886333fdddec68a59cf",
       "model": "gpt-image-2.5-sunburst",
-      "quality": "high"
+      "quality": "xhigh",
+      "size": "1536x1024",
+      "prompt": "Use case: product-mockup. Editorial campaign photograph for a Korean packaging design studio. Joyful, bright and modern Korean food-brand aesthetic: fresh saturated but harmonious colours, soft natural light, friendly rounded illustration touches, clean premium finish, nothing dull or beige-heavy. A cheerful still life of four flexible stand-up food pouches on a sunlit pastel-yellow and mint tabletop: a warm orange duck jerky snack pouch with a cute minimalist duck illustration, a Jeju tangerine pouch in bright citrus orange with green leaves, a berry granola pouch in pink and cream, and a matcha pouch in fresh spring green. Each pouch has beautiful, legible Korean and English typography and a small round hang hole at the top. Fresh fruit, leaves and a few snacks scattered playfully, soft shadows, high-end product photography, 35mm, crisp detail.",
+      "usage": {
+        "input_tokens": 180,
+        "input_tokens_details": {
+          "image_tokens": 0,
+          "text_tokens": 180
+        },
+        "output_tokens": 2459,
+        "output_tokens_details": {
+          "image_tokens": 2459,
+          "text_tokens": 0
+        },
+        "total_tokens": 2639
+      },
+      "estimated_cost_usd": 0.0747,
+      "request_id_recorded": true
+    },
+    {
+      "file": "apps/web/public/media/concept-citrus.webp",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 208488,
+      "sha256": "9a07099388717af1d6786d1921099c9ed6870051ea90b9593e1d057d098561bf",
+      "model": "gpt-image-2.5-sunburst",
+      "quality": "xhigh",
+      "size": "1024x1024",
+      "prompt": "Use case: product-mockup. High-end product photograph of one three-side-sealed flat pouch for Jeju tangerine chips, Joyful, bright and modern Korean food-brand aesthetic: fresh saturated but harmonious colours, soft natural light, friendly rounded illustration touches, clean premium finish, nothing dull or beige-heavy. Vivid citrus orange and fresh green colour blocking, hand-drawn tangerine slices and leaves, clean modern Korean typography, lying at a slight angle on a sky-blue studio surface with real tangerines and leaves, bright daylight, crisp detail.",
+      "usage": {
+        "input_tokens": 120,
+        "input_tokens_details": {
+          "image_tokens": 0,
+          "text_tokens": 120
+        },
+        "output_tokens": 3122,
+        "output_tokens_details": {
+          "image_tokens": 3122,
+          "text_tokens": 0
+        },
+        "total_tokens": 3242
+      },
+      "estimated_cost_usd": 0.0943,
+      "request_id_recorded": true
+    },
+    {
+      "file": "apps/web/public/media/concept-berry.webp",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 203020,
+      "sha256": "0679b641293dcb12f7e912ecf34595fc949bf3b3d8b0c646b1b9c474676de3df",
+      "model": "gpt-image-2.5-sunburst",
+      "quality": "xhigh",
+      "size": "1024x1024",
+      "prompt": "Use case: product-mockup. High-end product photograph of one zipper stand-up pouch for berry granola, Joyful, bright and modern Korean food-brand aesthetic: fresh saturated but harmonious colours, soft natural light, friendly rounded illustration touches, clean premium finish, nothing dull or beige-heavy. Raspberry pink and soft cream palette with a cheerful pattern of berries and oats, elegant rounded Korean typography, a transparent window showing granola, standing on a pale pink surface with scattered berries and a small bowl of yogurt, airy morning light.",
+      "usage": {
+        "input_tokens": 112,
+        "input_tokens_details": {
+          "image_tokens": 0,
+          "text_tokens": 112
+        },
+        "output_tokens": 3122,
+        "output_tokens_details": {
+          "image_tokens": 3122,
+          "text_tokens": 0
+        },
+        "total_tokens": 3234
+      },
+      "estimated_cost_usd": 0.0942,
+      "request_id_recorded": true
+    },
+    {
+      "file": "apps/web/public/media/concept-matcha.webp",
+      "width": 1024,
+      "height": 1024,
+      "bytes": 163192,
+      "sha256": "a731dae6fb8111d396d015877aff27b5e7f5637e88e7306e47f5e80a522c0f69",
+      "model": "gpt-image-2.5-sunburst",
+      "quality": "xhigh",
+      "size": "1024x1024",
+      "prompt": "Use case: product-mockup. High-end product photograph of one matte stand-up pouch for premium matcha latte powder, Joyful, bright and modern Korean food-brand aesthetic: fresh saturated but harmonious colours, soft natural light, friendly rounded illustration touches, clean premium finish, nothing dull or beige-heavy. Fresh spring-green and milky-white palette, a modern minimal leaf illustration, refined Korean typography, standing on a light wood tray with a ceramic bowl of matcha and a whisk, bright cafe daylight, crisp detail.",
+      "usage": {
+        "input_tokens": 110,
+        "input_tokens_details": {
+          "image_tokens": 0,
+          "text_tokens": 110
+        },
+        "output_tokens": 3122,
+        "output_tokens_details": {
+          "image_tokens": 3122,
+          "text_tokens": 0
+        },
+        "total_tokens": 3232
+      },
+      "estimated_cost_usd": 0.0942,
+      "request_id_recorded": true
     }
   ]
 }

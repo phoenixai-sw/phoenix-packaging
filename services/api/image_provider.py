@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from io import BytesIO
 import hashlib
+from pathlib import Path
 from decimal import Decimal, InvalidOperation, ROUND_FLOOR, ROUND_CEILING
 import httpx
 from PIL import Image, ImageDraw, ImageOps
@@ -32,6 +33,31 @@ IMAGE_MODELS = ("gpt-image-2.5-sunburst", "gpt-image-2.5-flare")
 IMAGE_QUALITIES = ("low", "medium", "high", "xhigh", "max", "auto")
 PREMIUM_QUALITIES = frozenset({"xhigh", "max", "auto"})
 IMAGE_ACTIONS = frozenset({"image.generate.standard", "image.generate.high", "image.edit.standard", "image.edit.high"})
+
+
+FIXTURE_BACKGROUNDS = Path(__file__).resolve().parents[2] / "fixtures" / "demo-backgrounds"
+FIXTURE_KEYWORDS = (("citrus", ("감귤", "오렌지", "시트러스", "레몬", "citrus", "orange")), ("berry", ("베리", "딸기", "핑크", "berry", "pink")),
+                    ("duck", ("오리", "duck", "캐릭터", "강아지", "pet")), ("nut", ("견과", "밤", "아몬드", "크라프트", "nut", "kraft")),
+                    ("ocean", ("바다", "해산", "김", "블루", "ocean", "blue", "sea")), ("forest", ("녹", "그린", "말차", "잎", "green", "matcha", "forest")))
+
+
+def fixture_background(prompt, width, height):
+    """Local demo output: one of the pre-generated sample backgrounds chosen by prompt keywords, cover-cropped to the requested size."""
+    lowered = prompt.lower()
+    name = next((key for key, words in FIXTURE_KEYWORDS if any(word in lowered for word in words)), None)
+    if name is None:
+        names = sorted(p.stem for p in FIXTURE_BACKGROUNDS.glob("*.webp"))
+        name = names[int(hashlib.sha256(prompt.encode()).hexdigest(), 16) % len(names)] if names else None
+    source = FIXTURE_BACKGROUNDS / f"{name}.webp" if name else None
+    if source is None or not source.is_file():
+        color = hashlib.sha256(prompt.encode()).digest()
+        return Image.new("RGB", (width, height), tuple(215 + x % 35 for x in color[:3]))
+    with Image.open(source) as base:
+        image = base.convert("RGB")
+        scale = max(width / image.width, height / image.height)
+        image = image.resize((max(1, round(image.width * scale)), max(1, round(image.height * scale))), Image.LANCZOS)
+        left, top = (image.width - width) // 2, (image.height - height) // 2
+        return image.crop((left, top, left + width, top + height))
 
 
 def quality_tier(quality):
@@ -284,12 +310,8 @@ def generate_image(settings, data, reference=None, *, transport=None):
     if settings.ai_provider == "fixture":
         if settings.environment == "production":
             raise ProviderError("FIXTURE_FORBIDDEN", "운영 환경에서 데모 이미지를 사용할 수 없습니다.")
-        color = hashlib.sha256(data["prompt"].encode()).digest()
         width, height = output["output_width_px"], output["output_height_px"]
-        image = Image.new("RGB", (width, height), tuple(215 + x % 35 for x in color[:3]))
-        draw = ImageDraw.Draw(image)
-        draw.ellipse((width*.49, height*.63, width*1.27, height*1.42), fill=tuple(40+x%100 for x in color[3:6]))
-        draw.ellipse((-width*.12, -height*.16, width*.24, height*.2), fill=tuple(110+x%80 for x in color[6:9]))
+        image = fixture_background(data["prompt"], width, height)
         buffer = BytesIO(); image.save(buffer, format="PNG")
         return ImageResult(buffer.getvalue(), width, height, {"provider":"fixture", "model":"fixture-v1", "requested_model":model, "quality":quality, "requested_quality":quality, "actual_quality":None, "demo":True, "usage":{}, "cost_usd":0, "cost_is_estimate":False, "prompt_version":data.get("prompt_version"), **output})
     if not settings.openai_api_key:

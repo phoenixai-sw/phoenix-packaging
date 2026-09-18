@@ -3,7 +3,6 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Check,
-  ImagePlus,
   LoaderCircle,
   Sparkles,
   Square,
@@ -36,6 +35,7 @@ import {
   type ImageLayoutContext,
 } from "@/lib/ai-image-settings";
 import { Feedback } from "./management";
+import { Mascot } from "./brand";
 
 type Asset = ApiSchema<"GeneratedAsset">;
 type Job = ApiSchema<"AIGenerationJob">;
@@ -803,7 +803,7 @@ export function AIStudio({
           </div>
           {!gallery.length ? (
             <div className="management-empty">
-              <ImagePlus size={29} />
+              <Mascot size={110} />
               <p>완료된 시안이 여기에 표시됩니다.</p>
             </div>
           ) : (

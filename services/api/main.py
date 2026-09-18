@@ -19,13 +19,13 @@ from fastapi import Depends, FastAPI, File, Form, Query, Request, Response, Uplo
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
-from PIL import Image, ImageDraw, UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError
 from sqlalchemy import delete, exists, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException
 
 from .auth import COOKIE_NAME, auth_payload, require_auth
-from .config import Settings
+from .config import ROOT, Settings
 from .database import Base, build_database, utcnow
 from .errors import APIError
 from .geometry import GeometryValidationError, validate_dimensions, build_geometry, geometry_for_scene, new_scene
@@ -415,23 +415,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         project=owned(db, Project, project_id, user.tenant_id)
         if not settings.demo_mode:
             raise APIError(422, "DEMO_DISABLED", "운영 환경에서는 데모 이미지를 생성할 수 없습니다.")
-        palettes = {"forest": ("#E8EDDB", "#4B6849", "#C8D5A4"), "citrus": ("#FCEDD1", "#E8994F", "#F2C768"), "berry": ("#F2E5EA", "#86596E", "#D0A9C0")}
-        base, dark, light = palettes[body.palette]
-        image = Image.new("RGB", (768, 1024), base)
-        draw = ImageDraw.Draw(image)
-        for x, y, radius in [(650, 850, 280), (-50, 600, 180), (730, 180, 140)]:
-            draw.ellipse((x-radius, y-radius, x+radius, y+radius), fill=light)
-        draw.ellipse((200, 790, 900, 1370), fill=dark)
-        buffer = BytesIO()
-        image.save(buffer, format="PNG")
-        raw = buffer.getvalue()
+        # Generated once with GPT Image 2.5 (docs/demo-backgrounds.json) and shipped as static fixtures; no API call here.
+        source = ROOT / "fixtures" / "demo-backgrounds" / f"{body.palette}.webp"
+        raw = source.read_bytes()
+        with Image.open(BytesIO(raw)) as image:
+            width_px, height_px = image.size
         asset_id = str(uuid4())
         key = f"{user.tenant_id}/assets/{asset_id}"
-        storage.put(key, raw, "image/png")
-        asset = Asset(id=asset_id, tenant_id=user.tenant_id, workspace_id=project.workspace_id,storage_key=key, original_name=f"데모 배경-{body.palette}.png", content_type="image/png", byte_size=len(raw), width_px=768, height_px=1024, source="fixture")
+        storage.put(key, raw, "image/webp")
+        asset = Asset(id=asset_id, tenant_id=user.tenant_id, workspace_id=project.workspace_id,storage_key=key, original_name=f"예시 배경-{body.palette}.webp", content_type="image/webp", byte_size=len(raw), width_px=width_px, height_px=height_px, source="fixture")
         db.add(asset)
         db.commit()
-        return envelope(request, {**asset_payload(asset), "demo": True, "label": "자체 제작 데모 이미지 · AI 생성 아님", "credits_charged": 0})
+        return envelope(request, {**asset_payload(asset), "demo": True, "label": "예시 배경 · 미리 생성한 AI 이미지(크레딧 차감 없음)", "credits_charged": 0})
 
     @app.post("/v1/exports", status_code=202, response_model=Envelope[J.JobData], response_model_exclude_unset=True, responses=ERROR_RESPONSES)
     def create_export(body: ExportInput, request: Request, db=Depends(db_session)):

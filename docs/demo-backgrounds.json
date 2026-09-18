@@ -1,0 +1,165 @@
+{
+  "created_at": "2026-09-18T05:32:10.066190+00:00",
+  "method": "scripts/generate-brand-media.py",
+  "model": "gpt-image-2.5-sunburst",
+  "quality": "xhigh",
+  "estimated_total_cost_usd": 0.447,
+  "images": [
+    {
+      "file": "fixtures/demo-backgrounds/forest.webp",
+      "width": 1024,
+      "height": 1536,
+      "bytes": 172064,
+      "sha256": "a78c03c0a002436065018c52b5318c9058b68c2516545c10d40228b5e46342e2",
+      "model": "gpt-image-2.5-sunburst",
+      "quality": "xhigh",
+      "size": "1024x1536",
+      "prompt": "Use case: print artwork. Flat, print-ready background artwork for a Korean food pouch, portrait, full bleed, not a photograph of a pouch, no mockup, no perspective. Joyful, bright and modern Korean food-brand aesthetic: fresh saturated but harmonious colours, soft natural light, friendly rounded illustration touches, clean premium finish, nothing dull or beige-heavy. Absolutely no letters, words, numbers, logos, barcodes or watermarks anywhere. Fresh matcha green watercolour wash with soft white light leaks and a few loose hand-painted tea leaves near the bottom edge; keep the upper half calm and almost plain for a product title. Smooth print-safe colours, no harsh vignette.",
+      "usage": {
+        "input_tokens": 144,
+        "input_tokens_details": {
+          "image_tokens": 0,
+          "text_tokens": 144
+        },
+        "output_tokens": 2459,
+        "output_tokens_details": {
+          "image_tokens": 2459,
+          "text_tokens": 0
+        },
+        "total_tokens": 2603
+      },
+      "estimated_cost_usd": 0.0745,
+      "request_id_recorded": true
+    },
+    {
+      "file": "fixtures/demo-backgrounds/citrus.webp",
+      "width": 1024,
+      "height": 1536,
+      "bytes": 161352,
+      "sha256": "e95caeea9bb1cd3c651e532eb0f0e21a92990786f5eb9fdfc6f1218fdded95c7",
+      "model": "gpt-image-2.5-sunburst",
+      "quality": "xhigh",
+      "size": "1024x1536",
+      "prompt": "Use case: print artwork. Flat, print-ready background artwork for a Korean food pouch, portrait, full bleed, not a photograph of a pouch, no mockup, no perspective. Joyful, bright and modern Korean food-brand aesthetic: fresh saturated but harmonious colours, soft natural light, friendly rounded illustration touches, clean premium finish, nothing dull or beige-heavy. Absolutely no letters, words, numbers, logos, barcodes or watermarks anywhere. Bright tangerine-orange gradient with playful hand-drawn citrus slices, leaves and tiny dots scattered along the lower third; keep the upper half calm and almost plain for a product title. Smooth print-safe colours, no harsh vignette.",
+      "usage": {
+        "input_tokens": 143,
+        "input_tokens_details": {
+          "image_tokens": 0,
+          "text_tokens": 143
+        },
+        "output_tokens": 2459,
+        "output_tokens_details": {
+          "image_tokens": 2459,
+          "text_tokens": 0
+        },
+        "total_tokens": 2602
+      },
+      "estimated_cost_usd": 0.0745,
+      "request_id_recorded": true
+    },
+    {
+      "file": "fixtures/demo-backgrounds/berry.webp",
+      "width": 1024,
+      "height": 1536,
+      "bytes": 257912,
+      "sha256": "8a4c3a12b41fc300ec8822887a75ba9b09656e42d91b7c7964f2610ecc70f23d",
+      "model": "gpt-image-2.5-sunburst",
+      "quality": "xhigh",
+      "size": "1024x1536",
+      "prompt": "Use case: print artwork. Flat, print-ready background artwork for a Korean food pouch, portrait, full bleed, not a photograph of a pouch, no mockup, no perspective. Joyful, bright and modern Korean food-brand aesthetic: fresh saturated but harmonious colours, soft natural light, friendly rounded illustration touches, clean premium finish, nothing dull or beige-heavy. Absolutely no letters, words, numbers, logos, barcodes or watermarks anywhere. Raspberry pink to soft cream gradient with a cheerful pattern of berries, oats and small sparkles along the sides and bottom; keep the centre calm for a product title. Smooth print-safe colours, no harsh vignette.",
+      "usage": {
+        "input_tokens": 139,
+        "input_tokens_details": {
+          "image_tokens": 0,
+          "text_tokens": 139
+        },
+        "output_tokens": 2459,
+        "output_tokens_details": {
+          "image_tokens": 2459,
+          "text_tokens": 0
+        },
+        "total_tokens": 2598
+      },
+      "estimated_cost_usd": 0.0745,
+      "request_id_recorded": true
+    },
+    {
+      "file": "fixtures/demo-backgrounds/duck.webp",
+      "width": 1024,
+      "height": 1536,
+      "bytes": 90246,
+      "sha256": "7d5935cdc55a2e61f2a4cb251e3c6fa3e96d5330a6864695adccafe3d8e4727a",
+      "model": "gpt-image-2.5-sunburst",
+      "quality": "xhigh",
+      "size": "1024x1536",
+      "prompt": "Use case: print artwork. Flat, print-ready background artwork for a Korean food pouch, portrait, full bleed, not a photograph of a pouch, no mockup, no perspective. Joyful, bright and modern Korean food-brand aesthetic: fresh saturated but harmonious colours, soft natural light, friendly rounded illustration touches, clean premium finish, nothing dull or beige-heavy. Absolutely no letters, words, numbers, logos, barcodes or watermarks anywhere. Warm honey-orange and cream colour blocking with one large friendly minimalist duck character silhouette near the bottom and soft rounded shapes; keep the top calm for a title. Smooth print-safe colours, no harsh vignette.",
+      "usage": {
+        "input_tokens": 137,
+        "input_tokens_details": {
+          "image_tokens": 0,
+          "text_tokens": 137
+        },
+        "output_tokens": 2459,
+        "output_tokens_details": {
+          "image_tokens": 2459,
+          "text_tokens": 0
+        },
+        "total_tokens": 2596
+      },
+      "estimated_cost_usd": 0.0745,
+      "request_id_recorded": true
+    },
+    {
+      "file": "fixtures/demo-backgrounds/nut.webp",
+      "width": 1024,
+      "height": 1536,
+      "bytes": 524540,
+      "sha256": "1652557301fd7ceb9118e0c540dae1c8fef72417a9620fdc63f575fcdc4cc31e",
+      "model": "gpt-image-2.5-sunburst",
+      "quality": "xhigh",
+      "size": "1024x1536",
+      "prompt": "Use case: print artwork. Flat, print-ready background artwork for a Korean food pouch, portrait, full bleed, not a photograph of a pouch, no mockup, no perspective. Joyful, bright and modern Korean food-brand aesthetic: fresh saturated but harmonious colours, soft natural light, friendly rounded illustration touches, clean premium finish, nothing dull or beige-heavy. Absolutely no letters, words, numbers, logos, barcodes or watermarks anywhere. Warm kraft-paper texture with hand-drawn roasted chestnuts, almonds and small leaves in brown, gold and green along the bottom edge; keep the top two thirds calm for a title. Smooth print-safe colours, no harsh vignette.",
+      "usage": {
+        "input_tokens": 143,
+        "input_tokens_details": {
+          "image_tokens": 0,
+          "text_tokens": 143
+        },
+        "output_tokens": 2459,
+        "output_tokens_details": {
+          "image_tokens": 2459,
+          "text_tokens": 0
+        },
+        "total_tokens": 2602
+      },
+      "estimated_cost_usd": 0.0745,
+      "request_id_recorded": true
+    },
+    {
+      "file": "fixtures/demo-backgrounds/ocean.webp",
+      "width": 1024,
+      "height": 1536,
+      "bytes": 319788,
+      "sha256": "f84fc9afd765a1c308f0ff7a471529206e528f3615bbe68fce75c70e3d23e336",
+      "model": "gpt-image-2.5-sunburst",
+      "quality": "xhigh",
+      "size": "1024x1536",
+      "prompt": "Use case: print artwork. Flat, print-ready background artwork for a Korean food pouch, portrait, full bleed, not a photograph of a pouch, no mockup, no perspective. Joyful, bright and modern Korean food-brand aesthetic: fresh saturated but harmonious colours, soft natural light, friendly rounded illustration touches, clean premium finish, nothing dull or beige-heavy. Absolutely no letters, words, numbers, logos, barcodes or watermarks anywhere. Cool sky-blue to seafoam gradient with gentle wave lines, small fish and salt-crystal sparkles at the bottom; keep the upper half calm for a title. Smooth print-safe colours, no harsh vignette.",
+      "usage": {
+        "input_tokens": 139,
+        "input_tokens_details": {
+          "image_tokens": 0,
+          "text_tokens": 139
+        },
+        "output_tokens": 2459,
+        "output_tokens_details": {
+          "image_tokens": 2459,
+          "text_tokens": 0
+        },
+        "total_tokens": 2598
+      },
+      "estimated_cost_usd": 0.0745,
+      "request_id_recorded": true
+    }
+  ]
+}

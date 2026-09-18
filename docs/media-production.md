@@ -30,3 +30,12 @@
 `dreamina-seedance-2-5-260628`로 참조 이미지 기반 영상 1회를 생성했다. 1280×720, 24fps, 8.04초, H.264, 무음이며 웹 재생을 위해 무손실 fast-start 처리했다. 실제 영상에서 포스터를 추출했다. 세부 기록은 [media-video.json](media-video.json)에 있다.
 
 메인·콘셉트 갤러리·가입·대시보드에 소재를 적용했다. 데스크톱 1440px 및 모바일 390px에서 이미지 로딩과 가로 넘침 없는 배치를 확인했다. 브라우저의 실제 영상은 무음·반복 재생됐고 재생/일시정지 버튼 모두 작동했다. 동작 줄이기 설정 대응은 구현했으며 OS 설정 변경을 통한 별도 시험은 하지 않았다.
+
+## 2026-09-18 재제작 (GPT Image 2.5 Sunburst · xhigh)
+
+사용자 지시로 사이트 디자인과 예시 이미지를 더 밝고 부드럽게 바꿨다. 실행은 `scripts/generate-brand-media.py`(키는 실행 시 로컬 파일에서만 읽음), 기록은 [media-images.json](media-images.json)과 [demo-backgrounds.json](demo-backgrounds.json)이다.
+
+- 사이트: `packaging-hero.webp`(1536×1024) 1장, 콘셉트 `concept-duck/citrus/berry/matcha.webp`(1024×1024) 4장. 메인 콘셉트 카드가 2개→4개로 늘었고 로그인 화면은 오리 콘셉트를 사용한다.
+- 편집기 예시 배경: `fixtures/demo-backgrounds/{forest,citrus,berry,duck,nut,ocean}.webp`(1024×1536, 글자 없음). 도형으로 그리던 데모 배경을 대체하며 `/demo-background`가 그대로 제공한다(크레딧 차감 없음). 로컬 fixture AI 결과도 프롬프트 키워드에 맞는 배경을 사용한다.
+- 비용: 11장, 예상 약 $0.90(토큰 기준 추정). 사용자가 제공한 키로 실행했고 앱 크레딧 원장과는 무관하다.
+- UI: `globals.css` 끝의 "softer, brighter" 오버라이드로 둥근 버튼·카드, 따뜻한 배경, 콘셉트 카드 호버를 적용했다.
