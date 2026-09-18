@@ -92,3 +92,13 @@ def test_refunded_first_payment_voids_the_referral(billing_db, payment_settings,
         refund_order(db, friend, order.order_id, "unused", provider=provider, settings=payment_settings, now=now + timedelta(days=1))
         assert process_referral_bonuses(db, now=now + timedelta(days=POLICY["cancellation_window_days"])) == 0
         assert db.scalar(select(Referral)).status == "void"
+
+
+def test_customer_key_fits_toss_limits(billing_db, payment_settings):
+    import re
+    from services.api.billing.payments import billing_account
+    factory, tenant, now = billing_db
+    with factory.begin() as db:
+        account = billing_account(db, tenant, payment_settings)
+        key = payment_settings.decrypt(account.customer_key_encrypted)
+        assert 2 <= len(key) <= 50 and re.fullmatch(r"[A-Za-z0-9\-_=.@]+", key)

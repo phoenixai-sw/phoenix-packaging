@@ -203,7 +203,8 @@ def billing_account(db, tenant_id, settings):
     settings.validate()
     account = db.get(BillingAccount, tenant_id)
     if account is None:
-        key = "phoenix_" + secrets.token_urlsafe(32)
+        # Toss customerKey rule: 2-50 chars of [A-Za-z0-9-_=.@]; "phoenix_" + 32 url-safe chars = 40.
+        key = "phoenix_" + secrets.token_urlsafe(24)
         account = BillingAccount(tenant_id=tenant_id, customer_key_encrypted=settings.encrypt(key), customer_key_hash=sha256(key.encode()).hexdigest(), provider=settings.provider)
         db.add(account)
         db.flush()
