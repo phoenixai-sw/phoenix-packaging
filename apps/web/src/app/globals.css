@@ -6443,6 +6443,9 @@ input[type="checkbox"] {
 .image-region-box { position:absolute; border:2px solid #ee5a3c; background:#ee5a3c24; pointer-events:none; box-shadow:0 0 0 1px #fff8; }
 .region-fields { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
 .editor-activity .low-balance { margin-left:8px; font-style:normal; color:#b4530a; font-weight:600; }
+.image-region-mask { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+.button.selected { outline:2px solid var(--orange); }
+.image-region-selector > canvas { display:block; }
 .image-text-hit { position:absolute; margin:0; padding:0; border:1.5px dashed #2f6fed; background:#2f6fed14; cursor:pointer; border-radius:2px; }
 .image-text-hit:hover, .image-text-hit.selected { background:#2f6fed33; border-style:solid; }
 .image-text-hit:disabled { cursor:default; opacity:.5; }

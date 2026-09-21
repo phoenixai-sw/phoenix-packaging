@@ -89,8 +89,8 @@ def summarize_job(db, job):
         if asset:
             detail={"id":asset.id,"name":asset.original_name,"source":asset.source,"width_px":asset.width_px,"height_px":asset.height_px,"url":f"/v1/assets/{asset.id}/content"}
             detail.update({key:asset.metadata_json.get(key) for key in ("model","requested_quality","actual_quality","output_size","actual_size")})
-            if asset.metadata_json.get("edit_mode")=="remove_text":
-                detail.update({key:asset.metadata_json.get(key) for key in ("edit_mode","edit_region","edit_pixel_box","reference_asset_id","preservation_scope","source_size_px","outside_pixels_preserved")})
+            if asset.metadata_json.get("edit_mode") in ("remove_text","region","cutout"):
+                detail.update({key:asset.metadata_json.get(key) for key in ("edit_mode","edit_region","edit_shapes","edit_pixel_box","reference_asset_id","preservation_scope","source_size_px","outside_pixels_preserved","has_alpha")})
             assets.append(detail)
     cost=job.snapshot["unit_cost"]
     reserved=sum(u.status in {"queued","running"} for u in units)*cost
@@ -179,7 +179,7 @@ def process_ai_jobs(session_factory, storage, settings, limit=1, provider=None):
                 with session_factory() as db:
                     original=db.scalar(select(Asset).where(Asset.id==data["reference_asset_id"],Asset.tenant_id==tenant_id))
                     if not original: raise ProviderError("ASSET_UNAVAILABLE","원본 이미지에 접근할 수 없습니다.")
-                    if data.get("edit_mode")=="remove_text":
+                    if data.get("edit_mode") in ("remove_text","region","cutout"):
                         content=storage.get_limited(original.storage_key,MAX_REFERENCE_BYTES)
                         image=validate_edit_reference(data,content)
                         buffer=BytesIO();image.save(buffer,format="PNG",icc_profile=image.info.get("icc_profile"));reference=buffer.getvalue()
@@ -212,7 +212,7 @@ def process_ai_jobs(session_factory, storage, settings, limit=1, provider=None):
                 attempt.status="provider_succeeded"
                 db.get(AiUnit,unit_id).result_metadata=result.metadata
                 db.commit()
-            if data.get("edit_mode")=="remove_text":
+            if data.get("edit_mode") in ("remove_text","region","cutout"):
                 result=composite_edit_result(data,reference,result)
             asset_id=str(uuid4());key=f"{tenant_id}/ai/{job_id}/{unit_id}/{lease}.png"
             from .retention.storage_lifecycle import record_write_intent, mark_published
@@ -254,7 +254,7 @@ def process_ai_jobs(session_factory, storage, settings, limit=1, provider=None):
                     from .metrics.service import record_generation
                     record_generation(db,job,unit,succeeded=True)
                     db.add(AuditEvent(tenant_id=tenant_id,action="generation_succeeded",entity_id=job_id,details={"unit":index,"provider":settings.ai_provider,
-                        **({"edit_mode":"remove_text","reference_asset_id":data["reference_asset_id"],"edit_pixel_box":data["edit_pixel_box"],"preservation_scope":"outside_edit_region"} if data.get("edit_mode")=="remove_text" else {})}))
+                        **({"edit_mode":data["edit_mode"],"reference_asset_id":data["reference_asset_id"],"edit_pixel_box":data["edit_pixel_box"],"preservation_scope":result.metadata.get("preservation_scope")} if data.get("edit_mode") in ("remove_text","region","cutout") else {})}))
                 unit.updated_at=utcnow();summarize_job(db,db.get(Job,job_id));db.commit()
         except Exception as exc:
             error=exc if isinstance(exc,ProviderError) else ProviderError("AI_STORAGE_OR_COMMIT_FAILED","결과 저장이 완료되지 않아 예약을 복원합니다.",uncertain=provider_invoked)

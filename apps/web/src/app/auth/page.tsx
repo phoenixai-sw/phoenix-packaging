@@ -16,7 +16,8 @@ type GoogleIdentity = {
     nonce: string;
     callback: (response: { credential: string }) => void;
     auto_select: boolean;
-    ux_mode: "popup";
+    ux_mode: "popup" | "redirect";
+    login_uri?: string;
     itp_support: boolean;
   }) => void;
   renderButton: (
@@ -47,6 +48,8 @@ function AuthForm() {
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const [loading, setLoading] = useState(true);
+  // Redirect mode is for browsers that block the Google popup (embedded/in-app browsers).
+  const [redirectMode, setRedirectMode] = useState(false);
   const buttonHost = useRef<HTMLDivElement>(null);
   const request = useRef<Promise<Challenge> | undefined>(undefined);
   const credentialBusy = useRef(false);
@@ -99,11 +102,20 @@ function AuthForm() {
       return;
     }
     let active = true;
+    if (redirectMode) {
+      try {
+        sessionStorage.setItem("phoenix-google-redirect", JSON.stringify({ csrf_token: challenge.csrf_token, next, acquisition: captureAcquisition() }));
+      } catch {
+        setError("이 브라우저는 세션 저장을 허용하지 않아 페이지 이동 로그인을 쓸 수 없습니다.");
+        return;
+      }
+    }
     google.initialize({
       client_id: challenge.client_id,
       nonce: challenge.nonce,
       auto_select: false,
-      ux_mode: "popup",
+      ux_mode: redirectMode ? "redirect" : "popup",
+      ...(redirectMode ? { login_uri: `${window.location.origin}/auth/google/return` } : {}),
       itp_support: true,
       callback: (response) => {
         if (!active || credentialBusy.current) return;
@@ -141,7 +153,7 @@ function AuthForm() {
     return () => {
       active = false;
     };
-  }, [challenge, scriptReady, next, router]);
+  }, [challenge, scriptReady, next, router, redirectMode]);
   function restart() {
     if (scriptFailed) {
       window.location.reload();
@@ -199,6 +211,18 @@ function AuthForm() {
               opacity: busy ? 0.6 : 1,
             }}
           />
+        )}
+        {challenge && scriptReady && !busy && (
+          <p className="auth-disclaimer">
+            {redirectMode
+              ? "페이지 이동 방식입니다. Google 화면으로 이동했다가 돌아옵니다."
+              : "버튼을 눌러도 창이 열리지 않으면 (팝업 차단·앱 내 브라우저) "}
+            {!redirectMode && (
+              <button className="text-link" onClick={() => setRedirectMode(true)}>
+                페이지 이동 방식으로 로그인
+              </button>
+            )}
+          </p>
         )}
         {error && (
           <>

@@ -109,8 +109,10 @@ class ImageCapabilities(ContractModel):
     high_edit: bool
     max_units: int
     preservation_guaranteed: bool
-    edit_modes: list[Literal['full', 'remove_text']]
+    edit_modes: list[Literal['full', 'remove_text', 'region', 'cutout']]
     remove_text: RemoveTextCapability
+    region_edit: RegionEditCapability | None = None
+    cutout: CutoutCapability | None = None
 
 
 class PublicConfig(ContractModel):
@@ -147,6 +149,31 @@ class QuoteData(ContractModel):
     provider_mode: str | None = None
 
 
+class RegionEditCapability(ContractModel):
+    enabled: bool
+    shapes: list[Literal['rect', 'polygon', 'brush']]
+    max_points: int
+    coordinates: Literal['source_normalized']
+    preservation_scope: Literal['outside_edit_region']
+    provider_mask: Literal[True]
+
+
+class CutoutCapability(ContractModel):
+    enabled: bool
+    output: Literal['transparent_png_layer']
+    print_requires_flatten: Literal[True]
+
+
+class EditShape(ContractModel):
+    type: Literal['rect', 'polygon', 'brush']
+    x: float | None = None
+    y: float | None = None
+    width: float | None = None
+    height: float | None = None
+    points: list[list[float]] | None = None
+    radius: float | None = None
+
+
 class GeneratedAsset(ContractModel):
     id: str
     name: str
@@ -161,6 +188,8 @@ class GeneratedAsset(ContractModel):
     actual_size: str | None = None
     edit_mode: str | None = None
     edit_region: ImageCrop | None = None
+    edit_shapes: list[EditShape] | None = None
+    has_alpha: bool | None = None
     edit_pixel_box: tuple[int, int, int, int] | None = None
     reference_asset_id: str | None = None
     preservation_scope: str | None = None

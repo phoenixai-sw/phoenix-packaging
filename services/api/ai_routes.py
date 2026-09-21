@@ -18,6 +18,7 @@ from .billing.service import reserve, release_unit, canonical_hash
 from .ai_jobs import summarize_job, lock_tenant_work
 from .image_provider import (get_capabilities, ProviderError, EDIT_VERSION, MAX_REFERENCE_BYTES,
                              normalize_edit_region, edit_pixel_box, decode_edit_reference,
+                             normalize_edit_shapes, shapes_mask, mask_pixel_box, mask_digest, EDIT_MODES, REGION_MODES,
                              AI_SELECTION_VERSION, IMAGE_ACTIONS,
                              resolve_image_selection)
 from .image_sizing import ImageSizeError, select_image_output
@@ -56,14 +57,18 @@ def prepare_ai_quote(db,user,body,settings):
     except ProviderError as error:
         raise APIError(422,error.code,error.message) from None
     mode=submitted.get("edit_mode", "full")
-    if not isinstance(mode,str) or mode not in {"full", "remove_text"}:
+    if not isinstance(mode,str) or mode not in EDIT_MODES:
         raise APIError(422,"AI_EDIT_MODE_INVALID","지원하지 않는 이미지 수정 방식입니다.")
-    edit_fields={"edit_mode", "edit_region", "confirmed_source_text"}
+    edit_fields={"edit_mode", "edit_region", "edit_shapes", "confirmed_source_text"}
     if not is_edit and edit_fields.intersection(submitted):
-        raise APIError(422,"EDIT_ACTION_MISMATCH","글자 제거는 원본 이미지 수정 작업에서만 사용할 수 있습니다.")
-    if mode=="full" and {"edit_region","confirmed_source_text"}.intersection(submitted):
-        raise APIError(422,"EDIT_MODE_MISMATCH","영역을 선택한 글자 제거 방식을 지정해 주세요.")
+        raise APIError(422,"EDIT_ACTION_MISMATCH","영역 수정·글자 제거·레이어 분리는 원본 이미지 수정 작업에서만 사용할 수 있습니다.")
+    if mode=="full" and {"edit_region","edit_shapes","confirmed_source_text"}.intersection(submitted):
+        raise APIError(422,"EDIT_MODE_MISMATCH","영역을 사용하는 수정 방식을 지정해 주세요.")
+    if mode!="remove_text" and "confirmed_source_text" in submitted:
+        raise APIError(422,"EDIT_MODE_MISMATCH","확인한 원문은 글자 제거에서만 사용합니다.")
     prompt=body.get("prompt") if body.get("prompt") is not None else submitted.get("prompt","")
+    if mode=="cutout" and isinstance(prompt,str) and not prompt.strip():
+        prompt="주요 피사체를 배경에서 분리"
     if not isinstance(prompt,str) or not 5<=len(prompt.strip())<=4000: raise APIError(422,"PROMPT_INVALID","디자인 설명을 5~4,000자로 입력해 주세요.")
     face_id=body.get("face_id") or submitted.get("face_id","front")
     face=next((face for face in project.scene["faces"] if face["id"]==face_id),None)
@@ -79,12 +84,22 @@ def prepare_ai_quote(db,user,body,settings):
     sizing_width,sizing_height=face["width_mm"],face["height_mm"]
     if is_edit:
         data["edit_mode"]=mode
-    if mode=="remove_text":
-        confirmed=submitted.get("confirmed_source_text","")
-        if not isinstance(confirmed,str) or len(confirmed)>4000:
+    if mode in REGION_MODES:
+        confirmed=submitted.get("confirmed_source_text","") if mode=="remove_text" else None
+        if confirmed is not None and (not isinstance(confirmed,str) or len(confirmed)>4000):
             raise APIError(422,"SOURCE_TEXT_INVALID","확인한 원문은 4,000자 이하로 입력해 주세요.")
         try:
-            region=normalize_edit_region(submitted.get("edit_region"))
+            shapes=None
+            if mode=="remove_text":
+                region=normalize_edit_region(submitted.get("edit_region"))
+            elif submitted.get("edit_shapes") is not None:
+                shapes=normalize_edit_shapes(submitted.get("edit_shapes"));region=None
+            elif submitted.get("edit_region") is not None:
+                region=normalize_edit_region(submitted.get("edit_region"))
+            elif mode=="cutout":
+                region=None  # whole image: the provider decides what the subject is
+            else:
+                raise ProviderError("EDIT_SHAPES_INVALID","부분 수정할 영역을 표시해 주세요.")
             # Bind old uploads too: early upload rows may not have a SHA. A
             # bounded private read freezes actual bytes without mutating them.
             from hashlib import sha256
@@ -93,14 +108,18 @@ def prepare_ai_quote(db,user,body,settings):
             content=storage.get_limited(reference_asset.storage_key,MAX_REFERENCE_BYTES)
             original=decode_edit_reference(content)
             if not 1/3<=original.width/original.height<=3:
-                raise ProviderError("EDIT_REFERENCE_ASPECT_UNSUPPORTED","글자 제거 원본의 가로세로 비율은 1:3~3:1이어야 합니다.")
-            box=edit_pixel_box(region,*original.size)
+                raise ProviderError("EDIT_REFERENCE_ASPECT_UNSUPPORTED","부분 수정 원본의 가로세로 비율은 1:3~3:1이어야 합니다.")
+            if shapes is None and region is None:
+                shapes=[{"type":"rect","x":0.0,"y":0.0,"width":1.0,"height":1.0}]
+            mask=shapes_mask(shapes if shapes is not None else [{"type":"rect",**region}],*original.size)
+            box=mask_pixel_box(mask)
             saved_digest=reference_asset.metadata_json.get("sha256")
             digest=sha256(content).hexdigest()
             if saved_digest and saved_digest!=digest:
                 raise ProviderError("AI_REFERENCE_CHANGED","원본 이미지의 저장 무결성을 확인하지 못했습니다.")
-            data.update({"edit_version":EDIT_VERSION,"edit_region":region,"edit_pixel_box":box,
-                         "confirmed_source_text":confirmed,"reference_sha256":digest,
+            data.update({"edit_version":EDIT_VERSION,"edit_region":region,"edit_pixel_box":box,"edit_mask_sha256":mask_digest(mask),
+                         **({"edit_shapes":shapes} if shapes is not None else {}),
+                         **({"confirmed_source_text":confirmed} if confirmed is not None else {}),"reference_sha256":digest,
                          "reference_width_px":original.width,"reference_height_px":original.height,
                          "reference_byte_size":len(content),"preservation_scope":"outside_edit_region"})
             if isinstance(reference_asset.metadata_json.get("image_quality"),dict):
@@ -116,7 +135,7 @@ def prepare_ai_quote(db,user,body,settings):
     try:
         data.update(select_image_output(model, sizing_width, sizing_height))
         # Source aspect drives removal; placed-object PPI is known after apply.
-        if mode=="remove_text":
+        if mode in REGION_MODES:
             data["output_effective_ppi"] = None
     except ImageSizeError as error:
         raise APIError(422,"AI_SIZE_INVALID",str(error)) from None
@@ -125,10 +144,10 @@ def prepare_ai_quote(db,user,body,settings):
     from .feature_models import Brand
     from .image_context import build_image_context
     from .image_provider import design_prompt, edit_prompt
-    if mode != "remove_text":
+    if mode not in REGION_MODES:
         brand=owned_record(db,Brand,project.brand_id,user.tenant_id) if project.brand_id else None
         data["design_context"]=build_image_context(project,face,brand.colors if brand else [])
-    data["prompt_version"]=("packaging-remove-text-v1" if mode=="remove_text" else "packaging-reference-edit-v2") if is_edit else "packaging-background-v2"
+    data["prompt_version"]=({"remove_text":"packaging-remove-text-v1","region":"packaging-region-edit-v1","cutout":"packaging-cutout-v1"}.get(mode,"packaging-reference-edit-v2")) if is_edit else "packaging-background-v2"
     data["provider_prompt"]=edit_prompt(data) if is_edit else design_prompt(data)
     return {"action":action,"units":units,"project_id":project.id,"base_revision":project.base_revision,"input_data":data}
 
