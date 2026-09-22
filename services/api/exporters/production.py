@@ -22,7 +22,7 @@ def _json(path,value):
 
 def _production_pdf(scene,resolver):
     output=BytesIO();canvas=Canvas(output,pageCompression=1,invariant=1)
-    canvas.setTitle("Phoenix Packaging — approved RGB face pages")
+    canvas.setTitle("Phoenix Package Design — approved RGB face pages")
     _font();lookup={face["id"]:face for face in scene["faces"]}
     for structural in geometry_for_scene(scene)["faces"]:
         face=lookup[structural["id"]];w,h=face["width_mm"]*mm,face["height_mm"]*mm
@@ -36,8 +36,8 @@ def _production_pdf(scene,resolver):
 
 def _ticket_pdf(path,ticket):
     canvas=Canvas(str(path),pagesize=(210*mm,297*mm),invariant=1)
-    canvas.setTitle("Phoenix Packaging 작업지시서")
-    lines=["Phoenix Packaging 작업지시서",f"프로젝트: {ticket['project_id']}",f"리비전: {ticket['revision_id']}",
+    canvas.setTitle("Phoenix Package Design 작업지시서")
+    lines=["Phoenix Package Design 작업지시서",f"프로젝트: {ticket['project_id']}",f"리비전: {ticket['revision_id']}",
            f"템플릿 버전: {ticket['template_id']}",f"프로파일: {ticket['profile_id']}",f"재질: {ticket['material']}",
            "출력: 일반 PDF / RGB / 글꼴 임베드 / 면별 페이지 / 블리드 0mm", "프로파일에 명시된 기본 출력 조건만 지원합니다.",
            "PDF/X, CMYK, 별색, 화이트 잉크, 오버프린트, 칼선 출력은 포함하지 않습니다."]
@@ -165,7 +165,7 @@ def _export_icc_bundle(project,output_dir,conditions,resolver,recheck,icc_bytes,
         _json(staging/'job-ticket.json',ticket)
         # The ticket is explicitly an information document, separate from CMYK artwork.
         canvas=Canvas(str(staging/'job-ticket.pdf'),pagesize=(210*mm,297*mm),invariant=1);_font();canvas.setFont(FONT_ID,10)
-        for index,line in enumerate(['Phoenix Packaging 제작 작업 정보',f"프로젝트: {ticket['project_id']}",f"리비전: {ticket['revision_id']}",
+        for index,line in enumerate(['Phoenix Package Design 제작 작업 정보',f"프로젝트: {ticket['project_id']}",f"리비전: {ticket['revision_id']}",
             f"출력: 일반 PDF / ICC CMYK / 글꼴 윤곽선 / {profile['layout']} / 도련 {profile['bleed_mm']:g}mm",
             'production.pdf: 인쇄 아트 / cut.pdf: CUT / fold.pdf: FOLD'+(' / process.pdf: 가공 안내' if manifest.get('finishing') else ''),
             'PDF/X · 별색 · 화이트판 · 오버프린트 · 제조사 최종 입고 승인은 포함하지 않습니다.',

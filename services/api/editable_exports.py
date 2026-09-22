@@ -297,7 +297,7 @@ def build_editable_archive(snapshot, storage, output):
             write(font["path"], raw)
         for name in ("OFL.txt", "README.md"):
             write("fonts/" + name, (ROOT / "fixtures" / "fonts" / name).read_bytes())
-        write("README.ko.txt", ("Phoenix Packaging 편집용 프로젝트 자료\n\n" + RIGHTS_NOTICE +
+        write("README.ko.txt", ("Phoenix Package Design 편집용 프로젝트 자료\n\n" + RIGHTS_NOTICE +
             "\n\n선택한 저장본의 모든 면·숨김 객체·문구·crop·스타일을 scene.json에 보존했습니다. assets.json은 장면 asset_id와 원본 파일 경로를 연결합니다. "
             "파생 이미지의 참조·부모·최초 원본도 접근 가능한 범위에서 함께 보관합니다. 이미지 파일은 다시 압축하거나 잘라내지 않았습니다. "
             "SVG 수입의 source 역할 파일은 서버 allowlist로 정화한 정적 벡터이며, 배치 이미지는 함께 제공한 PNG입니다. 업로드 전 위험 원본은 포함하지 않으며 SVG 텍스트·외부참조·스크립트 실행은 지원하지 않습니다. "

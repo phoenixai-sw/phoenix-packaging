@@ -12,6 +12,10 @@ const ImageRegionTools = dynamic(
   () => import("./image-region-tools").then((m) => m.ImageRegionTools),
   { ssr: false },
 );
+const ImageMergeTools = dynamic(
+  () => import("./image-merge-tools").then((m) => m.ImageMergeTools),
+  { ssr: false },
+);
 const ImageQualityTools = dynamic(
   () => import("./image-quality-tools").then((m) => m.ImageQualityTools),
   { ssr: false },
@@ -33,7 +37,7 @@ export function ImagePreparationTools({
   saveCurrent: () => Promise<number>;
   onApply: ApplyPreparedScene;
   readOnly: boolean;
-  initialTab?: "quality" | "text" | "region";
+  initialTab?: "quality" | "text" | "region" | "merge";
 }) {
   const images =
     scene.faces
@@ -68,6 +72,7 @@ export function ImagePreparationTools({
             <option key={o.id} value={o.id}>
               이미지 {index + 1} · {o.width_mm.toFixed(1)} ×{" "}
               {o.height_mm.toFixed(1)} mm{o.visible === false ? " · 숨김" : ""}
+              {o.locked ? " · 잠김" : ""}
             </option>
           ))}
         </select>
@@ -94,8 +99,31 @@ export function ImagePreparationTools({
         >
           부분 수정·레이어 따기
         </button>
+        <button
+          role="tab"
+          aria-selected={tab === "merge"}
+          onClick={() => setTab("merge")}
+        >
+          레이어 병합
+        </button>
       </div>
-      {!object ? (
+      {object?.locked && tab !== "merge" && (
+        <p className="field-hint">
+          이 이미지 레이어는 잠겨 있어 아래 도구를 쓸 수 없습니다. 예시 배경은
+          처음부터 잠겨 있습니다. 레이어 목록에서 자물쇠를 풀어 주세요.
+        </p>
+      )}
+      {tab === "merge" ? (
+        <ImageMergeTools
+          projectId={projectId}
+          scene={scene}
+          faceId={faceId}
+          selectedId={id || selectedId}
+          saveCurrent={saveCurrent}
+          onApply={apply}
+          readOnly={readOnly}
+        />
+      ) : !object ? (
         <p className="field-hint">
           이미지 업로드 또는 AI 시안 적용 후 사용할 수 있습니다. 텍스트 레이어는
           편집기에서 직접 수정하세요.

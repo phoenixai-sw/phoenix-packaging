@@ -117,7 +117,7 @@ export function ServiceCheckout({ order, admin, busy, onBusyChange, onRefresh }:
         setNotice("모의 결제를 확인했습니다. 실제 금액을 결제하지 않았습니다. 아래 업무·구독 상태를 확인하세요.");
       } else {
         if (!caps.client_key) throw new Error(caps.message || "결제 서비스 연결을 준비하고 있습니다.");
-        await openTossPayment(caps.client_key, result, { serviceOrderId: order.id, orderName: `Phoenix Packaging ${order.catalog_snapshot.name}` });
+        await openTossPayment(caps.client_key, result, { serviceOrderId: order.id, orderName: `Phoenix Package Design ${order.catalog_snapshot.name}` });
       }
     });
   }

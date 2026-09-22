@@ -1,1 +1,1 @@
-"""Phoenix Packaging application services."""
+"""Phoenix Package Design application services."""

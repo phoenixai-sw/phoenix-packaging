@@ -1219,6 +1219,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/image-quality/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Merge */
+        post: operations["merge_v1_image_quality_merge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/image-quality/preview": {
         parameters: {
             query?: never;
@@ -3848,6 +3865,12 @@ export interface components {
             /** Request Id */
             request_id: string;
         };
+        /** Envelope[ImageMergeResult] */
+        Envelope_ImageMergeResult_: {
+            data: components["schemas"]["ImageMergeResult"];
+            /** Request Id */
+            request_id: string;
+        };
         /** Envelope[ImageQualityPreview] */
         Envelope_ImageQualityPreview_: {
             data: components["schemas"]["ImageQualityPreview"];
@@ -5053,6 +5076,51 @@ export interface components {
             /** Warnings */
             warnings: components["schemas"]["ImageWarning"][];
         };
+        /** ImageMergePatch */
+        ImageMergePatch: {
+            /** Asset Id */
+            asset_id: string;
+            /** Height Mm */
+            height_mm: number;
+            /** Opacity */
+            opacity: number;
+            /** Rotation Deg */
+            rotation_deg: number;
+            /** Width Mm */
+            width_mm: number;
+            /** X Mm */
+            x_mm: number;
+            /** Y Mm */
+            y_mm: number;
+            /** Z Index */
+            z_index: number;
+        };
+        /** ImageMergeResult */
+        ImageMergeResult: {
+            asset: components["schemas"]["AssetData"];
+            /** Background Filled */
+            background_filled: boolean;
+            /** Base Revision */
+            base_revision: number;
+            /** Credits Charged */
+            credits_charged: number;
+            /** Effective Ppi */
+            effective_ppi: number;
+            /** Face Id */
+            face_id: string;
+            /** Keep Object Id */
+            keep_object_id: string;
+            /** Object Ids */
+            object_ids: string[];
+            /** Output Pixels */
+            output_pixels: [
+                number,
+                number
+            ];
+            patch: components["schemas"]["ImageMergePatch"];
+            /** Remove Object Ids */
+            remove_object_ids: string[];
+        };
         /** ImagePolicy */
         ImagePolicy: {
             /** Allowed Models */
@@ -5684,6 +5752,30 @@ export interface components {
              * @enum {string}
              */
             role: "owner" | "editor" | "viewer";
+        };
+        /** MergeBody */
+        MergeBody: {
+            /** Base Revision */
+            base_revision: number;
+            /**
+             * Face Id
+             * @enum {string}
+             */
+            face_id: "front" | "back" | "bottom" | "left" | "right" | "top";
+            /** Object Ids */
+            object_ids: string[];
+            /** Operation Key */
+            operation_key: string;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /**
+             * Target Ppi
+             * @default 300
+             */
+            target_ppi: number;
         };
         /** MetricsOverviewDTO */
         MetricsOverviewDTO: {
@@ -19982,6 +20074,138 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Envelope_ImageInspection_"];
+                };
+            };
+            /** @description Malformed request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Access denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Resource unavailable */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Revision or idempotency conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Retired operation or unavailable asset */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Request too large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Input or semantic validation failed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Editor lease required */
+            423: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Rate or quota limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+            /** @description Service unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIErrorBody"];
+                };
+            };
+        };
+    };
+    merge_v1_image_quality_merge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MergeBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_ImageMergeResult_"];
                 };
             };
             /** @description Malformed request */

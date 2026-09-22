@@ -14,6 +14,14 @@ type Shape =
   | { type: "brush"; points: number[][]; radius: number };
 type Tool = "brush" | "rect";
 type Mode = "region" | "cutout";
+const MAX_SHAPES = 64, MAX_POINTS = 3000;
+/** Place `layer` right after `sourceId`. Painting sorts by z_index and keeps list order for ties,
+ *  so the copy draws just above its source without moving any other layer. */
+function insertAbove(objects: SceneObject[], sourceId: string, layer: SceneObject) {
+  const at = objects.findIndex((o) => o.id === sourceId);
+  return [...objects.slice(0, at + 1), layer, ...objects.slice(at + 1)];
+}
+const points = (shapes: Shape[]) => shapes.reduce((total, s) => total + (s.type === "brush" ? s.points.length : 0), 0);
 const terminal = ["succeeded", "partially_succeeded", "failed", "canceled", "reconciliation_required"];
 const labels: Record<string, string> = {
   queued: "대기 중", running: "처리 중", waiting_provider: "AI 수정 중", validating: "결과 검사 중",
@@ -35,6 +43,7 @@ export function ImageRegionTools({ projectId, scene, object, saveCurrent, onAppl
   const canvasRef = useRef<HTMLCanvasElement>(null), hostRef = useRef<HTMLDivElement>(null);
   const stroke = useRef<number[][] | null>(null), rectStart = useRef<{ x: number; y: number } | null>(null);
   const [liveRect, setLiveRect] = useState<ImageRegion | null>(null);
+  const [hostWidth, setHostWidth] = useState(0);
   const working = !!job && !terminal.includes(job.status);
   const locked = busy || working || readOnly || !!object.locked;
   const stale = !!snapshot && snapshot !== JSON.stringify(scene);
@@ -67,7 +76,15 @@ export function ImageRegionTools({ projectId, scene, object, saveCurrent, onAppl
     };
     shapes.forEach(draw);
     if (liveRect) draw({ type: "rect", ...liveRect });
-  }, [shapes, liveRect, dimensions]);
+  }, [shapes, liveRect, dimensions, hostWidth]);
+  // The canvas is sized in device pixels, so a panel resize has to redraw it.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setHostWidth(host.clientWidth));
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     if (!job || terminal.includes(job.status)) return;
     let stopped = false; let timer: ReturnType<typeof setTimeout>;
@@ -86,6 +103,10 @@ export function ImageRegionTools({ projectId, scene, object, saveCurrent, onAppl
   function invalidate() { setQuote(undefined); setJob(undefined); setSnapshot(""); setError(""); setNotice(""); }
   function onDown(e: React.PointerEvent<HTMLDivElement>) {
     if (locked) return;
+    if (shapes.length >= MAX_SHAPES || points(shapes) >= MAX_POINTS) {
+      setError("표시할 수 있는 영역을 모두 썼습니다. “되돌리기”나 “모두 지우기”로 정리한 뒤 이어 그려 주세요.");
+      return;
+    }
     e.currentTarget.setPointerCapture(e.pointerId);
     const p = point(e);
     invalidate();
@@ -97,7 +118,7 @@ export function ImageRegionTools({ projectId, scene, object, saveCurrent, onAppl
     const p = point(e);
     if (tool === "brush" && stroke.current) {
       const last = stroke.current[stroke.current.length - 1];
-      if (Math.hypot(p.x - last[0], p.y - last[1]) < 0.004 || stroke.current.length >= 400) return;
+      if (Math.hypot(p.x - last[0], p.y - last[1]) < 0.004 || stroke.current.length >= 400 || points(shapes) >= MAX_POINTS) return;
       stroke.current.push([p.x, p.y]);
       const pts = stroke.current;
       setShapes((s) => s.map((shape, i) => (i === s.length - 1 && shape.type === "brush" ? { ...shape, points: [...pts] } : shape)));
@@ -154,14 +175,15 @@ export function ImageRegionTools({ projectId, scene, object, saveCurrent, onAppl
         if (!face || !source || source.type !== "image") throw new Error("원본 이미지 레이어를 다시 선택해 주세요.");
         if (asset.edit_mode === "region")
           return { ...current, faces: current.faces.map((f) => (f.id !== face.id ? f : { ...f, objects: f.objects.map((o) => (o.id === source.id ? { ...o, asset_id: asset.id } : o)) })) };
-        // Cut-out: a new layer with the same geometry stacked right above the original.
-        const topZ = Math.max(0, ...face.objects.map((o) => o.z_index));
-        const layer: SceneObject = { ...source, id: crypto.randomUUID(), asset_id: asset.id, z_index: Math.min(10000, topZ + 1), locked: false };
-        return { ...current, faces: current.faces.map((f) => (f.id !== face.id ? f : { ...f, objects: [...f.objects, layer] })) };
+        // Cut-out: the same geometry stacked directly above its source, as a duplicate is in
+        // Photoshop. Sharing the source's z and sitting next to it in the list keeps every other
+        // layer — text above a background, say — exactly where it was, and keeps the stack mergeable.
+        const layer: SceneObject = { ...source, id: crypto.randomUUID(), asset_id: asset.id, locked: false };
+        return { ...current, faces: current.faces.map((f) => (f.id !== face.id ? f : { ...f, objects: insertAbove(f.objects, source.id, layer) })) };
       });
       setNotice(asset.edit_mode === "region"
         ? "표시한 부분만 바뀐 새 이미지로 교체했습니다. 원본은 보관함에 남아 있고 실행 취소로 되돌릴 수 있습니다."
-        : "분리한 피사체를 원본 위에 새 레이어로 추가했습니다. 레이어 목록에서 원본을 숨기거나 옮겨 보세요. CMYK 제작 출력 전에는 병합이 필요합니다.");
+        : "분리한 피사체를 원본 위에 새 레이어로 추가했습니다. 레이어 목록에서 원본을 숨기거나 옮겨 보세요. CMYK 제작 출력 전에는 “레이어 병합” 탭에서 합쳐 주세요.");
       setJob(undefined); setSnapshot(""); setShapes([]);
     } catch (e) { setError(errorMessage(e)); }
     finally { setBusy(false); }
@@ -179,9 +201,8 @@ export function ImageRegionTools({ projectId, scene, object, saveCurrent, onAppl
         const crop = source.crop || { x: 0, y: 0, width: 1, height: 1 };
         const region = { x: crop.x + rect.x * crop.width, y: crop.y + rect.y * crop.height, width: rect.width * crop.width, height: rect.height * crop.height };
         const placement = regionPlacement(source, region);
-        const topZ = Math.max(0, ...face.objects.map((o) => o.z_index));
-        const layer: SceneObject = { ...source, ...placement, id: crypto.randomUUID(), crop: region, z_index: Math.min(10000, topZ + 1), locked: false };
-        return { ...current, faces: current.faces.map((f) => (f.id !== face.id ? f : { ...f, objects: [...f.objects, layer] })) };
+        const layer: SceneObject = { ...source, ...placement, id: crypto.randomUUID(), crop: region, locked: false };
+        return { ...current, faces: current.faces.map((f) => (f.id !== face.id ? f : { ...f, objects: insertAbove(f.objects, source.id, layer) })) };
       });
       setNotice("표시한 사각형을 잘라 새 레이어로 복사했습니다(크레딧 0). 이동·크기 조절·잠금은 레이어 목록에서 합니다.");
       setShapes([]);
