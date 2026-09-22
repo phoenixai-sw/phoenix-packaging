@@ -92,6 +92,21 @@ class RemoveTextCapability(ContractModel):
     implementation: str
 
 
+class RegionEditCapability(ContractModel):
+    enabled: bool
+    shapes: list[Literal['rect', 'polygon', 'brush']]
+    max_points: int
+    coordinates: Literal['source_normalized']
+    preservation_scope: Literal['outside_edit_region']
+    provider_mask: Literal[True]
+
+
+class CutoutCapability(ContractModel):
+    enabled: bool
+    output: Literal['transparent_png_layer']
+    print_requires_flatten: Literal[True]
+
+
 class ImageCapabilities(ContractModel):
     provider: str
     model: str
@@ -147,21 +162,6 @@ class QuoteData(ContractModel):
     input_hash: str
     image_settings: ImageSettings | None = None
     provider_mode: str | None = None
-
-
-class RegionEditCapability(ContractModel):
-    enabled: bool
-    shapes: list[Literal['rect', 'polygon', 'brush']]
-    max_points: int
-    coordinates: Literal['source_normalized']
-    preservation_scope: Literal['outside_edit_region']
-    provider_mask: Literal[True]
-
-
-class CutoutCapability(ContractModel):
-    enabled: bool
-    output: Literal['transparent_png_layer']
-    print_requires_flatten: Literal[True]
 
 
 class EditShape(ContractModel):
