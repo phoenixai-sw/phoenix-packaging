@@ -8,6 +8,10 @@ const ImageTextTools = dynamic(
   () => import("./image-text-tools").then((m) => m.ImageTextTools),
   { ssr: false },
 );
+const ImageRegionTools = dynamic(
+  () => import("./image-region-tools").then((m) => m.ImageRegionTools),
+  { ssr: false },
+);
 const ImageQualityTools = dynamic(
   () => import("./image-quality-tools").then((m) => m.ImageQualityTools),
   { ssr: false },
@@ -29,7 +33,7 @@ export function ImagePreparationTools({
   saveCurrent: () => Promise<number>;
   onApply: ApplyPreparedScene;
   readOnly: boolean;
-  initialTab?: "quality" | "text";
+  initialTab?: "quality" | "text" | "region";
 }) {
   const images =
     scene.faces
@@ -83,6 +87,13 @@ export function ImagePreparationTools({
         >
           이미지 속 글자 편집
         </button>
+        <button
+          role="tab"
+          aria-selected={tab === "region"}
+          onClick={() => setTab("region")}
+        >
+          부분 수정·레이어 따기
+        </button>
       </div>
       {!object ? (
         <p className="field-hint">
@@ -91,6 +102,16 @@ export function ImagePreparationTools({
         </p>
       ) : tab === "quality" ? (
         <ImageQualityTools
+          key={`${object.id}:${object.asset_id}`}
+          projectId={projectId}
+          scene={scene}
+          object={object}
+          saveCurrent={saveCurrent}
+          onApply={apply}
+          readOnly={readOnly || !!object.locked}
+        />
+      ) : tab === "region" ? (
+        <ImageRegionTools
           key={`${object.id}:${object.asset_id}`}
           projectId={projectId}
           scene={scene}

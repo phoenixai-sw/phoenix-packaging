@@ -3396,6 +3396,21 @@ export interface components {
                 number
             ][];
         };
+        /** CutoutCapability */
+        CutoutCapability: {
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Output
+             * @constant
+             */
+            output: "transparent_png_layer";
+            /**
+             * Print Requires Flatten
+             * @constant
+             */
+            print_requires_flatten: true;
+        };
         /** DemoBackgroundInput */
         DemoBackgroundInput: {
             /**
@@ -3460,6 +3475,26 @@ export interface components {
         DuplicateBody: {
             /** Name */
             name?: string | null;
+        };
+        /** EditShape */
+        EditShape: {
+            /** Height */
+            height?: number | null;
+            /** Points */
+            points?: number[][] | null;
+            /** Radius */
+            radius?: number | null;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "rect" | "polygon" | "brush";
+            /** Width */
+            width?: number | null;
+            /** X */
+            x?: number | null;
+            /** Y */
+            y?: number | null;
         };
         /** EditableExportJob */
         EditableExportJob: {
@@ -4663,6 +4698,10 @@ export interface components {
                 number
             ] | null;
             edit_region?: components["schemas"]["ImageCrop"] | null;
+            /** Edit Shapes */
+            edit_shapes?: components["schemas"]["EditShape"][] | null;
+            /** Has Alpha */
+            has_alpha?: boolean | null;
             /** Height Px */
             height_px: number;
             /** Id */
@@ -4922,11 +4961,12 @@ export interface components {
         /** ImageCapabilities */
         ImageCapabilities: {
             auto_quality: components["schemas"]["AutoQuality"];
+            cutout?: components["schemas"]["CutoutCapability"] | null;
             defaults: components["schemas"]["ImageDefaults"];
             /** Edit */
             edit: boolean;
             /** Edit Modes */
-            edit_modes: ("full" | "remove_text")[];
+            edit_modes: ("full" | "remove_text" | "region" | "cutout")[];
             /** Generate */
             generate: boolean;
             high: components["schemas"]["ImagePreset"];
@@ -4946,6 +4986,7 @@ export interface components {
             provider: string;
             /** Qualities */
             qualities: components["schemas"]["QualityChoice"][];
+            region_edit?: components["schemas"]["RegionEditCapability"] | null;
             remove_text: components["schemas"]["RemoveTextCapability"];
             /** Selection Version */
             selection_version: string;
@@ -7408,6 +7449,30 @@ export interface components {
         RefundBody: {
             /** Reason */
             reason: string;
+        };
+        /** RegionEditCapability */
+        RegionEditCapability: {
+            /**
+             * Coordinates
+             * @constant
+             */
+            coordinates: "source_normalized";
+            /** Enabled */
+            enabled: boolean;
+            /** Max Points */
+            max_points: number;
+            /**
+             * Preservation Scope
+             * @constant
+             */
+            preservation_scope: "outside_edit_region";
+            /**
+             * Provider Mask
+             * @constant
+             */
+            provider_mask: true;
+            /** Shapes */
+            shapes: ("rect" | "polygon" | "brush")[];
         };
         /** Regions */
         Regions: {

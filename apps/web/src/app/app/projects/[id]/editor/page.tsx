@@ -124,6 +124,7 @@ export default function EditorPage({
     | "preparation"
     | "images"
     | "image-text"
+    | "image-region"
     | "crop"
     | "revisions"
     | "library"
@@ -1249,6 +1250,9 @@ export default function EditorPage({
               <button onClick={() => setPanel("image-text")}>
                 <Type size={17} /> 이미지 속 글자 편집
               </button>
+              <button onClick={() => setPanel("image-region")}>
+                <ImagePlus size={17} /> 부분 수정·레이어 따기
+              </button>
               <button onClick={() => setPanel("bindings")}>
                 <Link2 size={17} /> 상품 연결·복제
               </button>
@@ -2090,6 +2094,7 @@ export default function EditorPage({
                       preparation: "인쇄 준비와 정식 상품 바코드",
                       images: "이미지 해상도·도련 보완",
                       "image-text": "이미지 속 글자 편집",
+                      "image-region": "부분 수정·레이어 따기",
                     }[panel]
           }
           onClose={() => setPanel(null)}
@@ -2108,7 +2113,7 @@ export default function EditorPage({
               }}
             />
           )}
-          {(panel === "images" || panel === "image-text") && (
+          {(panel === "images" || panel === "image-text" || panel === "image-region") && (
             <ImagePreparationTools
               key={panel}
               projectId={id}
@@ -2118,7 +2123,7 @@ export default function EditorPage({
               saveCurrent={saveCurrent}
               onApply={applyPreparedScene}
               readOnly={readOnly}
-              initialTab={panel === "image-text" ? "text" : "quality"}
+              initialTab={panel === "image-text" ? "text" : panel === "image-region" ? "region" : "quality"}
             />
           )}
           {panel === "ai" && (

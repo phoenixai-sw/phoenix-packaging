@@ -3410,6 +3410,32 @@
         "title": "CutContour",
         "type": "object"
       },
+      "CutoutCapability": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "output": {
+            "const": "transparent_png_layer",
+            "title": "Output",
+            "type": "string"
+          },
+          "print_requires_flatten": {
+            "const": true,
+            "title": "Print Requires Flatten",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled",
+          "output",
+          "print_requires_flatten"
+        ],
+        "title": "CutoutCapability",
+        "type": "object"
+      },
       "DemoBackgroundInput": {
         "additionalProperties": false,
         "properties": {
@@ -3599,6 +3625,97 @@
           }
         },
         "title": "DuplicateBody",
+        "type": "object"
+      },
+      "EditShape": {
+        "additionalProperties": false,
+        "properties": {
+          "height": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          },
+          "points": {
+            "anyOf": [
+              {
+                "items": {
+                  "items": {
+                    "type": "number"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Points"
+          },
+          "radius": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Radius"
+          },
+          "type": {
+            "enum": [
+              "rect",
+              "polygon",
+              "brush"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          },
+          "x": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X"
+          },
+          "y": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Y"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "EditShape",
         "type": "object"
       },
       "EditableExportJob": {
@@ -7048,6 +7165,31 @@
               }
             ]
           },
+          "edit_shapes": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/EditShape"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edit Shapes"
+          },
+          "has_alpha": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has Alpha"
+          },
           "height_px": {
             "title": "Height Px",
             "type": "integer"
@@ -7870,6 +8012,16 @@
           "auto_quality": {
             "$ref": "#/components/schemas/AutoQuality"
           },
+          "cutout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CutoutCapability"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "defaults": {
             "$ref": "#/components/schemas/ImageDefaults"
           },
@@ -7881,7 +8033,9 @@
             "items": {
               "enum": [
                 "full",
-                "remove_text"
+                "remove_text",
+                "region",
+                "cutout"
               ],
               "type": "string"
             },
@@ -7932,6 +8086,16 @@
             },
             "title": "Qualities",
             "type": "array"
+          },
+          "region_edit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegionEditCapability"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "remove_text": {
             "$ref": "#/components/schemas/RemoveTextCapability"
@@ -14994,6 +15158,56 @@
           "reason"
         ],
         "title": "RefundBody",
+        "type": "object"
+      },
+      "RegionEditCapability": {
+        "additionalProperties": false,
+        "properties": {
+          "coordinates": {
+            "const": "source_normalized",
+            "title": "Coordinates",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "max_points": {
+            "title": "Max Points",
+            "type": "integer"
+          },
+          "preservation_scope": {
+            "const": "outside_edit_region",
+            "title": "Preservation Scope",
+            "type": "string"
+          },
+          "provider_mask": {
+            "const": true,
+            "title": "Provider Mask",
+            "type": "boolean"
+          },
+          "shapes": {
+            "items": {
+              "enum": [
+                "rect",
+                "polygon",
+                "brush"
+              ],
+              "type": "string"
+            },
+            "title": "Shapes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "enabled",
+          "shapes",
+          "max_points",
+          "coordinates",
+          "preservation_scope",
+          "provider_mask"
+        ],
+        "title": "RegionEditCapability",
         "type": "object"
       },
       "Regions": {
