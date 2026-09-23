@@ -230,6 +230,9 @@ export function ImageRegionTools({ projectId, scene, object, saveCurrent, onAppl
         <canvas ref={canvasRef} className="image-region-mask" aria-hidden="true" />
       </div>
       <p className="field-hint">원본 {dimensions.width} × {dimensions.height} px · 표시 {shapes.length}개{object.crop ? " · 잘라낸 이미지는 원본 전체 좌표로 표시됩니다" : ""}</p>
+      {/* The mask edge is hard: outside pixels are kept byte for byte, so nothing blends across it.
+          Cutting through flat artwork leaves a faint seam; a boundary the eye already expects hides it. */}
+      <p className="field-hint">표시는 <strong>색이 바뀌는 자리나 물체의 테두리까지 넉넉히</strong> 잡아 주세요. 무늬 한가운데를 자르면 새로 그린 부분과 원본 사이에 옅은 경계선이 보일 수 있습니다.</p>
       <div className="button-row">
         <button className="button button-light" disabled={locked || !rect} onClick={() => void copyRectToLayer()} title={rect ? "" : "사각형 하나만 표시했을 때 사용할 수 있습니다"}>사각형을 새 레이어로 복사 · 무료</button>
       </div>
