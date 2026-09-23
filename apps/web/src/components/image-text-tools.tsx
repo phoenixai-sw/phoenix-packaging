@@ -85,6 +85,9 @@ export function ImageTextTools({
     [weight, setWeight] = useState<400 | 700>(400),
     [color, setColor] = useState("#172d26"),
     [cover, setCover] = useState("#fff3de");
+  /** The last values we filled in ourselves. A field still holding one is ours to refresh when the
+   *  area changes; anything else the customer chose on purpose and we leave alone. */
+  const autoFilled = useRef({ fontSize: 18, color: "#172d26", cover: "#fff3de" });
   const [zoomResult, setZoomResult] = useState(true);
   // Lines found over the whole (cropped) image; clicking one prefills region, text, size and colours.
   const [detected, setDetected] = useState<DetectedTextLine[]>([]),
@@ -355,6 +358,34 @@ export function ImageTextTools({
       if (active.current && attempt === ocrAttempt.current) setOcrBusy(false);
     }
   }
+  /** Size and colours belong to the marked area, so they are re-derived whenever it moves.
+   *  Sampling a stale area is what put a cream cover over a yellow band and a title-sized font in a
+   *  line-sized box; both looked right in the form and wrong on the artwork. */
+  async function fillFromRegion(next: ImageRegion, force = false) {
+    try {
+      const placement = regionPlacement(object, next);
+      const size = estimateFontSizePt(placement.height_mm);
+      if (force || fontSize === autoFilled.current.fontSize) { setFontSize(size); autoFilled.current.fontSize = size; }
+    } catch {
+      // Keep the current size when the region falls outside the crop.
+    }
+    try {
+      const bitmap = await createImageBitmap(await loadSourceBlob());
+      const box = imageRegionPixels(next, bitmap.width, bitmap.height);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, box.width); canvas.height = Math.max(1, box.height);
+      const context = canvas.getContext("2d");
+      if (context) {
+        context.drawImage(bitmap, box.left, box.top, box.width, box.height, 0, 0, canvas.width, canvas.height);
+        const colors = sampleTextColors(context.getImageData(0, 0, canvas.width, canvas.height).data);
+        if (force || color === autoFilled.current.color) { setColor(colors.text); autoFilled.current.color = colors.text; }
+        if (force || cover === autoFilled.current.cover) { setCover(colors.cover); autoFilled.current.cover = colors.cover; }
+      }
+      bitmap.close();
+    } catch {
+      // Colour sampling is a convenience; the pickers stay editable.
+    }
+  }
   async function chooseLine(line: DetectedTextLine) {
     if (readOnly || object.locked || !draftReady || working || busy) return;
     invalidate();
@@ -363,28 +394,7 @@ export function ImageTextTools({
     setSourceText(line.text);
     setText(line.text);
     setConfidence(line.confidence);
-    try {
-      const placement = regionPlacement(object, line.region);
-      setFontSize(estimateFontSizePt(placement.height_mm));
-    } catch {
-      // Keep the current size when the region falls outside the crop.
-    }
-    try {
-      const blob = await loadSourceBlob();
-      const bitmap = await createImageBitmap(blob);
-      const box = imageRegionPixels(line.region, bitmap.width, bitmap.height);
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, box.width); canvas.height = Math.max(1, box.height);
-      const context = canvas.getContext("2d");
-      if (context) {
-        context.drawImage(bitmap, box.left, box.top, box.width, box.height, 0, 0, canvas.width, canvas.height);
-        const colors = sampleTextColors(context.getImageData(0, 0, canvas.width, canvas.height).data);
-        setColor(colors.text); setCover(colors.cover);
-      }
-      bitmap.close();
-    } catch {
-      // Colour sampling is a convenience; the pickers stay editable.
-    }
+    await fillFromRegion(line.region, true);
     setOcrStatus("원문·영역·크기·색을 채웠습니다. 새 문구를 적고 확인한 뒤 적용하세요.");
   }
   async function cancelOCR() {
@@ -554,7 +564,7 @@ export function ImageTextTools({
               if (readOnly || object.locked || !draftReady) { startPoint.current = null; return; }
               if (startPoint.current) {
                 const next = regionFromPoints(startPoint.current, point(e));
-                if (next.width > 0.001 && next.height > 0.001) setRegion(next);
+                if (next.width > 0.001 && next.height > 0.001) { setRegion(next); void fillFromRegion(next); }
                 startPoint.current = null;
               }
             }}
@@ -646,10 +656,9 @@ export function ImageTextTools({
                   value={Math.round(region[key] * 10000) / 100}
                   disabled={busy || working || ocrBusy}
                   onChange={(e) => {
-                    setRegion({
-                      ...region,
-                      [key]: Number(e.target.value) / 100,
-                    });
+                    const next = { ...region, [key]: Number(e.target.value) / 100 };
+                    setRegion(next);
+                    void fillFromRegion(next);
                     invalidate();
                   }}
                 />
