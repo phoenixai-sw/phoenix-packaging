@@ -143,3 +143,49 @@ def test_structural_identity_changes_only_new_fingerprint():
     assert production_fingerprint('tenant',dict(identity))==legacy
     assert production_fingerprint('tenant',{**identity,'structure_geometry_hash':'a'*64})!=legacy
     assert production_fingerprint('tenant',{**identity,'structure_geometry_hash':'a'*64})!=production_fingerprint('tenant',{**identity,'structure_geometry_hash':'b'*64})
+
+
+def test_registered_stand_pouch_net_closes_around_the_gusset(tmp_path):
+    """The shipped stand-pouch definition must cut one closed outline and crease the gusset.
+
+    A stand pouch is the case a rectangular per-face die-line gets wrong: the bottom gusset folds
+    inside, so the flat net is front, gusset, then the back upside down. The cut has to run around
+    all three as one shape and the creases have to land on the gusset's two edges and its middle."""
+    from services.api.geometry.snapshots import compile_structure
+    from services.api.geometry.print_paths import structure_paths
+    definition=json.loads((Path(__file__).resolve().parents[2]/'fixtures/structures/stand-up-pouch-260x340x120.json').read_text(encoding='utf-8'))
+    snap=compile_structure(definition,definition['dimensions'],'fixture-stand-pouch')
+    geometry=snap['geometry']
+    assert [geometry['net_width_mm'],geometry['net_height_mm']]==[260,800]
+    assert all(face['registered_structure'] for face in geometry['faces'])
+    pages=structure_paths(geometry,'net')
+    assert len(pages)==1 and pages[0]['face_id']=='net'
+    cut=pages[0]['cut']
+    assert len(cut)==8
+    # One closed ring: every point is left exactly once and arrived at exactly once.
+    starts=sorted(tuple(line[:2]) for line in cut)
+    assert starts==sorted(tuple(line[2:]) for line in cut)
+    assert len(set(starts))==len(starts)
+    xs={line[0] for line in cut}|{line[2] for line in cut}
+    ys={line[1] for line in cut}|{line[3] for line in cut}
+    assert xs=={0,260} and ys=={0,340,460,800}
+    folds=sorted(line[1] for line in pages[0]['fold'])
+    assert folds==[340,400,460], 'gusset top, middle and bottom'
+    assert all(line[1]==line[3] for line in pages[0]['fold']), 'every crease runs across the web'
+
+
+def test_a_panel_fold_survives_a_net_placement_with_no_rotation():
+    """An unrotated panel may leave `rotation_deg` off; that is not a reason to crash.
+
+    Demo stand-pouch geometry writes the gusset's net placement without `rotation_deg`, and the
+    gusset is the panel that carries a fold. Reading the key directly turned that into a KeyError
+    instead of a die-line."""
+    from services.api.geometry.print_paths import structure_paths
+    face=lambda i,y,h,net:{'id':i,'width_mm':100,'height_mm':h,'registered_structure':True,'net':net,
+        'regions':{'fold':[{'x1_mm':0,'y1_mm':h/2,'x2_mm':100,'y2_mm':h/2}] if i=='bottom' else []}}
+    geometry={'faces':[face('front',0,200,{'x_mm':0,'y_mm':0,'rotation_deg':0}),
+                       face('bottom',200,80,{'x_mm':0,'y_mm':200}),  # no rotation_deg, as the demo writes it
+                       face('back',280,200,{'x_mm':0,'y_mm':280,'rotation_deg':180})],
+              'structural_parts':[],'fold_lines':[],'net_width_mm':100,'net_height_mm':480}
+    pages=structure_paths(geometry,'net')
+    assert [line[1] for line in pages[0]['fold']]==[240], 'the crease sits mid-gusset, unrotated'

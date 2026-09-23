@@ -40,7 +40,9 @@ def structure_paths(geometry, layout):
         for p in f["regions"].get("fold",[]):
             points=[]
             for x,y in ((p["x1_mm"],p["y1_mm"]),(p["x2_mm"],p["y2_mm"])):
-                if f["net"]["rotation_deg"]==180:x,y=f["width_mm"]-x,f["height_mm"]-y
+                # Demo geometry leaves rotation_deg off an unrotated panel, so read it the way
+                # finishing_paths does: a missing value means 0, not a crash.
+                if f["net"].get("rotation_deg",0)==180:x,y=f["width_mm"]-x,f["height_mm"]-y
                 points.extend((round(f["net"]["x_mm"]+x,4),round(f["net"]["y_mm"]+y,4)))
             folds.append(points)
     unique={tuple(sorted((tuple(line[:2]),tuple(line[2:])))):line for line in folds}
