@@ -268,7 +268,7 @@ export default function Auth() {
           <p>아이디어가 패키지가 되는 곳.</p>
         </div>
         <span className="auth-visual-foot">
-          PHOENIX PACKAGING STUDIO · AI DESIGN CONCEPT
+          PHOENIX PACKAGE DESIGN STUDIO · AI DESIGN CONCEPT
         </span>
       </section>
       <section className="auth-content">

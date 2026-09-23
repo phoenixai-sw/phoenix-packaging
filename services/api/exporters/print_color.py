@@ -77,7 +77,7 @@ class PrintColor:
                 source.load(); image = ImageOps.exif_transpose(source)
                 if image.mode in ("RGBA", "LA") or "transparency" in image.info:
                     if image.convert("RGBA").getchannel("A").getextrema() != (255, 255):
-                        raise ExportValidationError("PRINT_TRANSPARENCY_UNSUPPORTED", "반투명 이미지는 이 제작 어댑터에서 지원하지 않습니다.")
+                        raise ExportValidationError("PRINT_TRANSPARENCY_UNSUPPORTED", "반투명 이미지는 이 제작 어댑터에서 지원하지 않습니다. 편집기의 “레이어 병합”에서 아래 레이어와 합쳐 주세요.")
                 embedded = source.info.get("icc_profile")
                 if embedded:
                     source_profile = ImageCms.ImageCmsProfile(BytesIO(embedded))

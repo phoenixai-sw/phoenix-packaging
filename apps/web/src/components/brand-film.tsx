@@ -107,7 +107,7 @@ export function BrandFilm({
           }}
         />
         <div className="film-overlay">
-          <span>PHOENIX PACKAGING</span>
+          <span>PHOENIX PACKAGE DESIGN</span>
           <span>BRAND FILM / 01</span>
         </div>
         {!unavailable && (

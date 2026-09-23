@@ -61,7 +61,7 @@ export async function openTossPayment(
       method: "CARD",
       amount: { currency: "KRW", value: order.amount },
       orderId: order.order_id,
-      orderName: context?.orderName?.slice(0, 100) || "Phoenix Packaging 크레딧",
+      orderName: context?.orderName?.slice(0, 100) || "Phoenix Package Design 크레딧",
       successUrl: `${origin}${paths.successPath}`,
       failUrl: `${origin}${paths.failPath}`,
     });

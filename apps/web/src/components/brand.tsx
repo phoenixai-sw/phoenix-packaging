@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 /** Phoenix AI Co., Ltd. logo, used by context:
- *  - `mark` (default): the orange phoenix bird next to the "phoenix PACKAGING" wordmark for headers and sidebars
+ *  - `mark` (default): the orange phoenix bird next to the "phoenix PACKAGE DESIGN" wordmark for headers and sidebars
  *  - `lockup`: the full "Phoenix AI Co., Ltd." logo for footers, sign-in and formal screens
  *  - `mascot`: the friendly phoenix for empty states and welcome moments */
 export const phoenixLogo = {
@@ -12,12 +12,12 @@ export const phoenixLogo = {
 } as const;
 export function Brand({ compact = false }: { compact?: boolean }) {
   return (
-    <Link href="/" className="brand" aria-label="Phoenix Packaging 홈">
+    <Link href="/" className="brand" aria-label="Phoenix Package Design 홈">
       <span className="brand-mark">
         <img src={phoenixLogo.mark} alt="" width={40} height={28} decoding="async" />
       </span>
       <span>
-        phoenix<span className="brand-sub">{compact ? "" : "PACKAGING"}</span>
+        phoenix<span className="brand-sub">{compact ? "" : "PACKAGE DESIGN"}</span>
       </span>
     </Link>
   );

@@ -497,8 +497,8 @@ def _render(project: dict, resolver: AssetResolver | None, production: bool) -> 
     pages=[]
     output = BytesIO()
     canvas = Canvas(output, pageCompression=1, invariant=1, pdfVersion=(1,5) if basic else (1,4))
-    canvas.setTitle("Phoenix Packaging - 검토용 · 제작 사용 불가")
-    canvas.setAuthor("Phoenix Packaging")
+    canvas.setTitle("Phoenix Package Design - 검토용 · 제작 사용 불가")
+    canvas.setAuthor("Phoenix Package Design")
     canvas.setSubject("등록 구조 · 제작 사용 불가 / Registered structure review" if scene.get("structure_ref") else "데모 구조 · 제조사 미승인 / Finished-size vector review PDF")
     for page, face in enumerate(ordered_faces, start=1):
         width, height = face["width_mm"] * mm, face["height_mm"] * mm

@@ -476,7 +476,7 @@ def bind_and_charge(db, tenant_id, order_id, auth_key, customer_key, *, provider
     if issued.get("customerKey") != customer_key or (settings.provider != "mock" and issued.get("mId") != settings.merchant_id) or not isinstance(issued.get("billingKey"), str):
         raise APIError(409, "BILLING_KEY_MISMATCH", "결제 수단 등록 결과가 일치하지 않습니다.")
     account.billing_key_encrypted = settings.encrypt(issued["billingKey"])
-    return _provider_outcome(db, order, provider, settings, lambda: provider.charge(issued["billingKey"], customer_key, order.order_id, order.amount, "Phoenix Packaging " + str(order.plan_id)), now)
+    return _provider_outcome(db, order, provider, settings, lambda: provider.charge(issued["billingKey"], customer_key, order.order_id, order.amount, "Phoenix Package Design " + str(order.plan_id)), now)
 
 
 def change_plan(db, tenant_id, new_plan_id, operation_key, *, settings, now=None):
@@ -604,7 +604,7 @@ def process_due_invoices(session_factory, *, provider, settings, now=None, limit
                 db.commit()
                 continue
             invoice.attempts += 1
-            billed = _provider_outcome(db, order, provider, settings, lambda: provider.charge(settings.decrypt(account.billing_key_encrypted), settings.decrypt(account.customer_key_encrypted), order.order_id, order.amount, "Phoenix Packaging " + str(order.plan_id)), now)
+            billed = _provider_outcome(db, order, provider, settings, lambda: provider.charge(settings.decrypt(account.billing_key_encrypted), settings.decrypt(account.customer_key_encrypted), order.order_id, order.amount, "Phoenix Package Design " + str(order.plan_id)), now)
             if billed.status != "paid":
                 subscription.status, invoice.status = "past_due", billed.status
                 invoice.retry_at = aware(invoice.created_at) + timedelta(hours=24 if invoice.attempts == 1 else 72) if invoice.attempts < 3 else None

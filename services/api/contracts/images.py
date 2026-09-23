@@ -285,6 +285,31 @@ class ImageProvenance(ContractModel):
     output_placed_mm: Rect
 
 
+class ImageMergePatch(ContractModel):
+    asset_id: str
+    x_mm: float
+    y_mm: float
+    width_mm: float
+    height_mm: float
+    rotation_deg: float
+    z_index: int
+    opacity: float
+
+
+class ImageMergeResult(ContractModel):
+    base_revision: int
+    face_id: str
+    object_ids: list[str]
+    keep_object_id: str
+    remove_object_ids: list[str]
+    patch: ImageMergePatch
+    asset: AssetData
+    output_pixels: tuple[int, int]
+    effective_ppi: float
+    background_filled: bool
+    credits_charged: int
+
+
 class ImageQualityPreview(ContractModel):
     base_revision: int
     face_id: str

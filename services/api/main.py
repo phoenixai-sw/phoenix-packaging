@@ -188,7 +188,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
         engine.dispose()
 
-    app = FastAPI(title="Phoenix Packaging API", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Phoenix Package Design API", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.engine = engine
     app.state.session_factory = session_factory
@@ -604,6 +604,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     install_print_preparation_routes(app,db_session)
     from .image_quality import install_image_quality_routes
     install_image_quality_routes(app,db_session,asset_payload)
+    from .image_merge import install_image_merge_routes
+    install_image_merge_routes(app,db_session,asset_payload)
     install_editor_routes(app,db_session,project_payload,snapshot_revision,normalize_draft_scene)
     install_font_routes(app,db_session)
     from .workspace_views import install_workspace_views

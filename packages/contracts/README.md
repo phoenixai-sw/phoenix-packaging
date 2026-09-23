@@ -1,4 +1,4 @@
-# Phoenix Packaging scene contract
+# Phoenix Package Design scene contract
 
 The canonical structural scene model is `services/api/schemas.py:Scene`.
 Run `python packages/contracts/generate.py` to regenerate `scene.schema.json`
