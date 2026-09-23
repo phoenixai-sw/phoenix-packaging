@@ -86,10 +86,17 @@ export default function BillingPage() {
         setOrder(undefined);
         refresh();
       } else if (data.payment_capabilities.client_key) {
+        // The Toss window cannot be seen while this confirmation dialog is open: showModal() puts
+        // the dialog in the browser's top layer, above any z-index. Close ours as the window opens.
+        setOrder(undefined);
         await openTossPayment(data.payment_capabilities.client_key, order);
       } else throw new Error("결제 서비스 연결을 준비하고 있습니다.");
     } catch (e) {
-      setFormError(errorMessage(e));
+      if ((e as { code?: string })?.code === "USER_CANCEL")
+        setNotice(
+          "결제를 취소했습니다. 결제 내역의 “결제 계속”으로 다시 열 수 있습니다.",
+        );
+      else setFormError(errorMessage(e));
     } finally {
       setBusy(false);
     }
