@@ -1,4 +1,5 @@
 import { paymentReturnPaths } from "./payment-return-context";
+import { closeBlockingModals } from "./payment-window";
 
 type PaymentRequest = {
   method: "CARD";
@@ -48,6 +49,7 @@ export async function openTossPayment(
   const payment = window
     .TossPayments(clientKey)
     .payment({ customerKey: order.customer_key });
+  closeBlockingModals(document);
   const origin = window.location.origin;
   const paths = paymentReturnPaths(order.order_id, order.checkout_kind === "billing_auth", context?.serviceOrderId);
   if (order.checkout_kind === "billing_auth")
