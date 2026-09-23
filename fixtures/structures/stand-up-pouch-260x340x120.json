@@ -1,0 +1,142 @@
+{
+  "schema_version": "2.0",
+  "recipe_id": "fixed-panel-net-v1",
+  "family": "stand-up-pouch",
+  "dimensions": {
+    "width_mm": 260,
+    "height_mm": 340,
+    "bottom_mm": 120
+  },
+  "dimension_semantics": {
+    "basis": "finished_outer",
+    "bottom_definition": "expanded_gusset"
+  },
+  "panels": [
+    {
+      "id": "front",
+      "width_mm": 260.0,
+      "height_mm": 340.0,
+      "net": {
+        "x_mm": 0,
+        "y_mm": 0,
+        "rotation_deg": 0
+      },
+      "assembly": {
+        "position_mm": [
+          0,
+          0,
+          60.0
+        ],
+        "rotation_deg": [
+          0,
+          0,
+          0
+        ],
+        "uv_rotation_deg": 0,
+        "mirror_u": false,
+        "mirror_v": false
+      },
+      "safe_inset_mm": {
+        "left": 15.0,
+        "top": 15.0,
+        "right": 15.0,
+        "bottom": 15.0
+      },
+      "fold": []
+    },
+    {
+      "id": "back",
+      "width_mm": 260.0,
+      "height_mm": 340.0,
+      "net": {
+        "x_mm": 0,
+        "y_mm": 460.0,
+        "rotation_deg": 180
+      },
+      "assembly": {
+        "position_mm": [
+          0,
+          0,
+          -60.0
+        ],
+        "rotation_deg": [
+          0,
+          180,
+          0
+        ],
+        "uv_rotation_deg": 0,
+        "mirror_u": false,
+        "mirror_v": false
+      },
+      "safe_inset_mm": {
+        "left": 15.0,
+        "top": 15.0,
+        "right": 15.0,
+        "bottom": 15.0
+      },
+      "fold": []
+    },
+    {
+      "id": "bottom",
+      "width_mm": 260.0,
+      "height_mm": 120.0,
+      "net": {
+        "x_mm": 0,
+        "y_mm": 340.0,
+        "rotation_deg": 0
+      },
+      "assembly": {
+        "position_mm": [
+          0,
+          -170.0,
+          0
+        ],
+        "rotation_deg": [
+          90,
+          0,
+          0
+        ],
+        "uv_rotation_deg": 0,
+        "mirror_u": false,
+        "mirror_v": false
+      },
+      "safe_inset_mm": {
+        "left": 10,
+        "top": 10,
+        "right": 10.0,
+        "bottom": 10.0
+      },
+      "fold": [
+        {
+          "x1_mm": 0,
+          "y1_mm": 60.0,
+          "x2_mm": 260.0,
+          "y2_mm": 60.0
+        }
+      ]
+    }
+  ],
+  "fold_lines": [
+    {
+      "x1_mm": 0,
+      "y1_mm": 340.0,
+      "x2_mm": 260.0,
+      "y2_mm": 340.0
+    },
+    {
+      "x1_mm": 0,
+      "y1_mm": 400.0,
+      "x2_mm": 260.0,
+      "y2_mm": 400.0
+    },
+    {
+      "x1_mm": 0,
+      "y1_mm": 460.0,
+      "x2_mm": 260.0,
+      "y2_mm": 460.0
+    }
+  ],
+  "feature_policy": "none",
+  "finishing": null,
+  "review_bleed_mm": 3
+}
