@@ -4,6 +4,7 @@ import { api, errorMessage } from "@/lib/api";
 import type { ApiSchema } from "@/lib/api-contract";
 import { Feedback } from "./management";
 import { regionPlacement, regionFromPoints, type ImageRegion } from "@editor/image-tools";
+import { wandSelection } from "@editor/magic-wand";
 import type { Scene, SceneObject } from "@editor/model";
 import type { ApplyPreparedScene } from "./image-quality-tools";
 
@@ -13,7 +14,10 @@ type Shape =
   | { type: "rect"; x: number; y: number; width: number; height: number }
   | { type: "brush"; points: number[][]; radius: number }
   | { type: "polygon"; points: number[][] };
-type Tool = "brush" | "rect" | "lasso";
+type Tool = "brush" | "rect" | "lasso" | "wand";
+/** Flood filling the full asset is the point — a downscale would blur the colour edges the wand
+ *  follows — but a huge upload still has to stay responsive, so cap the pixels it walks. */
+const WAND_MAX_PIXELS = 12_000_000;
 type Mode = "region" | "cutout";
 const MAX_SHAPES = 64, MAX_POINTS = 3000;
 /** Place `layer` right after `sourceId`. Painting sorts by z_index and keeps list order for ties,
@@ -45,6 +49,8 @@ export function ImageRegionTools({ projectId, scene, object, saveCurrent, onAppl
   const stroke = useRef<number[][] | null>(null), rectStart = useRef<{ x: number; y: number } | null>(null);
   const [liveRect, setLiveRect] = useState<ImageRegion | null>(null);
   const [hostWidth, setHostWidth] = useState(0);
+  const [tolerance, setTolerance] = useState(28);
+  const sourcePixels = useRef<{ data: Uint8ClampedArray; width: number; height: number } | null>(null);
   const working = !!job && !terminal.includes(job.status);
   const locked = busy || working || readOnly || !!object.locked;
   const stale = !!snapshot && snapshot !== JSON.stringify(scene);
@@ -110,14 +116,49 @@ export function ImageRegionTools({ projectId, scene, object, saveCurrent, onAppl
     return { x: Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), y: Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) };
   }
   function invalidate() { setQuote(undefined); setJob(undefined); setSnapshot(""); setError(""); setNotice(""); }
+  /** The asset's own pixels, decoded once. Fetching as a blob keeps the canvas untainted even in
+   *  production, where the asset URL redirects to signed storage on another origin. */
+  async function readSource() {
+    if (sourcePixels.current) return sourcePixels.current;
+    const response = await fetch(`/api/v1/assets/${object.asset_id}/content`, { credentials: "same-origin" });
+    if (!response.ok) throw new Error("원본 이미지를 불러오지 못했습니다.");
+    const bitmap = await createImageBitmap(await response.blob());
+    try {
+      if (bitmap.width * bitmap.height > WAND_MAX_PIXELS)
+        throw new Error("이미지가 너무 커서 자동 선택을 쓸 수 없습니다. 브러시나 올가미로 표시해 주세요.");
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width; canvas.height = bitmap.height;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) throw new Error("이 브라우저에서는 자동 선택을 쓸 수 없습니다.");
+      context.drawImage(bitmap, 0, 0);
+      sourcePixels.current = { data: context.getImageData(0, 0, bitmap.width, bitmap.height).data, width: bitmap.width, height: bitmap.height };
+      return sourcePixels.current;
+    } finally { bitmap.close(); }
+  }
+  async function wandAt(p: { x: number; y: number }) {
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const source = await readSource();
+      const budget = Math.min(800, MAX_POINTS - points(shapes));
+      const selection = wandSelection(source.data, source.width, source.height,
+        p.x * source.width, p.y * source.height, { tolerance, maxPoints: budget });
+      if (!selection) throw new Error("이 자리에서는 영역을 찾지 못했습니다. 허용 오차를 올리거나 올가미로 그려 주세요.");
+      invalidate();
+      setShapes((s) => [...s, { type: "polygon", points: selection.points }]);
+      setNotice(`같은 색 영역 ${selection.points.length}점으로 표시했습니다. 덜 잡히면 허용 오차를 올리세요.`);
+    } catch (e) { setError(errorMessage(e)); }
+    finally { setBusy(false); }
+  }
   function onDown(e: React.PointerEvent<HTMLDivElement>) {
     if (locked) return;
     if (shapes.length >= MAX_SHAPES || points(shapes) >= MAX_POINTS) {
       setError("표시할 수 있는 영역을 모두 썼습니다. “되돌리기”나 “모두 지우기”로 정리한 뒤 이어 그려 주세요.");
       return;
     }
+    const clicked = point(e);
+    if (tool === "wand") { void wandAt(clicked); return; }
     e.currentTarget.setPointerCapture(e.pointerId);
-    const p = point(e);
+    const p = clicked;
     invalidate();
     if (tool === "brush") { stroke.current = [[p.x, p.y]]; setShapes((s) => [...s, { type: "brush", points: [[p.x, p.y]], radius }]); }
     else if (tool === "lasso") { stroke.current = [[p.x, p.y]]; setShapes((s) => [...s, { type: "polygon", points: [[p.x, p.y]] }]); }
@@ -233,20 +274,24 @@ export function ImageRegionTools({ projectId, scene, object, saveCurrent, onAppl
   return (
     <div className="image-text-tools">
       <div className="alert alert-info">
-        포토샵의 선택 영역처럼 <strong>바꿀 부분만 표시</strong>하고 AI에게 시키거나, 피사체를 <strong>투명 배경 레이어로 따내거나</strong>, 사각형을 새 레이어로 복사합니다. 표시 밖 픽셀은 그대로 보존됩니다. 브러시는 칠하듯, <strong>올가미는 테두리를 따라 그리면 안쪽이 채워집니다.</strong>
+        포토샵의 선택 영역처럼 <strong>바꿀 부분만 표시</strong>하고 AI에게 시키거나, 피사체를 <strong>투명 배경 레이어로 따내거나</strong>, 사각형을 새 레이어로 복사합니다. 표시 밖 픽셀은 그대로 보존됩니다. 브러시는 칠하듯, <strong>올가미는 테두리를 따라</strong> 그리면 안쪽이 채워지고, <strong>“같은 색 자동”은 클릭 한 번</strong>으로 이어진 같은 색 영역을 잡습니다.
       </div>
       <div className="button-row" role="toolbar" aria-label="영역 도구">
         <button className={`button button-light${tool === "brush" ? " selected" : ""}`} disabled={locked} onClick={() => setTool("brush")}>브러시</button>
         <button className={`button button-light${tool === "lasso" ? " selected" : ""}`} disabled={locked} onClick={() => setTool("lasso")}>올가미</button>
+        <button className={`button button-light${tool === "wand" ? " selected" : ""}`} disabled={locked} onClick={() => setTool("wand")}>같은 색 자동</button>
         <button className={`button button-light${tool === "rect" ? " selected" : ""}`} disabled={locked} onClick={() => setTool("rect")}>사각형</button>
-        <label className="field" style={{ minWidth: 140 }}>브러시 굵기
-          <input type="range" min={0.01} max={0.15} step={0.005} value={radius} disabled={locked || tool !== "brush"} onChange={(e) => setRadius(Number(e.target.value))} />
+        <label className="field" style={{ minWidth: 140 }}>{tool === "wand" ? "색 허용 오차" : "브러시 굵기"}
+          {tool === "wand"
+            ? <input type="range" min={0} max={120} step={4} value={tolerance} disabled={locked} onChange={(e) => setTolerance(Number(e.target.value))} />
+            : <input type="range" min={0.01} max={0.15} step={0.005} value={radius} disabled={locked || tool !== "brush"} onChange={(e) => setRadius(Number(e.target.value))} />}
         </label>
         <button className="button button-light" disabled={locked || !shapes.length} onClick={() => { setShapes((s) => s.slice(0, -1)); invalidate(); }}>되돌리기</button>
         <button className="button button-light" disabled={locked || !shapes.length} onClick={() => { setShapes([]); invalidate(); }}>모두 지우기</button>
       </div>
       <div ref={hostRef} className="image-region-selector" style={{ cursor: locked ? "default" : "crosshair" }}
-        onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={() => { stroke.current = null; rectStart.current = null; setLiveRect(null); }}>
+        onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={() => { stroke.current = null; rectStart.current = null; setLiveRect(null); }}
+        title={tool === "wand" ? "바꿀 색 영역을 클릭하세요" : ""}>
         <img draggable={false} src={`/api/v1/assets/${object.asset_id}/content`} alt="부분 수정할 원본. 드래그로 영역 표시"
           onLoad={(e) => setDimensions({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight })} />
         <canvas ref={canvasRef} className="image-region-mask" aria-hidden="true" />
