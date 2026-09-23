@@ -11,8 +11,9 @@ type Quote = ApiSchema<"QuoteData">;
 type Job = Pick<ApiSchema<"AIGenerationJob">, "id" | "status"> & Partial<ApiSchema<"AIGenerationJob">>;
 type Shape =
   | { type: "rect"; x: number; y: number; width: number; height: number }
-  | { type: "brush"; points: number[][]; radius: number };
-type Tool = "brush" | "rect";
+  | { type: "brush"; points: number[][]; radius: number }
+  | { type: "polygon"; points: number[][] };
+type Tool = "brush" | "rect" | "lasso";
 type Mode = "region" | "cutout";
 const MAX_SHAPES = 64, MAX_POINTS = 3000;
 /** Place `layer` right after `sourceId`. Painting sorts by z_index and keeps list order for ties,
@@ -21,7 +22,7 @@ function insertAbove(objects: SceneObject[], sourceId: string, layer: SceneObjec
   const at = objects.findIndex((o) => o.id === sourceId);
   return [...objects.slice(0, at + 1), layer, ...objects.slice(at + 1)];
 }
-const points = (shapes: Shape[]) => shapes.reduce((total, s) => total + (s.type === "brush" ? s.points.length : 0), 0);
+const points = (shapes: Shape[]) => shapes.reduce((total, s) => total + (s.type === "rect" ? 0 : s.points.length), 0);
 const terminal = ["succeeded", "partially_succeeded", "failed", "canceled", "reconciliation_required"];
 const labels: Record<string, string> = {
   queued: "대기 중", running: "처리 중", waiting_provider: "AI 수정 중", validating: "결과 검사 중",
@@ -64,15 +65,23 @@ export function ImageRegionTools({ projectId, scene, object, saveCurrent, onAppl
     if (!g) return;
     g.clearRect(0, 0, w, h);
     g.fillStyle = "rgba(47,111,237,0.35)"; g.strokeStyle = "rgba(47,111,237,0.35)"; g.lineCap = "round"; g.lineJoin = "round";
+    const trace = (points: number[][]) => {
+      g.beginPath();
+      points.forEach(([x, y], i) => (i ? g.lineTo(x * w, y * h) : g.moveTo(x * w, y * h)));
+    };
     const draw = (shape: Shape) => {
-      if (shape.type === "rect") g.fillRect(shape.x * w, shape.y * h, shape.width * w, shape.height * h);
-      else {
-        g.lineWidth = shape.radius * Math.min(w, h) * 2;
-        g.beginPath();
-        shape.points.forEach(([x, y], i) => (i ? g.lineTo(x * w, y * h) : g.moveTo(x * w, y * h)));
-        if (shape.points.length === 1) g.lineTo(shape.points[0][0] * w + 0.01, shape.points[0][1] * h);
-        g.stroke();
+      if (shape.type === "rect") { g.fillRect(shape.x * w, shape.y * h, shape.width * w, shape.height * h); return; }
+      if (shape.type === "polygon") {
+        // Three points make an area; fewer is still being traced, so show the line so far.
+        trace(shape.points);
+        if (shape.points.length < 3) { g.lineWidth = 2; g.stroke(); return; }
+        g.closePath(); g.fill();
+        return;
       }
+      g.lineWidth = shape.radius * Math.min(w, h) * 2;
+      trace(shape.points);
+      if (shape.points.length === 1) g.lineTo(shape.points[0][0] * w + 0.01, shape.points[0][1] * h);
+      g.stroke();
     };
     shapes.forEach(draw);
     if (liveRect) draw({ type: "rect", ...liveRect });
@@ -111,17 +120,19 @@ export function ImageRegionTools({ projectId, scene, object, saveCurrent, onAppl
     const p = point(e);
     invalidate();
     if (tool === "brush") { stroke.current = [[p.x, p.y]]; setShapes((s) => [...s, { type: "brush", points: [[p.x, p.y]], radius }]); }
+    else if (tool === "lasso") { stroke.current = [[p.x, p.y]]; setShapes((s) => [...s, { type: "polygon", points: [[p.x, p.y]] }]); }
     else rectStart.current = p;
   }
   function onMove(e: React.PointerEvent<HTMLDivElement>) {
     if (locked) return;
     const p = point(e);
-    if (tool === "brush" && stroke.current) {
+    const tracing = tool === "brush" ? "brush" : tool === "lasso" ? "polygon" : null;
+    if (tracing && stroke.current) {
       const last = stroke.current[stroke.current.length - 1];
       if (Math.hypot(p.x - last[0], p.y - last[1]) < 0.004 || stroke.current.length >= 400 || points(shapes) >= MAX_POINTS) return;
       stroke.current.push([p.x, p.y]);
       const pts = stroke.current;
-      setShapes((s) => s.map((shape, i) => (i === s.length - 1 && shape.type === "brush" ? { ...shape, points: [...pts] } : shape)));
+      setShapes((s) => s.map((shape, i) => (i === s.length - 1 && shape.type === tracing ? { ...shape, points: [...pts] } : shape)));
     } else if (tool === "rect" && rectStart.current) setLiveRect(regionFromPoints(rectStart.current, p));
   }
   function onUp(e: React.PointerEvent<HTMLDivElement>) {
@@ -130,10 +141,20 @@ export function ImageRegionTools({ projectId, scene, object, saveCurrent, onAppl
       if (r.width > 0.002 && r.height > 0.002) setShapes((s) => [...s, { type: "rect", ...r }]);
       rectStart.current = null; setLiveRect(null);
     }
+    // A lasso closes itself; a trace too short to enclose anything is dropped rather than sent.
+    // Read the length now: React runs the updater after `stroke.current` is cleared below.
+    if (tool === "lasso" && stroke.current) {
+      const traced = stroke.current.length;
+      setShapes((s) => (traced < 3 && s.length && s[s.length - 1].type === "polygon" ? s.slice(0, -1) : s));
+    }
     stroke.current = null;
   }
   function editShapes() {
-    return shapes.map((s) => (s.type === "rect" ? s : { type: "brush", points: s.points.map(([x, y]) => [Math.round(x * 1e4) / 1e4, Math.round(y * 1e4) / 1e4]), radius: Math.round(s.radius * 1e4) / 1e4 }));
+    const round = (pts: number[][]) => pts.map(([x, y]) => [Math.round(x * 1e4) / 1e4, Math.round(y * 1e4) / 1e4]);
+    return shapes.map((s) =>
+      s.type === "rect" ? s
+        : s.type === "polygon" ? { type: "polygon", points: round(s.points) }
+          : { type: "brush", points: round(s.points), radius: Math.round(s.radius * 1e4) / 1e4 });
   }
   async function getQuote() {
     if (locked) return;
@@ -212,10 +233,11 @@ export function ImageRegionTools({ projectId, scene, object, saveCurrent, onAppl
   return (
     <div className="image-text-tools">
       <div className="alert alert-info">
-        포토샵의 선택 영역처럼 <strong>바꿀 부분만 표시</strong>하고 AI에게 시키거나, 피사체를 <strong>투명 배경 레이어로 따내거나</strong>, 사각형을 새 레이어로 복사합니다. 표시 밖 픽셀은 그대로 보존됩니다.
+        포토샵의 선택 영역처럼 <strong>바꿀 부분만 표시</strong>하고 AI에게 시키거나, 피사체를 <strong>투명 배경 레이어로 따내거나</strong>, 사각형을 새 레이어로 복사합니다. 표시 밖 픽셀은 그대로 보존됩니다. 브러시는 칠하듯, <strong>올가미는 테두리를 따라 그리면 안쪽이 채워집니다.</strong>
       </div>
       <div className="button-row" role="toolbar" aria-label="영역 도구">
         <button className={`button button-light${tool === "brush" ? " selected" : ""}`} disabled={locked} onClick={() => setTool("brush")}>브러시</button>
+        <button className={`button button-light${tool === "lasso" ? " selected" : ""}`} disabled={locked} onClick={() => setTool("lasso")}>올가미</button>
         <button className={`button button-light${tool === "rect" ? " selected" : ""}`} disabled={locked} onClick={() => setTool("rect")}>사각형</button>
         <label className="field" style={{ minWidth: 140 }}>브러시 굵기
           <input type="range" min={0.01} max={0.15} step={0.005} value={radius} disabled={locked || tool !== "brush"} onChange={(e) => setRadius(Number(e.target.value))} />
