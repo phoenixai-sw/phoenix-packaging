@@ -220,6 +220,35 @@ export function estimateFontSizePt(lineHeightMm: number, paddingRatio = 0.25): n
   const pt = (glyphMm / 0.9) / 0.3528;
   return Math.min(400, Math.max(4, Math.round(pt * 2) / 2));
 }
+/** Shrink the height-based estimate until the wording fits the box's width too.
+ *
+ *  `estimateFontSizePt` only knows how tall the replaced line was. Replacement wording is often
+ *  longer than the original, and the editor's font is not the one baked into the picture, so the
+ *  height-only size wraps the new text onto a second line inside a one-line box. `measureWidthMm`
+ *  is injected so this stays a pure function: the browser passes a canvas measurement of the real
+ *  font, tests pass a stub. */
+export function fitFontSizePt(
+  text: string,
+  widthMm: number,
+  heightMm: number,
+  measureWidthMm: (text: string, sizePt: number) => number,
+  { minPt = 4, paddingRatio = 0.25 }: { minPt?: number; paddingRatio?: number } = {},
+): number {
+  const round = (pt: number) => Math.min(400, Math.max(minPt, Math.round(pt * 2) / 2));
+  let size = estimateFontSizePt(heightMm, paddingRatio);
+  const line = text.trim();
+  if (!line || !(widthMm > 0)) return size;
+  // Width scales with size, so one ratio lands close; a few passes absorb the rounding and any
+  // font whose advances do not scale perfectly linearly.
+  for (let pass = 0; pass < 6; pass += 1) {
+    const width = measureWidthMm(line, size);
+    if (!(width > widthMm)) return size;
+    const next = round(size * (widthMm / width));
+    if (next >= size) { size = round(size - 0.5); } else { size = next; }
+    if (size <= minPt) return minPt;
+  }
+  return size;
+}
 /** Split region pixels into dark/light clusters: the darker cluster is the letter colour, the lighter the background cover. */
 export function sampleTextColors(rgba: ArrayLike<number>): { text: string; cover: string } {
   const pixels: Array<[number, number, number, number]> = [];

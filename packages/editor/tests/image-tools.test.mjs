@@ -202,7 +202,7 @@ test("a completed paid cleanup remains reusable after replacement wording or sty
       textRemovalInputKey(changed),
     );
 });
-import { detectedLineRegion, estimateFontSizePt, sampleTextColors } from "../src/image-tools.ts";
+import { detectedLineRegion, estimateFontSizePt, fitFontSizePt, sampleTextColors } from "../src/image-tools.ts";
 test("detected OCR lines become padded regions clamped to the crop", () => {
   const region = detectedLineRegion({ x0: 100, y0: 200, x1: 500, y1: 240 }, 1000, 1000);
   assert.deepEqual(region, { x: 0.09, y: 0.19, width: 0.42, height: 0.06 });
@@ -243,4 +243,31 @@ test("replacing text keeps locked layers untouched and stacks cover/text on top"
   assert.equal(objects.find((o) => o.id === "img").z_index, 7);
   assert.equal(objects.find((o) => o.id === "c").z_index, 8);
   assert.equal(objects.find((o) => o.id === "t").z_index, 9);
+});
+
+test("fitFontSizePt shrinks the height-based size until the wording fits the box width", () => {
+  // A stub font where every character is half an em wide.
+  const measure = (text, pt) => text.length * 0.5 * pt * 0.3528;
+  // 156mm box, 42mm tall line: the height alone suggests a size far too wide for 12 characters.
+  const heightOnly = estimateFontSizePt(42);
+  assert.ok(measure("Net Wt. 500g", heightOnly) > 156, "the bug this guards against");
+  const fitted = fitFontSizePt("Net Wt. 500g", 156, 42, measure);
+  assert.ok(measure("Net Wt. 500g", fitted) <= 156);
+  assert.ok(fitted < heightOnly);
+});
+
+test("fitFontSizePt leaves a size that already fits, and shorter wording keeps more of it", () => {
+  const measure = (text, pt) => text.length * 0.5 * pt * 0.3528;
+  assert.equal(fitFontSizePt("kg", 300, 20, measure), estimateFontSizePt(20));
+  const short = fitFontSizePt("1kg", 156, 42, measure);
+  const long = fitFontSizePt("Net Wt. 500g", 156, 42, measure);
+  assert.ok(short > long, `${short} should beat ${long}`);
+});
+
+test("fitFontSizePt copes with empty text, a zero-width box and a font that never fits", () => {
+  const measure = (text, pt) => text.length * 0.5 * pt * 0.3528;
+  assert.equal(fitFontSizePt("   ", 156, 42, measure), estimateFontSizePt(42));
+  assert.equal(fitFontSizePt("Net Wt.", 0, 42, measure), estimateFontSizePt(42));
+  const huge = () => 10_000;
+  assert.equal(fitFontSizePt("anything", 10, 42, huge), 4, "falls back to the floor rather than looping");
 });
