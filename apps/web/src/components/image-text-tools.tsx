@@ -15,6 +15,7 @@ import {
   regionPlacement,
   detectedLineRegion,
   estimateFontSizePt,
+  fitFontSizePt,
   sampleTextColors,
   type ImageRegion,
   type DetectedTextLine,
@@ -88,6 +89,7 @@ export function ImageTextTools({
   /** The last values we filled in ourselves. A field still holding one is ours to refresh when the
    *  area changes; anything else the customer chose on purpose and we leave alone. */
   const autoFilled = useRef({ fontSize: 18, color: "#172d26", cover: "#fff3de" });
+  const measureCanvas = useRef<HTMLCanvasElement | null>(null);
   const [zoomResult, setZoomResult] = useState(true);
   // Lines found over the whole (cropped) image; clicking one prefills region, text, size and colours.
   const [detected, setDetected] = useState<DetectedTextLine[]>([]),
@@ -358,13 +360,35 @@ export function ImageTextTools({
       if (active.current && attempt === ocrAttempt.current) setOcrBusy(false);
     }
   }
+  /** Width of `line` at `sizePt` in mm, measured in the font the editor actually draws with.
+   *  Canvas measurement beats any per-character average: the replacement is usually a mix of Latin,
+   *  digits and Hangul, whose advances differ by more than the margin we are fitting into. */
+  function measureWidthMm(line: string, sizePt: number): number {
+    const canvas = measureCanvas.current ?? (measureCanvas.current = document.createElement("canvas"));
+    const context = canvas.getContext("2d");
+    if (!context) return 0;
+    context.font = `${weight} ${sizePt}pt NotoSansKR, Arial, sans-serif`;
+    return context.measureText(line).width * 0.3528;
+  }
+  /** Re-fit the size for new wording in the box already chosen, unless the customer set it. */
+  function refitFontSize(wording: string) {
+    if (fontSize !== autoFilled.current.fontSize) return;
+    try {
+      const placement = regionPlacement(object, region);
+      const size = fitFontSizePt(wording, placement.width_mm, placement.height_mm, measureWidthMm);
+      setFontSize(size);
+      autoFilled.current.fontSize = size;
+    } catch {
+      // The region falls outside the crop; the size stays as it is.
+    }
+  }
   /** Size and colours belong to the marked area, so they are re-derived whenever it moves.
    *  Sampling a stale area is what put a cream cover over a yellow band and a title-sized font in a
    *  line-sized box; both looked right in the form and wrong on the artwork. */
-  async function fillFromRegion(next: ImageRegion, force = false) {
+  async function fillFromRegion(next: ImageRegion, force = false, wording?: string) {
     try {
       const placement = regionPlacement(object, next);
-      const size = estimateFontSizePt(placement.height_mm);
+      const size = fitFontSizePt(wording ?? text, placement.width_mm, placement.height_mm, measureWidthMm);
       if (force || fontSize === autoFilled.current.fontSize) { setFontSize(size); autoFilled.current.fontSize = size; }
     } catch {
       // Keep the current size when the region falls outside the crop.
@@ -394,7 +418,7 @@ export function ImageTextTools({
     setSourceText(line.text);
     setText(line.text);
     setConfidence(line.confidence);
-    await fillFromRegion(line.region, true);
+    await fillFromRegion(line.region, true, line.text);
     setOcrStatus("원문·영역·크기·색을 채웠습니다. 새 문구를 적고 확인한 뒤 적용하세요.");
   }
   async function cancelOCR() {
@@ -719,6 +743,8 @@ export function ImageTextTools({
               onChange={(e) => {
                 setText(e.target.value);
                 setReviewed(false);
+                // Longer wording needs a smaller size to stay on one line in the same box.
+                refitFontSize(e.target.value);
               }}
               placeholder="비워 두면 글자 제거만 적용합니다."
             />
