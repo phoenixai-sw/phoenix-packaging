@@ -1,0 +1,26 @@
+{
+  "schema_version": "2.0",
+  "recipe_id": "three-side-seal-separated-v1",
+  "family": "three-side-seal",
+  "dimension_semantics": {
+    "basis": "finished_outer",
+    "compensation": "none"
+  },
+  "width_range_mm": {
+    "minimum": 60,
+    "maximum": 400
+  },
+  "height_range_mm": {
+    "minimum": 80,
+    "maximum": 500
+  },
+  "seals_mm": {
+    "left": 10,
+    "right": 10,
+    "top": 10,
+    "bottom": 10
+  },
+  "safe_margin_mm": 5,
+  "feature_policy": "none",
+  "review_bleed_mm": 3
+}

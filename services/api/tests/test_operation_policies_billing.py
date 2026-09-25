@@ -18,7 +18,7 @@ def publish_new_prices(db,tenant_id):
     db.add(admin);db.flush()
     payload=pricing();payload.pop('version')
     for value in payload['plans']:
-        value['monthly_ex_vat']*=2;value['monthly_inc_vat']*=2;value['credits']*=2
+        value['monthly_inc_vat']*=2;value['monthly_ex_vat']=round(value['monthly_inc_vat']/1.1);value['credits']*=2
     for value in payload['topups']:
         value['ex_vat']*=2;value['inc_vat']*=2
     settings=Settings(environment='test')

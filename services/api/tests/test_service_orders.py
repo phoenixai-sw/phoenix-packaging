@@ -34,7 +34,7 @@ def make_admin(app,auth):app.state.settings.admin_emails=(auth['user']['email'],
 def test_catalog_request_quote_and_accept_are_not_payment_or_subscription(client,app):
     auth=register(client);make_admin(app,auth)
     catalog=client.get('/v1/service-catalog').json()['data']
-    assert {x['code']:x['suggested_amount_krw'] for x in catalog['items']}=={'file_review':55000,'onboarding':100000,'pilot_pro_first_month':99000}
+    assert {x['code']:x['suggested_amount_krw'] for x in catalog['items']}=={'file_review':55000,'onboarding':100000,'pilot_pro_first_month':39000}
     with app.state.session_factory() as db:before=db.scalar(select(func.count()).select_from(LedgerEntry))
     item=create(client);item=quote(client,item)
     accepted=accept_quote(client,item);assert accepted.status_code==200,accepted.text
@@ -88,7 +88,7 @@ def test_expiry_cancel_and_pro_inquiry_cannot_activate_entitlements(client,app):
     assert accept_quote(client,row).json()['code']=='SERVICE_QUOTE_EXPIRED'
     canceled=client.post(f"/v1/service-orders/{row['id']}/cancel",json={'base_revision':row['revision'],'note':'견적 기간 만료로 취소'})
     assert canceled.status_code==200 and canceled.json()['data']['status']=='canceled'
-    pilot=quote(client,create(client,'pilot_pro_first_month'),99000)
+    pilot=quote(client,create(client,'pilot_pro_first_month'),39000)
     pilot=accept_quote(client,pilot).json()['data']
     denied=client.post(f"/v1/admin/service-orders/{pilot['id']}/transition",json={'base_revision':pilot['revision'],'status':'in_progress','note':'결제 없이 구독 활성화 시도'})
     assert denied.status_code==409 and denied.json()['code']=='SUBSCRIPTION_FULFILLMENT_REQUIRED'

@@ -30,7 +30,7 @@ class Topup(ContractModel):
 
 
 class Trial(ContractModel):
-    credits:Literal[30]=30
+    credits:int=Field(default=100,ge=1,le=200,strict=True)
     expires_days:Literal[14]=14
     production_export:Literal[False]=False
     auto_conversion:Literal[False]=False

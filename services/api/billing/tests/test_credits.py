@@ -200,3 +200,15 @@ def test_missing_captured_asset_compensates_once_without_rewriting_history(billi
         assert wallet_summary(db, tenant, now=now)["balance"] == 30
         assert db.scalar(select(func.count()).select_from(LedgerEntry).where(LedgerEntry.event == "CAPTURE")) == 1
         assert db.scalar(select(func.count()).select_from(LedgerEntry).where(LedgerEntry.event == "COMPENSATE")) == 1
+
+
+def test_trial_size_change_keeps_existing_trials_and_lets_them_sign_in(billing_db, monkeypatch):
+    from services.api.billing import policy
+    factory, tenant, now = billing_db
+    with factory.begin() as db:
+        ensure_trial(db, tenant, now=now)
+    shipped = policy.seed_pricing()
+    monkeypatch.setattr(policy, "seed_pricing", lambda: {**shipped, "trial": {**shipped["trial"], "credits": 100}})
+    with factory.begin() as db:
+        ensure_trial(db, tenant, now=now)
+        assert wallet_summary(db, tenant, now=now)["balance"] == 30
