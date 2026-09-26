@@ -9138,10 +9138,9 @@ export interface components {
             auto_conversion: false;
             /**
              * Credits
-             * @default 30
-             * @constant
+             * @default 100
              */
-            credits: 30;
+            credits: number;
             /**
              * Expires Days
              * @default 14

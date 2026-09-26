@@ -96,16 +96,16 @@ def test_owner_tenant_csrf_and_caller_price_injection(service):
 
 
 def test_pilot_explicit_consent_frozen_price_renewal_and_existing_subscription_block(service):
-    app,client,auth=service;row=accepted(client,'pilot_pro_first_month',99000)
-    terms=row['checkout_terms'];assert (terms['amount_inc_vat'],terms['renewal_amount_inc_vat'],terms['credits'],terms['seats'])==(99000,550000,1500,3)
+    app,client,auth=service;row=accepted(client,'pilot_pro_first_month',39000)
+    terms=row['checkout_terms'];assert (terms['amount_inc_vat'],terms['renewal_amount_inc_vat'],terms['credits'],terms['seats'])==(39000,79000,1500,3)
     assert client.post('/v1/billing/orders',json=request_body(row,False),headers={'Idempotency-Key':'no-consent'}).json()['code']=='RECURRING_CONSENT_REQUIRED'
-    bad=request_body(row);bad['recurring_consent']['renewal_amount_inc_vat']=99000
+    bad=request_body(row);bad['recurring_consent']['renewal_amount_inc_vat']=39000
     assert client.post('/v1/billing/orders',json=bad,headers={'Idempotency-Key':'wrong-consent'}).json()['code']=='RECURRING_CONSENT_REQUIRED'
     order=payment(client,row);assert order['kind']=='subscription' and order['checkout_kind']=='billing_auth'
     pay(client,order)
     with app.state.session_factory() as db:
         sub=db.scalar(select(Subscription));due=aware(sub.current_period_end)
-        assert sub.plan_id=='pro' and sub.pricing_snapshot['plans'][1]['monthly_inc_vat']==550000
+        assert sub.plan_id=='pro' and sub.pricing_snapshot['plans'][1]['monthly_inc_vat']==79000
         assert entitlements(db,auth['tenant']['id'])['seats']==3
         assert db.scalar(select(CreditBucket).where(CreditBucket.kind=='monthly')).granted==1500
     provider=MockProvider()
@@ -113,18 +113,18 @@ def test_pilot_explicit_consent_frozen_price_renewal_and_existing_subscription_b
     process_due_invoices(app.state.session_factory,provider=provider,settings=app.state.billing_settings,now=due+timedelta(seconds=2))
     with app.state.session_factory() as db:
         renewal=db.scalar(select(PaymentOrder).where(PaymentOrder.kind=='renewal'))
-        assert renewal.amount==550000 and renewal.credits==1500 and renewal.status=='paid'
+        assert renewal.amount==79000 and renewal.credits==1500 and renewal.status=='paid'
         assert db.scalar(select(func.count()).select_from(Invoice))==2
-    second=accepted(client,'pilot_pro_first_month',99000)
+    second=accepted(client,'pilot_pro_first_month',39000)
     assert client.post('/v1/billing/orders',json=request_body(second),headers={'Idempotency-Key':'second-pilot'}).json()['code']=='PILOT_NEW_SUBSCRIBER_REQUIRED'
 
 
 def test_old_accepted_quote_cannot_retroactively_bill_and_requires_new_acceptance(service):
-    app,client,auth=service;row=accepted(client,'pilot_pro_first_month',99000)
+    app,client,auth=service;row=accepted(client,'pilot_pro_first_month',39000)
     old_quote_id=row['accepted_quote_id']
     with app.state.session_factory.begin() as db:db.get(ServiceQuote,old_quote_id).checkout_terms=None
     assert client.post('/v1/billing/orders',json=request_body(row),headers={'Idempotency-Key':'legacy'}).json()['code']=='SERVICE_TERMS_REQUIRED'
-    fresh=quote(client,row,99000)
+    fresh=quote(client,row,39000)
     assert fresh['accepted_quote_id'] is None and fresh['status']=='quoted'
     assert client.post('/v1/billing/orders',json=request_body(row),headers={'Idempotency-Key':'stale-acceptance'}).status_code==409
     accepted_again=accept_quote(client,fresh).json()['data'];payment(client,accepted_again)
@@ -149,7 +149,7 @@ def test_concurrent_checkout_and_work_vs_refund_are_serialized(service):
 
 def test_concurrent_pilot_orders_cannot_create_two_subscriptions(service):
     app,client,auth=service
-    rows=[accepted(client,'pilot_pro_first_month',99000) for _ in range(2)]
+    rows=[accepted(client,'pilot_pro_first_month',39000) for _ in range(2)]
     with ThreadPoolExecutor(max_workers=2) as pool:
         results=list(pool.map(lambda row:client.post('/v1/billing/orders',json=request_body(row),headers={'Idempotency-Key':str(uuid4())}),rows))
     assert sorted(r.status_code for r in results)==[201,409]
@@ -196,7 +196,7 @@ def test_external_partial_then_full_cancel_preserves_work_status_and_financial_h
 
 
 def test_pilot_unused_refund_after_administrative_completion_revokes_access(service):
-    app,client,auth=service;row=accepted(client,'pilot_pro_first_month',99000);order=payment(client,row);pay(client,order)
+    app,client,auth=service;row=accepted(client,'pilot_pro_first_month',39000);order=payment(client,row);pay(client,order)
     for status in ['in_progress','delivered','completed']:
         result=client.post(f"/v1/admin/service-orders/{row['id']}/transition",json={'base_revision':row['revision'],'status':status,'note':'구독 등록 지원 단계 확인'})
         assert result.status_code==200,result.text;row=result.json()['data']
@@ -211,7 +211,7 @@ def test_pilot_unused_refund_after_administrative_completion_revokes_access(serv
 
 
 def test_pilot_cancel_renewal_keeps_first_period_and_does_not_bill_again(service):
-    app,client,auth=service;row=accepted(client,'pilot_pro_first_month',99000);order=payment(client,row);pay(client,order)
+    app,client,auth=service;row=accepted(client,'pilot_pro_first_month',39000);order=payment(client,row);pay(client,order)
     canceled=client.post('/v1/billing/cancel-renewal')
     assert canceled.status_code==200
     with app.state.session_factory() as db:
@@ -241,21 +241,21 @@ def test_revoked_request_after_external_charge_records_money_without_fulfillment
 
 
 def test_pilot_upgrade_prorates_actual_first_payment_without_discounting_future_renewal(service):
-    app,client,auth=service;row=accepted(client,'pilot_pro_first_month',99000);order=payment(client,row);pay(client,order)
-    assert row['checkout_terms']['first_period_discount_inc_vat']==550000-99000
+    app,client,auth=service;row=accepted(client,'pilot_pro_first_month',39000);order=payment(client,row);pay(client,order)
+    assert row['checkout_terms']['first_period_discount_inc_vat']==79000-39000
     assert row['checkout_terms']['upgrade_proration_basis']=='paid_first_period_amount'
     with app.state.session_factory.begin() as db:
         sub=db.scalar(select(Subscription))
         changed=change_plan(db,auth['tenant']['id'],'partner','first-month-upgrade',settings=app.state.billing_settings,now=aware(sub.current_period_start))
-        assert changed['order']['amount']==990000-99000
+        assert changed['order']['amount']==199000-39000
         upgrade=db.get(PaymentOrder,changed['order']['id'])
-        assert upgrade.source_pricing_snapshot['plans'][1]['monthly_inc_vat']==550000
-        assert sub.pricing_snapshot['plans'][1]['monthly_inc_vat']==550000
+        assert upgrade.source_pricing_snapshot['plans'][1]['monthly_inc_vat']==79000
+        assert sub.pricing_snapshot['plans'][1]['monthly_inc_vat']==79000
 
 
 @pytest.mark.parametrize('field,value',[('automatic_renewal',1),('automatic_renewal','true'),('automatic_renewal',False),('first_amount_inc_vat',True),('renewal_amount_inc_vat','108900'),('currency','USD')])
 def test_pilot_consent_requires_explicit_typed_values(service,field,value):
-    app,client,auth=service;row=accepted(client,'pilot_pro_first_month',99000)
+    app,client,auth=service;row=accepted(client,'pilot_pro_first_month',39000)
     body=request_body(row);body['recurring_consent'][field]=value
     assert client.post('/v1/billing/orders',json=body,headers={'Idempotency-Key':'invalid-consent'}).status_code==422
     with app.state.session_factory() as db:

@@ -1,17 +1,17 @@
 {
-  "version": "2026-09-18-tiers-330-550-990",
+  "version": "2026-09-25-tiers-29-79-199",
   "currency": "KRW",
   "live_billing_enabled": false,
   "plans": [
-    {"id": "starter", "name": "Starter", "monthly_ex_vat": 300000, "monthly_inc_vat": 330000, "credits": 500, "seats": 1},
-    {"id": "pro", "name": "Pro", "monthly_ex_vat": 500000, "monthly_inc_vat": 550000, "credits": 1500, "seats": 3},
-    {"id": "partner", "name": "Partner", "monthly_ex_vat": 900000, "monthly_inc_vat": 990000, "credits": 4500, "seats": 5}
+    {"id": "starter", "name": "Starter", "monthly_ex_vat": 26364, "monthly_inc_vat": 29000, "credits": 300, "seats": 1},
+    {"id": "pro", "name": "Pro", "monthly_ex_vat": 71818, "monthly_inc_vat": 79000, "credits": 1000, "seats": 3},
+    {"id": "partner", "name": "Partner", "monthly_ex_vat": 180909, "monthly_inc_vat": 199000, "credits": 3000, "seats": 5}
   ],
   "topups": [
     {"credits": 500, "ex_vat": 39000, "inc_vat": 42900, "expires_months": 12},
     {"credits": 1000, "ex_vat": 69000, "inc_vat": 75900, "expires_months": 12}
   ],
-  "trial": {"credits": 30, "expires_days": 14, "production_export": false, "auto_conversion": false},
+  "trial": {"credits": 100, "expires_days": 14, "production_export": false, "auto_conversion": false},
   "actions": {
     "image.generate.standard": 10,
     "image.edit.standard": 10,

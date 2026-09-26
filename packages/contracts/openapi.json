@@ -20146,8 +20146,9 @@
             "type": "boolean"
           },
           "credits": {
-            "const": 30,
-            "default": 30,
+            "default": 100,
+            "maximum": 200.0,
+            "minimum": 1.0,
             "title": "Credits",
             "type": "integer"
           },

@@ -8,6 +8,7 @@ from ..billing.service import canonical_hash, lock_wallet
 from ..database import new_id, utcnow
 from ..errors import APIError
 from ..feature_models import AuditEvent
+from .catalog import PILOT_AMOUNT_KRW
 from .models import ServiceCheckout, ServiceOrder, ServiceQuote
 
 TERMS_POLICY='service-checkout-2026-09-18-v1'
@@ -16,8 +17,8 @@ TERMS_POLICY='service-checkout-2026-09-18-v1'
 def make_quote_terms(db,code,amount,scope,exclusions):
     agreed=deepcopy(pricing(db))
     pilot=code=='pilot_pro_first_month'
-    if pilot and amount!=99000:
-        raise APIError(422,'PILOT_PRICE_INVALID','첫 달 Pro 제안 견적은 VAT 포함 99,000원입니다.')
+    if pilot and amount!=PILOT_AMOUNT_KRW:
+        raise APIError(422,'PILOT_PRICE_INVALID',f'첫 달 Pro 제안 견적은 VAT 포함 {PILOT_AMOUNT_KRW:,}원입니다.')
     selected=plan('pro',snapshot=agreed)
     public={'terms_version':'','service_code':code,'amount_inc_vat':amount,'currency':'KRW','vat_included':True,
         'checkout_kind':'billing_auth' if pilot else 'payment','automatic_renewal':pilot,

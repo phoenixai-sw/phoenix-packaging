@@ -69,6 +69,9 @@ def ensure_trial(db, tenant_id, *, now=None):
     tenant = db.get(Tenant, tenant_id)
     if tenant is None:
         raise APIError(404, "NOT_FOUND", "작업 공간을 찾을 수 없습니다.")
+    # A trial is fixed by the policy at signup; a later trial-size change must not conflict with it.
+    if db.scalar(select(CreditBucket.id).where(CreditBucket.tenant_id == tenant_id, CreditBucket.grant_key == "signup-trial")):
+        return wallet
     trial = pricing(db)["trial"]
     _grant(db, tenant_id, trial["credits"], "trial", "standard_only", aware(tenant.created_at) + timedelta(days=trial["expires_days"]), "signup-trial", now, reason="가입 체험 크레딧 · 표준 이미지 생성/수정 전용")
     return wallet
